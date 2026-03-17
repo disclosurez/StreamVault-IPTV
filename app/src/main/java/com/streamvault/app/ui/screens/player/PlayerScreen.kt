@@ -144,6 +144,8 @@ fun PlayerScreen(
     val duration by viewModel.playerEngine.duration.collectAsState()
     val playerNotice by viewModel.playerNotice.collectAsState()
     val currentChannelRecording by viewModel.currentChannelRecording.collectAsState()
+    val isMuted by viewModel.isMuted.collectAsState()
+    val mediaTitle by viewModel.mediaTitle.collectAsState()
 
     var showTrackSelection by remember { mutableStateOf<TrackType?>(null) }
     var showProgramHistory by remember { mutableStateOf(false) }
@@ -582,6 +584,8 @@ fun PlayerScreen(
             audioTrackCount = availableAudioTracks.size,
             videoQualityCount = availableVideoQualities.size,
             currentRecordingStatus = currentChannelRecording?.status,
+            isMuted = isMuted,
+            mediaTitle = mediaTitle,
             playButtonFocusRequester = playButtonFocusRequester,
             modifier = Modifier.fillMaxSize(),
             onClose = onBack,
@@ -597,7 +601,8 @@ fun PlayerScreen(
             onOpenSubtitleTracks = { showTrackSelection = TrackType.TEXT },
             onOpenAudioTracks = { showTrackSelection = TrackType.AUDIO },
             onOpenVideoTracks = { showTrackSelection = TrackType.VIDEO },
-            onOpenSplitScreen = { showSplitDialog = true }
+            onOpenSplitScreen = { showSplitDialog = true },
+            onToggleMute = viewModel::toggleMute
         )
 
         PlayerNumericInputOverlay(

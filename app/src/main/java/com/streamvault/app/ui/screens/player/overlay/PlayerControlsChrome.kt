@@ -86,6 +86,8 @@ fun PlayerControlsOverlay(
     audioTrackCount: Int,
     videoQualityCount: Int,
     currentRecordingStatus: RecordingStatus?,
+    isMuted: Boolean,
+    mediaTitle: String?,
     playButtonFocusRequester: FocusRequester,
     onClose: () -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -101,6 +103,7 @@ fun PlayerControlsOverlay(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
+    onToggleMute: () -> Unit,
     clockLabelOverride: String? = null,
     modifier: Modifier = Modifier
 ) {
@@ -132,6 +135,8 @@ fun PlayerControlsOverlay(
                 audioTrackCount = audioTrackCount,
                 videoQualityCount = videoQualityCount,
                 currentRecordingStatus = currentRecordingStatus,
+                isMuted = isMuted,
+                mediaTitle = mediaTitle,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 onRestartProgram = onRestartProgram,
                 onOpenArchive = onOpenArchive,
@@ -142,7 +147,8 @@ fun PlayerControlsOverlay(
                 onOpenSubtitleTracks = onOpenSubtitleTracks,
                 onOpenAudioTracks = onOpenAudioTracks,
                 onOpenVideoTracks = onOpenVideoTracks,
-                onOpenSplitScreen = onOpenSplitScreen
+                onOpenSplitScreen = onOpenSplitScreen,
+                onToggleMute = onToggleMute
             )
 
             if (contentType != "LIVE") {
@@ -421,6 +427,8 @@ private fun PlayerBottomBar(
     audioTrackCount: Int,
     videoQualityCount: Int,
     currentRecordingStatus: RecordingStatus?,
+    isMuted: Boolean,
+    mediaTitle: String?,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
     onStartRecording: () -> Unit,
@@ -431,6 +439,7 @@ private fun PlayerBottomBar(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
+    onToggleMute: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -472,6 +481,8 @@ private fun PlayerBottomBar(
                     audioTrackCount = audioTrackCount,
                     videoQualityCount = videoQualityCount,
                     currentRecordingStatus = currentRecordingStatus,
+                    isMuted = isMuted,
+                    mediaTitle = mediaTitle,
                     onRestartProgram = onRestartProgram,
                     onOpenArchive = onOpenArchive,
                     onStartRecording = onStartRecording,
@@ -481,7 +492,8 @@ private fun PlayerBottomBar(
                     onOpenSubtitleTracks = onOpenSubtitleTracks,
                     onOpenAudioTracks = onOpenAudioTracks,
                     onOpenVideoTracks = onOpenVideoTracks,
-                    onOpenSplitScreen = onOpenSplitScreen
+                    onOpenSplitScreen = onOpenSplitScreen,
+                    onToggleMute = onToggleMute
                 )
             } else if (contentType != "LIVE") {
                 PlayerVodInfo(
@@ -492,10 +504,12 @@ private fun PlayerBottomBar(
                     subtitleTrackCount = subtitleTrackCount,
                     audioTrackCount = audioTrackCount,
                     videoQualityCount = videoQualityCount,
+                    isMuted = isMuted,
                     onToggleAspectRatio = onToggleAspectRatio,
                     onOpenSubtitleTracks = onOpenSubtitleTracks,
                     onOpenAudioTracks = onOpenAudioTracks,
-                    onOpenVideoTracks = onOpenVideoTracks
+                    onOpenVideoTracks = onOpenVideoTracks,
+                    onToggleMute = onToggleMute
                 )
             }
             }
@@ -513,6 +527,8 @@ private fun PlayerLiveInfo(
     audioTrackCount: Int,
     videoQualityCount: Int,
     currentRecordingStatus: RecordingStatus?,
+    isMuted: Boolean,
+    mediaTitle: String?,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
     onStartRecording: () -> Unit,
@@ -522,7 +538,8 @@ private fun PlayerLiveInfo(
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
-    onOpenSplitScreen: () -> Unit
+    onOpenSplitScreen: () -> Unit,
+    onToggleMute: () -> Unit
 ) {
     val primaryActions = buildList {
         if (currentProgram?.hasArchive == true) {
@@ -538,6 +555,10 @@ private fun PlayerLiveInfo(
     }
     val secondaryActions = buildList {
         add(PlayerActionSpec(stringResource(R.string.player_aspect_ratio_label, aspectRatioLabel), onToggleAspectRatio))
+        add(PlayerActionSpec(
+            stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
+            onToggleMute
+        ))
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }
@@ -563,7 +584,7 @@ private fun PlayerLiveInfo(
                 }
             }
             Text(
-                text = currentProgram?.title ?: currentChannelName.orEmpty(),
+                text = currentProgram?.title ?: mediaTitle ?: currentChannelName.orEmpty(),
                 style = MaterialTheme.typography.headlineSmall,
                 color = Color.White,
                 maxLines = 1
@@ -632,13 +653,19 @@ private fun PlayerVodInfo(
     subtitleTrackCount: Int,
     audioTrackCount: Int,
     videoQualityCount: Int,
+    isMuted: Boolean,
     onToggleAspectRatio: () -> Unit,
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
-    onOpenVideoTracks: () -> Unit
+    onOpenVideoTracks: () -> Unit,
+    onToggleMute: () -> Unit
 ) {
     val actions = buildList {
         add(PlayerActionSpec(stringResource(R.string.player_aspect_ratio_label, aspectRatioLabel), onToggleAspectRatio))
+        add(PlayerActionSpec(
+            stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
+            onToggleMute
+        ))
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }

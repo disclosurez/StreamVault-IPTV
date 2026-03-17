@@ -520,6 +520,8 @@
     <string name="player_recording_missing_context">Recording needs a valid live channel context.</string>
     <string name="player_subs">Subs</string>
     <string name="player_audio">Audio</string>
+    <string name="player_mute">Mute</string>
+    <string name="player_unmute">Unmute</string>
     <string name="player_resume_title">Resume Playback</string>
     <string name="player_resume_desc">Do you want to resume %1$s from where you left off?</string>
     <string name="player_resume_start_over">Start Over</string>

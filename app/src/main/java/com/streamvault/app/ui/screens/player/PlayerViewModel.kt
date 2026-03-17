@@ -410,6 +410,8 @@ class PlayerViewModel @Inject constructor(
     val playerStats = playerEngine.playerStats
     val availableAudioTracks = playerEngine.availableAudioTracks
     val availableSubtitleTracks = playerEngine.availableSubtitleTracks
+    val isMuted: StateFlow<Boolean> = playerEngine.isMuted
+    val mediaTitle: StateFlow<String?> = playerEngine.mediaTitle
 
     private val _availableVideoQualities = MutableStateFlow<List<com.streamvault.player.PlayerTrack>>(emptyList())
     val availableVideoQualities: StateFlow<List<com.streamvault.player.PlayerTrack>> = _availableVideoQualities.asStateFlow()
@@ -1302,6 +1304,7 @@ class PlayerViewModel @Inject constructor(
     fun pause() = playerEngine.pause()
     fun seekForward() = playerEngine.seekForward()
     fun seekBackward() = playerEngine.seekBackward()
+    fun toggleMute() = playerEngine.toggleMute()
 
     fun toggleControls() {
         closeChannelInfoOverlay()
