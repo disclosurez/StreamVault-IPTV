@@ -156,24 +156,14 @@ fun ChannelCard(
         isDragging = isDragging
     ) { isFocused ->
         if (!isLocked) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                // Initials fallback — visible when image is absent or fails to load
-                Text(
-                    text = channel.name.take(2).uppercase(java.util.Locale.ROOT),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary
-                )
-                if (!channel.logoUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = rememberCrossfadeImageModel(channel.logoUrl),
-                        contentDescription = channel.name,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(channelCardShape),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-            }
+            ChannelLogoBadge(
+                channelName = channel.name,
+                logoUrl = channel.logoUrl,
+                shape = channelCardShape,
+                textStyle = MaterialTheme.typography.titleMedium,
+                textColor = TextSecondary,
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         Box(

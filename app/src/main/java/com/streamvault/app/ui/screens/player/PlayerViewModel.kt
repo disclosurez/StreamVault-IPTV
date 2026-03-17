@@ -437,6 +437,19 @@ class PlayerViewModel @Inject constructor(
         )
     }
 
+    fun seekTo(positionMs: Long) {
+        playerEngine.seekTo(positionMs)
+    }
+
+    fun setScrubbingMode(enabled: Boolean) {
+        playerEngine.setScrubbingMode(enabled)
+    }
+
+    private suspend fun preparePlayer(streamInfo: com.streamvault.domain.model.StreamInfo) {
+        playerEngine.setMuted(preferencesRepository.playerMuted.first())
+        playerEngine.prepare(streamInfo)
+    }
+
     fun prepare(
         streamUrl: String, 
         epgChannelId: String?, 
@@ -485,7 +498,7 @@ class PlayerViewModel @Inject constructor(
                 title = currentTitle,
                 streamType = com.streamvault.domain.model.StreamType.UNKNOWN
             )
-            playerEngine.prepare(streamInfo)
+            preparePlayer(streamInfo)
         }
         
         // Show context info on entry for both Live and VOD
@@ -565,7 +578,7 @@ class PlayerViewModel @Inject constructor(
                         title = currentTitle,
                         streamType = com.streamvault.domain.model.StreamType.UNKNOWN
                     )
-                    playerEngine.prepare(catchupStream)
+                    preparePlayer(catchupStream)
                     playerEngine.play()
                     _showControls.value = true
                 } else {
@@ -1029,7 +1042,7 @@ class PlayerViewModel @Inject constructor(
                 title = currentTitle,
                 streamType = com.streamvault.domain.model.StreamType.UNKNOWN
             )
-            playerEngine.prepare(streamInfo)
+            preparePlayer(streamInfo)
             playerEngine.play()
 
             // Once the first frame is on screen, turn off scrubbing for full quality
@@ -1229,7 +1242,7 @@ class PlayerViewModel @Inject constructor(
                 title = currentTitle,
                 streamType = com.streamvault.domain.model.StreamType.UNKNOWN
             )
-            playerEngine.prepare(streamInfo)
+            preparePlayer(streamInfo)
             playerEngine.play()
         }
         return true
@@ -1304,7 +1317,13 @@ class PlayerViewModel @Inject constructor(
     fun pause() = playerEngine.pause()
     fun seekForward() = playerEngine.seekForward()
     fun seekBackward() = playerEngine.seekBackward()
-    fun toggleMute() = playerEngine.toggleMute()
+    fun toggleMute() {
+        val muted = !isMuted.value
+        playerEngine.setMuted(muted)
+        viewModelScope.launch {
+            preferencesRepository.setPlayerMuted(muted)
+        }
+    }
 
     fun toggleControls() {
         closeChannelInfoOverlay()
@@ -1357,7 +1376,7 @@ class PlayerViewModel @Inject constructor(
                     title = currentTitle,
                     streamType = com.streamvault.domain.model.StreamType.UNKNOWN
                 )
-                playerEngine.prepare(streamInfo)
+                preparePlayer(streamInfo)
                 playerEngine.play()
                 _showControls.value = true
             } else {

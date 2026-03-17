@@ -18,11 +18,14 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.FilterInputStream
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,6 +37,8 @@ class EpgRepositoryImpl @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val transactionRunner: DatabaseTransactionRunner
 ) : EpgRepository {
+
+    private val providerRefreshMutexes = ConcurrentHashMap<Long, Mutex>()
 
     companion object {
         private const val MAX_EPG_SIZE_BYTES = 200L * 1_048_576 // 200 MB
@@ -110,62 +115,64 @@ class EpgRepositoryImpl @Inject constructor(
 
     override suspend fun refreshEpg(providerId: Long, epgUrl: String): Result<Unit> =
         withContext(Dispatchers.IO) {
-            val stagingProviderId = -providerId
-            val batch = ArrayList<ProgramEntity>(500)
-            try {
-                programDao.deleteByProvider(stagingProviderId)
+            providerRefreshMutex(providerId).withLock {
+                val stagingProviderId = -providerId
+                val batch = ArrayList<ProgramEntity>(500)
+                try {
+                    programDao.deleteByProvider(stagingProviderId)
 
-                val request = Request.Builder().url(epgUrl).build()
-                val response = okHttpClient.newCall(request).execute()
+                    val request = Request.Builder().url(epgUrl).build()
+                    val response = okHttpClient.newCall(request).execute()
 
-                if (!response.isSuccessful) {
-                    return@withContext Result.error("Failed to download EPG: HTTP ${response.code}")
-                }
+                    if (!response.isSuccessful) {
+                        return@withLock Result.error("Failed to download EPG: HTTP ${response.code}")
+                    }
 
-                val contentLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
-                if (contentLength > MAX_EPG_SIZE_BYTES) {
-                    response.close()
-                    return@withContext Result.error("EPG file too large (${contentLength / 1_048_576}MB)")
-                }
+                    val contentLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                    if (contentLength > MAX_EPG_SIZE_BYTES) {
+                        response.close()
+                        return@withLock Result.error("EPG file too large (${contentLength / 1_048_576}MB)")
+                    }
 
-                val body = response.body ?: return@withContext Result.error("Empty EPG response")
+                    val body = response.body ?: return@withLock Result.error("Empty EPG response")
 
-                body.byteStream().use { inputStream ->
-                    // Cap total bytes read even when Content-Length is absent (chunked transfer)
-                    val limitedStream = object : FilterInputStream(inputStream) {
-                        private var bytesRead = 0L
-                        override fun read(): Int {
-                            if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
-                            return super.read().also { if (it >= 0) bytesRead++ }
+                    body.byteStream().use { inputStream ->
+                        // Cap total bytes read even when Content-Length is absent (chunked transfer)
+                        val limitedStream = object : FilterInputStream(inputStream) {
+                            private var bytesRead = 0L
+                            override fun read(): Int {
+                                if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
+                                return super.read().also { if (it >= 0) bytesRead++ }
+                            }
+                            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                                if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
+                                return super.read(b, off, len).also { if (it > 0) bytesRead += it }
+                            }
                         }
-                        override fun read(b: ByteArray, off: Int, len: Int): Int {
-                            if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
-                            return super.read(b, off, len).also { if (it > 0) bytesRead += it }
+                        xmltvParser.parseStreaming(limitedStream) { program ->
+                            batch.add(program.copy(providerId = stagingProviderId).toEntity())
+                            if (batch.size >= 500) {
+                                programDao.insertAll(batch.toList())
+                                batch.clear()
+                            }
                         }
                     }
-                    xmltvParser.parseStreaming(limitedStream) { program ->
-                        batch.add(program.copy(providerId = stagingProviderId).toEntity())
-                        if (batch.size >= 500) {
-                            programDao.insertAll(batch.toList())
-                            batch.clear()
-                        }
+
+                    if (batch.isNotEmpty()) {
+                        programDao.insertAll(batch.toList())
+                        batch.clear()
                     }
-                }
 
-                if (batch.isNotEmpty()) {
-                    programDao.insertAll(batch.toList())
-                    batch.clear()
-                }
+                    transactionRunner.inTransaction {
+                        programDao.deleteByProvider(providerId)
+                        programDao.moveToProvider(stagingProviderId, providerId)
+                    }
 
-                transactionRunner.inTransaction {
-                    programDao.deleteByProvider(providerId)
-                    programDao.moveToProvider(stagingProviderId, providerId)
+                    Result.success(Unit)
+                } catch (e: Exception) {
+                    programDao.deleteByProvider(stagingProviderId)
+                    Result.error("Failed to refresh EPG: ${e.message}", e)
                 }
-
-                Result.success(Unit)
-            } catch (e: Exception) {
-                programDao.deleteByProvider(stagingProviderId)
-                Result.error("Failed to refresh EPG: ${e.message}", e)
             }
         }
 
@@ -179,4 +186,7 @@ class EpgRepositoryImpl @Inject constructor(
             delay(NOW_AND_NEXT_REFRESH_INTERVAL_MS)
         }
     }
+
+    private fun providerRefreshMutex(providerId: Long): Mutex =
+        providerRefreshMutexes.computeIfAbsent(providerId) { Mutex() }
 }

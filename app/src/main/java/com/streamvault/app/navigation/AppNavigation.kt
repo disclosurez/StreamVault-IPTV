@@ -536,7 +536,7 @@ fun AppNavigation() {
                 archiveTitle = playerRequest?.archiveTitle,
                 returnRoute = playerRequest?.returnRoute,
                 onBack = { navController.popBackStack() },
-                onNavigate = { route -> navController.navigate(route) }
+                onNavigate = { route -> navController.navigateIfResumed(route) { launchSingleTop = true } }
             )
         }
 

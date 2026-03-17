@@ -59,6 +59,7 @@ class PreferencesRepository @Inject constructor(
         val MULTIVIEW_PRESET_3 = stringPreferencesKey("multiview_preset_3")
         val MULTIVIEW_PERFORMANCE_MODE = stringPreferencesKey("multiview_performance_mode")
         val IS_INCOGNITO_MODE = booleanPreferencesKey("is_incognito_mode")
+        val PLAYER_MUTED = booleanPreferencesKey("player_muted")
     }
 
     val lastActiveProviderId: Flow<Long?> = context.dataStore.data.map { preferences ->
@@ -71,6 +72,10 @@ class PreferencesRepository @Inject constructor(
 
     val isIncognitoMode: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[PreferencesKeys.IS_INCOGNITO_MODE] ?: false
+    }
+
+    val playerMuted: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.PLAYER_MUTED] ?: false
     }
 
     val parentalControlLevel: Flow<Int> = context.dataStore.data
@@ -101,6 +106,12 @@ class PreferencesRepository @Inject constructor(
     suspend fun setIncognitoMode(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.IS_INCOGNITO_MODE] = enabled
+        }
+    }
+
+    suspend fun setPlayerMuted(muted: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PLAYER_MUTED] = muted
         }
     }
 

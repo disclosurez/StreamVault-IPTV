@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -54,7 +55,8 @@ fun SearchInput(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester = remember { FocusRequester() },
     imeAction: ImeAction = ImeAction.Search,
-    onSearch: () -> Unit = {}
+    onSearch: () -> Unit = {},
+    enabled: Boolean = true
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -69,12 +71,18 @@ fun SearchInput(
             .height(40.dp)
             .background(backgroundColor, RoundedCornerShape(8.dp))
             .border(borderWidth, borderColor, RoundedCornerShape(8.dp))
-            .onFocusChanged { isFocused = it.hasFocus }
-            .focusProperties { enter = { focusRequester } }
-            .clickable {
+            .onFocusChanged {
+                isFocused = enabled && it.hasFocus
+            }
+            .focusProperties {
+                canFocus = enabled
+                enter = { focusRequester }
+            }
+            .clickable(enabled = enabled) {
                 focusRequester.requestFocus()
                 keyboardController?.show()
             }
+            .focusable(enabled = enabled)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -104,6 +112,7 @@ fun SearchInput(
                     textStyle = MaterialTheme.typography.bodySmall.copy(color = OnSurface),
                     singleLine = true,
                     cursorBrush = SolidColor(Primary),
+                    enabled = enabled,
                     keyboardOptions = KeyboardOptions(imeAction = imeAction),
                     keyboardActions = KeyboardActions(onSearch = { onSearch() })
                 )

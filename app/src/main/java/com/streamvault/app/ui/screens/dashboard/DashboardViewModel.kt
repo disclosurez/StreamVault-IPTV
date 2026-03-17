@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -75,19 +76,19 @@ class DashboardViewModel @Inject constructor(
                         flowOf(DashboardUiState(isLoading = false))
                     } else {
                         val contentShelves = combine(
-                            observeFavoriteChannels(provider.id),
-                            observeRecentChannels(provider.id),
-                            observeContinueWatching(provider.id),
+                            observeFavoriteChannels(provider.id).onStart { emit(emptyList()) },
+                            observeRecentChannels(provider.id).onStart { emit(emptyList()) },
+                            observeContinueWatching(provider.id).onStart { emit(emptyList()) },
                             movieRepository.getMovies(provider.id).map { movies ->
                                 movies
                                     .sortedByDescending(::movieFreshnessScore)
                                     .take(MOVIE_SHELF_LIMIT)
-                            },
+                            }.onStart { emit(emptyList()) },
                             seriesRepository.getSeries(provider.id).map { series ->
                                 series
                                     .sortedByDescending(::seriesFreshnessScore)
                                     .take(SERIES_SHELF_LIMIT)
-                            }
+                            }.onStart { emit(emptyList()) }
                         ) { favoriteChannels, recentChannels, continueWatching, recentMovies, recentSeries ->
                             DashboardContentShelves(
                                 favoriteChannels = favoriteChannels,
@@ -100,10 +101,12 @@ class DashboardViewModel @Inject constructor(
 
                         combine(
                             contentShelves,
-                            buildLiveContext(provider.id),
-                            channelRepository.getChannels(provider.id).map { it.size },
-                            movieRepository.getLibraryCount(provider.id),
-                            seriesRepository.getLibraryCount(provider.id)
+                            buildLiveContext(provider.id).onStart {
+                                emit(DashboardLiveContext(lastVisitedCategory = null, shortcuts = emptyList()))
+                            },
+                            channelRepository.getChannels(provider.id).map { it.size }.onStart { emit(0) },
+                            movieRepository.getLibraryCount(provider.id).onStart { emit(0) },
+                            seriesRepository.getLibraryCount(provider.id).onStart { emit(0) }
                         ) { shelves, liveContext, liveChannelCount, movieCount, seriesCount ->
                             DashboardSnapshot(
                                 shelves = shelves,
@@ -112,7 +115,7 @@ class DashboardViewModel @Inject constructor(
                                 movieCount = movieCount,
                                 seriesCount = seriesCount
                             )
-                        }.combine(syncManager.syncState) { snapshot, syncState ->
+                        }.combine(syncManager.syncState.onStart { emit(SyncState.Idle) }) { snapshot, syncState ->
                             DashboardUiState(
                                 provider = provider,
                                 favoriteChannels = snapshot.shelves.favoriteChannels,

@@ -29,6 +29,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.CircleShape
 import kotlinx.coroutines.delay
 import androidx.tv.material3.*
+import android.view.KeyEvent as AndroidKeyEvent
 
 @Composable
 fun AddToGroupDialog(
@@ -56,7 +57,24 @@ fun AddToGroupDialog(
         canInteract = true
     }
 
+    val blockOpenGesture: (KeyEvent) -> Boolean = { event ->
+        !canInteract &&
+            event.nativeKeyEvent.action == AndroidKeyEvent.ACTION_UP &&
+            when (event.nativeKeyEvent.keyCode) {
+                AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                AndroidKeyEvent.KEYCODE_ENTER,
+                AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                AndroidKeyEvent.KEYCODE_BUTTON_A -> true
+                else -> false
+            }
+    }
+
     val safeDismiss = { if (canInteract) onDismiss() }
+    val safeToggleFavorite = { if (canInteract) onToggleFavorite() }
+    val safeOpenSplitScreenPlanner = { if (canInteract) onOpenSplitScreenPlanner?.invoke() }
+    val safeCreateGroup = { if (canInteract) showCreateGroup = true }
+    val safeAddToGroup: (Category) -> Unit = { group -> if (canInteract) onAddToGroup(group) }
+    val safeRemoveFromGroup: (Category) -> Unit = { group -> if (canInteract) onRemoveFromGroup(group) }
 
     if (showCreateGroup) {
         CreateGroupDialog(
@@ -79,6 +97,7 @@ fun AddToGroupDialog(
                 modifier = Modifier
                     .width(400.dp)
                     .padding(16.dp)
+                    .onPreviewKeyEvent(blockOpenGesture)
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
                     // Header
@@ -108,7 +127,7 @@ fun AddToGroupDialog(
                         item {
                             var isFocused by remember { mutableStateOf(false) }
                             Button(
-                                onClick = onToggleFavorite,
+                                onClick = safeToggleFavorite,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .focusRequester(contentFocusRequester)
@@ -151,7 +170,7 @@ fun AddToGroupDialog(
                             item {
                                 var isFocused by remember { mutableStateOf(false) }
                                 Button(
-                                    onClick = onOpenSplitScreenPlanner,
+                                    onClick = safeOpenSplitScreenPlanner,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .onFocusChanged { isFocused = it.isFocused }
@@ -222,7 +241,7 @@ fun AddToGroupDialog(
                                 )
                                 Button(
                                     onClick = {
-                                        if (isMember) onRemoveFromGroup(group) else onAddToGroup(group)
+                                        if (isMember) safeRemoveFromGroup(group) else safeAddToGroup(group)
                                     },
                                     modifier = Modifier
                                         .background(
@@ -256,7 +275,7 @@ fun AddToGroupDialog(
                         var isFocused by remember { mutableStateOf(false) }
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
-                            onClick = { showCreateGroup = true },
+                            onClick = safeCreateGroup,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .onFocusChanged { isFocused = it.isFocused }

@@ -1,6 +1,11 @@
 package com.streamvault.data.parser
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 
@@ -16,6 +21,7 @@ import org.junit.Test
  * Time reference: 2025-01-01 12:00:00 UTC = 1_735_732_800_000 ms epoch
  *                 2025-01-01 09:00:00 UTC = 1_735_722_000_000 ms epoch
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class XmltvParserTest {
 
     private lateinit var parser: XmltvParser
@@ -172,4 +178,24 @@ class XmltvParserTest {
         // Depending on where the parser breaks, we expect 0–2 programs (not a crash)
         assertThat(programs.size).isAtMost(2)
     }
+
+      @Test
+      fun `parse_sameInstance_isStableAcrossConcurrentCalls`() = runTest {
+        val xml = """
+          <?xml version="1.0"?>
+          <tv>
+            <programme start="20250101120000 +0300" stop="20250101130000 +0300" channel="ch1">
+            <title>Concurrent Parse</title>
+            </programme>
+          </tv>
+        """.trimIndent()
+
+        val timestamps = (1..64).map {
+          async(Dispatchers.Default) {
+            parser.parse(xml.byteInputStream()).single().startTime
+          }
+        }.awaitAll()
+
+        assertThat(timestamps.distinct()).containsExactly(1_735_722_000_000L)
+      }
 }

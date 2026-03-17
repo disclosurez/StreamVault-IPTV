@@ -4,9 +4,13 @@ import com.streamvault.domain.model.Program
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.InputStream
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
 import java.util.Locale
-import java.util.TimeZone
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -24,15 +28,27 @@ class XmltvParser {
 
     private val logger = Logger.getLogger(XmltvParser::class.java.name)
 
-    private val dateFormats = listOf(
-        SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US),
-        SimpleDateFormat("yyyyMMddHHmmss", Locale.US),
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US),
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US),
-        SimpleDateFormat("yyyyMMddHHmm", Locale.US),
-        SimpleDateFormat("yyyyMMdd", Locale.US)
-    ).onEach { it.timeZone = TimeZone.getTimeZone("UTC") }
+    private val offsetDateFormats = listOf(
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("yyyyMMddHHmmss xx")
+            .toFormatter(Locale.US),
+        DateTimeFormatterBuilder()
+            .parseCaseInsensitive()
+            .appendPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+            .toFormatter(Locale.US)
+    )
+
+    private val localDateTimeFormats = listOf(
+        DateTimeFormatter.ofPattern("yyyyMMddHHmmss", Locale.US),
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss", Locale.US),
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US),
+        DateTimeFormatter.ofPattern("yyyyMMddHHmm", Locale.US)
+    )
+
+    private val localDateFormats = listOf(
+        DateTimeFormatter.ofPattern("yyyyMMdd", Locale.US)
+    )
 
     @Deprecated(
         message = "Loads all programs into memory. Use parseStreaming() for large EPG files.",
@@ -209,22 +225,26 @@ class XmltvParser {
     private fun parseDate(dateStr: String?): Long {
         if (dateStr.isNullOrBlank()) return 0
 
-        for (format in dateFormats) {
-            try {
-                val threadSafeFormat = format.clone() as SimpleDateFormat
-                return threadSafeFormat.parse(dateStr)?.time ?: continue
-            } catch (_: Exception) {
-                continue
-            }
-        }
+        offsetDateFormats.firstNotNullOfOrNull { formatter ->
+            parseOffsetDateTime(dateStr, formatter)
+        }?.let { return it }
+
+        localDateTimeFormats.firstNotNullOfOrNull { formatter ->
+            parseLocalDateTime(dateStr, formatter)
+        }?.let { return it }
+
+        localDateFormats.firstNotNullOfOrNull { formatter ->
+            parseLocalDate(dateStr, formatter)
+        }?.let { return it }
 
         // Last resort: try to extract just the timestamp portion
         try {
             val cleaned = dateStr.replace("""[^\d]""".toRegex(), "")
             if (cleaned.length >= 14) {
-                val basicFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
-                basicFormat.timeZone = TimeZone.getTimeZone("UTC")
-                return basicFormat.parse(cleaned.substring(0, 14))?.time ?: 0
+                return parseLocalDateTime(
+                    cleaned.substring(0, 14),
+                    DateTimeFormatter.ofPattern("yyyyMMddHHmmss", Locale.US)
+                ) ?: 0
             }
         } catch (_: Exception) {
             // Give up
@@ -233,4 +253,24 @@ class XmltvParser {
         logger.warning("Unparseable XMLTV date: $dateStr")
         return 0
     }
+
+    private fun parseOffsetDateTime(dateStr: String, formatter: DateTimeFormatter): Long? =
+        runCatching {
+            OffsetDateTime.parse(dateStr, formatter).toInstant().toEpochMilli()
+        }.getOrNull()
+
+    private fun parseLocalDateTime(dateStr: String, formatter: DateTimeFormatter): Long? =
+        runCatching {
+            LocalDateTime.parse(dateStr, formatter)
+                .toInstant(ZoneOffset.UTC)
+                .toEpochMilli()
+        }.getOrNull()
+
+    private fun parseLocalDate(dateStr: String, formatter: DateTimeFormatter): Long? =
+        runCatching {
+            LocalDate.parse(dateStr, formatter)
+                .atStartOfDay()
+                .toInstant(ZoneOffset.UTC)
+                .toEpochMilli()
+        }.getOrNull()
 }

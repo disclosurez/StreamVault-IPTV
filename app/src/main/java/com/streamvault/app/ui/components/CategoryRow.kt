@@ -23,8 +23,11 @@ fun <T : Any> CategoryRow(
     modifier: Modifier = Modifier,
     onSeeAll: (() -> Unit)? = null,
     keySelector: ((T) -> Any)? = null,
+    contentTypeSelector: ((T) -> Any?)? = null,
     itemContent: @Composable (T) -> Unit
 ) {
+    val resolvedContentTypeSelector: (T) -> Any? = contentTypeSelector ?: { null }
+
     Column(modifier = modifier.fillMaxWidth()) {
         AppSectionHeader(
             title = title,
@@ -42,7 +45,8 @@ fun <T : Any> CategoryRow(
         ) {
             items(
                 items = items,
-                key = keySelector  // null = index-based keys (safe default)
+                key = keySelector,  // null = index-based keys (safe default)
+                contentType = resolvedContentTypeSelector
             ) { item ->
                 itemContent(item)
             }

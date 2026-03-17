@@ -100,6 +100,7 @@ fun HomeScreen(
     multiViewViewModel: MultiViewViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isReorderMode = uiState.isChannelReorderMode
     val isProMode = uiState.liveTvChannelMode == LiveTvChannelMode.PRO
     val isDenseMode = uiState.liveTvChannelMode != LiveTvChannelMode.COMFORTABLE
     val channelRowHeight = when (uiState.liveTvChannelMode) {
@@ -146,7 +147,7 @@ fun HomeScreen(
     val hasOverlay = showPinDialog || showSplitManagerDialog || pendingSplitPlannerChannel != null ||
         uiState.showDialog || uiState.showDeleteGroupDialog ||
         uiState.showRenameGroupDialog || uiState.selectedCategoryForOptions != null ||
-        uiState.isChannelReorderMode
+        isReorderMode
 
     BackHandler(enabled = hasOverlay) {
         when {
@@ -162,7 +163,7 @@ fun HomeScreen(
             uiState.selectedCategoryForOptions != null -> viewModel.dismissCategoryOptions()
             uiState.showDialog -> viewModel.onDismissDialog()
             showSplitManagerDialog -> showSplitManagerDialog = false
-            uiState.isChannelReorderMode -> viewModel.exitChannelReorderMode()
+            isReorderMode -> viewModel.exitChannelReorderMode()
         }
     }
 
@@ -197,6 +198,9 @@ fun HomeScreen(
                             viewModel.toggleCategoryLock(category)
                             pendingLockToggleCategory = null
                         }
+
+                        pendingUnlockCategory = null
+                        pendingUnlockChannel = null
                     } else {
                         pinError = context.getString(R.string.home_incorrect_pin)
                     }
@@ -208,14 +212,17 @@ fun HomeScreen(
 
     if (uiState.selectedCategoryForOptions != null) {
         val category = uiState.selectedCategoryForOptions!!
+        val isCategoryLocked = (category.isAdult || category.isUserProtected) && uiState.parentalControlLevel == 1
         CategoryOptionsDialog(
             category = category,
             onDismissRequest = { viewModel.dismissCategoryOptions() },
-            onSetAsDefault = {
-                viewModel.setDefaultCategory(category)
-                viewModel.dismissCategoryOptions()
+            onSetAsDefault = if (isCategoryLocked) null else {
+                {
+                    viewModel.setDefaultCategory(category)
+                    viewModel.dismissCategoryOptions()
+                }
             },
-            onRename = if (category.isVirtual && category.id !in setOf(VirtualCategoryIds.FAVORITES, VirtualCategoryIds.RECENT)) {
+            onRename = if (!isCategoryLocked && category.isVirtual && category.id !in setOf(VirtualCategoryIds.FAVORITES, VirtualCategoryIds.RECENT)) {
                 { viewModel.requestRenameGroup(category) }
             } else null,
             onToggleLock = {
@@ -223,12 +230,12 @@ fun HomeScreen(
                 pendingLockToggleCategory = category
                 showPinDialog = true
             },
-            onDelete = if (category.isVirtual && category.id !in setOf(VirtualCategoryIds.FAVORITES, VirtualCategoryIds.RECENT)) {
+            onDelete = if (!isCategoryLocked && category.isVirtual && category.id !in setOf(VirtualCategoryIds.FAVORITES, VirtualCategoryIds.RECENT)) {
                 {
                     viewModel.requestDeleteGroup(category)
                 }
             } else null,
-            onReorderChannels = if (category.isVirtual && category.id != VirtualCategoryIds.RECENT) {
+            onReorderChannels = if (!isCategoryLocked && category.isVirtual && category.id != VirtualCategoryIds.RECENT) {
                 { viewModel.enterChannelReorderMode(category) }
             } else null
         )
@@ -244,7 +251,7 @@ fun HomeScreen(
             compactHeader = true,
             showScreenHeader = false
         ) {
-            if (uiState.isChannelReorderMode) {
+            if (isReorderMode) {
                 ReorderTopBar(
                     categoryName = uiState.reorderCategory?.name ?: uiState.selectedCategory?.name ?: "Channels",
                     onSave = { viewModel.saveChannelReorder() },
@@ -299,23 +306,60 @@ fun HomeScreen(
                 val channelSearchFocusRequester = remember { FocusRequester() }
                 val categoryFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
                 val channelFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
+                val visibleCategories = remember(uiState.categories, uiState.categorySearchQuery) {
+                    uiState.categories.filter {
+                        uiState.categorySearchQuery.isEmpty() ||
+                            it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
+                    }
+                }
                 var lastFocusedCategoryId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var lastFocusedChannelId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var preferredRestoreTarget by rememberSaveable { mutableStateOf(FocusRestoreTarget.CHANNEL.name) }
                 var shouldRestoreCategoryFocus by remember { mutableStateOf(false) }
                 var shouldRestoreChannelFocus by remember { mutableStateOf(false) }
 
+                val visibleCategoryIds = remember(visibleCategories) {
+                    visibleCategories.mapTo(mutableSetOf()) { it.id }
+                }
+                val displayedCategory = uiState.selectedCategory?.takeIf { it.id in visibleCategoryIds }
+                    ?: visibleCategories.firstOrNull()
+
+                LaunchedEffect(uiState.categories) {
+                    val validIds = uiState.categories.mapTo(mutableSetOf()) { it.id }
+                    categoryFocusRequesters.keys.retainAll(validIds)
+                }
+
+                LaunchedEffect(uiState.filteredChannels) {
+                    val validIds = uiState.filteredChannels.mapTo(mutableSetOf()) { it.id }
+                    channelFocusRequesters.keys.retainAll(validIds)
+                }
+
+                LaunchedEffect(uiState.categorySearchQuery, displayedCategory?.id, isReorderMode) {
+                    if (isReorderMode) return@LaunchedEffect
+                    val selectedCategory = uiState.selectedCategory ?: return@LaunchedEffect
+                    if (displayedCategory?.id == selectedCategory.id) return@LaunchedEffect
+                    displayedCategory?.let(viewModel::selectCategory)
+                }
+
                 LaunchedEffect(
                     uiState.showDialog,
                     showPinDialog,
                     uiState.showDeleteGroupDialog,
-                    uiState.selectedCategoryForOptions
+                    uiState.selectedCategoryForOptions,
+                    uiState.showRenameGroupDialog,
+                    showSplitManagerDialog,
+                    pendingSplitPlannerChannel,
+                    isReorderMode
                 ) {
                     val modalClosed =
                         !uiState.showDialog &&
                         !showPinDialog &&
                         !uiState.showDeleteGroupDialog &&
-                        uiState.selectedCategoryForOptions == null
+                        !uiState.showRenameGroupDialog &&
+                        !showSplitManagerDialog &&
+                        pendingSplitPlannerChannel == null &&
+                        uiState.selectedCategoryForOptions == null &&
+                        !isReorderMode
 
                     if (!modalClosed) return@LaunchedEffect
 
@@ -423,10 +467,15 @@ fun HomeScreen(
                             )
                             SearchInput(
                                 value = uiState.categorySearchQuery,
-                                onValueChange = { viewModel.updateCategorySearchQuery(it) },
+                                onValueChange = {
+                                    if (!isReorderMode) {
+                                        viewModel.updateCategorySearchQuery(it)
+                                    }
+                                },
                                 placeholder = stringResource(R.string.home_search_categories),
                                 focusRequester = categorySearchFocusRequester,
-                                modifier = Modifier.padding(bottom = 10.dp)
+                                modifier = Modifier.padding(bottom = 10.dp),
+                                enabled = !isReorderMode
                             )
                         }
 
@@ -492,10 +541,7 @@ fun HomeScreen(
                         }
 
                         items(
-                            items = uiState.categories.filter {
-                                uiState.categorySearchQuery.isEmpty() ||
-                                it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
-                            },
+                            items = visibleCategories,
                             key = { it.id }
                         ) { category ->
                             val isLocked = (category.isAdult || category.isUserProtected) && uiState.parentalControlLevel == 1
@@ -507,6 +553,7 @@ fun HomeScreen(
                                 isLocked = isLocked,
                                 focusRequester = categoryFocusRequester,
                                 onClick = {
+                                    if (isReorderMode) return@CategoryItem
                                     if (isLocked) {
                                         pendingUnlockCategory = category
                                         showPinDialog = true
@@ -515,6 +562,7 @@ fun HomeScreen(
                                     }
                                 },
                                 onLongClick = {
+                                    if (isReorderMode || isLocked) return@CategoryItem
                                     preferredRestoreTarget = FocusRestoreTarget.CATEGORY.name
                                     viewModel.showCategoryOptions(category)
                                 },
@@ -557,7 +605,7 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.spacedBy(if (isDenseMode) 2.dp else 4.dp)
                         ) {
                             Text(
-                                text = uiState.selectedCategory?.name ?: stringResource(R.string.home_all_channels),
+                                text = displayedCategory?.name ?: stringResource(R.string.home_all_channels),
                                 style = if (isDenseMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                                 color = OnBackground
                             )
@@ -596,11 +644,16 @@ fun HomeScreen(
                             ) {
                                 SearchInput(
                                     value = uiState.channelSearchQuery,
-                                    onValueChange = { viewModel.updateChannelSearchQuery(it) },
+                                    onValueChange = {
+                                        if (!isReorderMode) {
+                                            viewModel.updateChannelSearchQuery(it)
+                                        }
+                                    },
                                     placeholder = stringResource(R.string.home_search_channels),
                                     onSearch = { focusManager.clearFocus() },
                                     focusRequester = channelSearchFocusRequester,
-                                    modifier = Modifier.width(if (isProMode) 270.dp else if (isDenseMode) 300.dp else 340.dp)
+                                    modifier = Modifier.width(if (isProMode) 270.dp else if (isDenseMode) 300.dp else 340.dp),
+                                    enabled = !isReorderMode
                                 )
                                 if (hasSplitChannels) {
                                     StatusPill(
@@ -694,8 +747,8 @@ fun HomeScreen(
 
                             var draggingChannel by remember { mutableStateOf<Channel?>(null) }
 
-                            LaunchedEffect(uiState.isChannelReorderMode) {
-                                if (!uiState.isChannelReorderMode) {
+                            LaunchedEffect(isReorderMode) {
+                                if (!isReorderMode) {
                                     draggingChannel = null
                                 }
                             }
@@ -758,7 +811,7 @@ fun HomeScreen(
                                         isDragging = isDraggingThis,
                                         rowHeight = channelRowHeight,
                                         onClick = {
-                                            if (uiState.isChannelReorderMode) {
+                                            if (isReorderMode) {
                                                 draggingChannel = if (isDraggingThis) null else channel
                                             } else if (ignoreNextClick) {
                                                 ignoreNextClick = false
@@ -779,7 +832,7 @@ fun HomeScreen(
                                             }
                                         },
                                         onLongClick = {
-                                            if (!uiState.isChannelReorderMode) {
+                                            if (!isReorderMode) {
                                                 ignoreNextClick = true
                                                 preferredRestoreTarget = FocusRestoreTarget.CHANNEL.name
                                                 viewModel.onShowDialog(channel)

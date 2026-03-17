@@ -94,7 +94,7 @@
     <string name="dashboard_provider_expires_at">Expires %1$s</string>
     <string name="dashboard_provider_no_expiry">No expiry reported</string>
     <string name="dashboard_warning_title">Provider Needs Attention</string>
-    <string name="dashboard_warning_review">Open Diagnostics</string>
+    <string name="dashboard_warning_review">Open Provider Details</string>
     <string name="dashboard_updated_series_badge">Updated series</string>
     <string name="dashboard_stat_live">%1$d live</string>
     <string name="dashboard_stat_favorites">%1$d favorites</string>
@@ -521,7 +521,9 @@
     <string name="player_subs">Subs</string>
     <string name="player_audio">Audio</string>
     <string name="player_mute">Mute</string>
+    <string name="player_muted_badge">Muted</string>
     <string name="player_unmute">Unmute</string>
+    <string name="player_picture_in_picture">Picture in picture</string>
     <string name="player_resume_title">Resume Playback</string>
     <string name="player_resume_desc">Do you want to resume %1$s from where you left off?</string>
     <string name="player_resume_start_over">Start Over</string>

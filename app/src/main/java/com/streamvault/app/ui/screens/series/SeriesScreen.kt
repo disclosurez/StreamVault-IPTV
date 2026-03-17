@@ -85,7 +85,6 @@ fun SeriesScreen(
     var showPinDialog by remember { mutableStateOf(false) }
     var pinError by remember { mutableStateOf<String?>(null) }
     var pendingSeriesId by remember { mutableStateOf<Long?>(null) }
-    var selectedLibraryLens by rememberSaveable { mutableStateOf(SeriesLibraryLens.FAVORITES.name) }
     var selectedFacet by rememberSaveable { mutableStateOf(SeriesLibraryFacet.ALL.name) }
     var selectedSort by rememberSaveable { mutableStateOf(SeriesLibrarySort.LIBRARY.name) }
     val scope = rememberCoroutineScope()
@@ -178,7 +177,6 @@ fun SeriesScreen(
                 onSelectedFacetChange = { selectedFacet = it },
                 selectedSort = selectedSort,
                 onSelectedSortChange = { selectedSort = it },
-                onNavigate = onNavigate,
                 onSeriesClick = onSeriesClick,
                 onProtectedSeriesClick = { seriesId ->
                     pendingSeriesId = seriesId
@@ -187,613 +185,24 @@ fun SeriesScreen(
                 onShowDialog = viewModel::onShowDialog,
                 onSelectCategory = viewModel::selectCategory,
                 onSelectFullLibraryBrowse = viewModel::selectFullLibraryBrowse,
+                onOpenContinueWatching = {
+                    selectedFacet = SeriesLibraryFacet.RESUME.name
+                    selectedSort = SeriesLibrarySort.LIBRARY.name
+                    viewModel.selectFullLibraryBrowse()
+                },
+                onOpenTopRated = {
+                    selectedFacet = SeriesLibraryFacet.TOP_RATED.name
+                    selectedSort = SeriesLibrarySort.RATING.name
+                    viewModel.selectFullLibraryBrowse()
+                },
+                onOpenFresh = {
+                    selectedFacet = SeriesLibraryFacet.RECENTLY_UPDATED.name
+                    selectedSort = SeriesLibrarySort.UPDATED.name
+                    viewModel.selectFullLibraryBrowse()
+                },
                 onLoadMore = viewModel::loadMoreSelectedCategory,
                 onDismissReorder = viewModel::exitCategoryReorderMode
             )
-            return@AppScreenScaffold
-            Row(modifier = Modifier.fillMaxSize()) {
-                // Category sidebar
-                val categorySearchFocusRequester = remember { FocusRequester() }
-                val categoryFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
-                var lastFocusedCategoryName by rememberSaveable { mutableStateOf<String?>(null) }
-                var shouldRestoreCategoryFocus by remember { mutableStateOf(false) }
-                var preferCategoryRestore by rememberSaveable { mutableStateOf(false) }
-                val heroSeries = remember(uiState.categoryNames, uiState.seriesByCategory) {
-                    uiState.categoryNames
-                        .asSequence()
-                        .mapNotNull { categoryName -> uiState.seriesByCategory[categoryName]?.firstOrNull() }
-                        .firstOrNull()
-                }
-
-                LaunchedEffect(
-                    uiState.selectedCategoryForOptions,
-                    uiState.showRenameGroupDialog,
-                    uiState.showDeleteGroupDialog
-                ) {
-                    val modalClosed =
-                        uiState.selectedCategoryForOptions == null &&
-                            !uiState.showRenameGroupDialog &&
-                            !uiState.showDeleteGroupDialog
-                    if (modalClosed && preferCategoryRestore && lastFocusedCategoryName != null) {
-                        shouldRestoreCategoryFocus = true
-                        preferCategoryRestore = false
-                    }
-                }
-
-                LaunchedEffect(shouldRestoreCategoryFocus, uiState.categoryNames) {
-                    if (!shouldRestoreCategoryFocus) return@LaunchedEffect
-                    kotlinx.coroutines.delay(80)
-                    val categoryName = lastFocusedCategoryName
-                    if (categoryName != null) {
-                        runCatching {
-                            categoryFocusRequesters[categoryName]?.requestFocus()
-                        }
-                    }
-                    shouldRestoreCategoryFocus = false
-                }
-
-                Column(
-                    modifier = Modifier
-                        .width(188.dp)
-                        .fillMaxHeight()
-                        .background(SurfaceElevated.copy(alpha = 0.72f), RoundedCornerShape(20.dp))
-                        .padding(top = 8.dp)
-                ) {
-                    // Sticky Header
-                    Column(modifier = Modifier.padding(horizontal = 12.dp)) {
-                        Text(
-                            text = stringResource(R.string.series_categories_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = Primary,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        SearchInput(
-                            value = uiState.searchQuery,
-                            onValueChange = { viewModel.setSearchQuery(it) },
-                            placeholder = stringResource(R.string.series_search_placeholder),
-                            focusRequester = categorySearchFocusRequester,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                    }
-
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(bottom = 8.dp)
-                    ) {
-                    item {
-                        val isAllSelected = uiState.selectedCategory == null || uiState.selectedCategory == uiState.fullLibraryCategoryName
-                        Surface(
-                            onClick = { viewModel.selectCategory(null) },
-                            shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = if (isAllSelected) Primary.copy(alpha = 0.15f) else Color.Transparent,
-                                focusedContainerColor = Primary.copy(alpha = 0.25f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                                .onPreviewKeyEvent { event ->
-                                    if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                                        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
-                                            categorySearchFocusRequester.requestFocus()
-                                            true
-                                        } else false
-                                    } else false
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.series_all_categories),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (isAllSelected) Primary else OnSurface,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "${uiState.libraryCount}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceDim
-                                )
-                            }
-                        }
-                    }
-                    items(uiState.categoryNames.size) { index ->
-                        val categoryName = uiState.categoryNames[index]
-                        val isSelected = uiState.selectedCategory == categoryName
-                        val count = uiState.categoryCounts[categoryName] ?: 0
-                        Surface(
-                            onClick = { viewModel.selectCategory(categoryName) },
-                            onLongClick = {
-                                preferCategoryRestore = true
-                                viewModel.showCategoryOptions(categoryName)
-                            },
-                            shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = if (isSelected) Primary.copy(alpha = 0.15f) else Color.Transparent,
-                                focusedContainerColor = Primary.copy(alpha = 0.25f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                                .focusRequester(categoryFocusRequesters.getOrPut(categoryName) { FocusRequester() })
-                                .onFocusChanged { focusState ->
-                                    if (focusState.isFocused) {
-                                        lastFocusedCategoryName = categoryName
-                                    }
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                                        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
-                                            categorySearchFocusRequester.requestFocus()
-                                            true
-                                        } else false
-                                    } else false
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = categoryName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (isSelected) Primary else OnSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "$count",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceDim
-                                )
-                            }
-                        }
-                    }
-                }
-                }
-
-                val savedShortcuts = remember(
-                    uiState.favoriteCategoryName,
-                    uiState.categories,
-                    uiState.seriesByCategory
-                ) {
-                    buildList {
-                        val favoriteCount = uiState.categoryCounts[uiState.favoriteCategoryName] ?: 0
-                        if (favoriteCount > 0) {
-                            add(
-                                SavedCategoryShortcut(
-                                    name = uiState.favoriteCategoryName,
-                                    count = favoriteCount
-                                )
-                            )
-                        }
-                        uiState.categories
-                            .asSequence()
-                            .filterNot { it.name == uiState.favoriteCategoryName }
-                            .map { category ->
-                                SavedCategoryShortcut(
-                                    name = category.name,
-                                    count = uiState.categoryCounts[category.name] ?: 0
-                                )
-                            }
-                            .filter { it.count > 0 }
-                            .sortedByDescending { it.count }
-                            .forEach(::add)
-                    }
-                }
-                val selectedSavedCategory = remember(
-                    uiState.selectedCategory,
-                    uiState.favoriteCategoryName,
-                    uiState.categories
-                ) {
-                    when (uiState.selectedCategory) {
-                        null -> null
-                        uiState.favoriteCategoryName -> com.streamvault.domain.model.Category(
-                            id = -999L,
-                            name = uiState.favoriteCategoryName,
-                            type = com.streamvault.domain.model.ContentType.SERIES,
-                            isVirtual = true
-                        )
-                        else -> uiState.categories.firstOrNull { it.name == uiState.selectedCategory }
-                    }
-                }
-
-                // Main content
-                if (uiState.selectedCategory == null) {
-                    val activeLibraryLens = remember(selectedLibraryLens, uiState.libraryLensRows) {
-                        SeriesLibraryLens.entries.firstOrNull { it.name == selectedLibraryLens && uiState.libraryLensRows.containsKey(it) }
-                            ?: uiState.libraryLensRows.keys.firstOrNull()
-                    }
-                    // Netflix-style rows (All categories view)
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = LocalSpacing.current.safeHoriz, 
-                            end = LocalSpacing.current.safeHoriz, 
-                            bottom = LocalSpacing.current.safeBottom
-                        )
-                    ) {
-                        item {
-                            BrowseSearchLaunchCard(
-                                title = stringResource(R.string.series_search_launch_title),
-                                subtitle = stringResource(R.string.series_search_launch_subtitle),
-                                onClick = { onNavigate(Routes.SEARCH) },
-                                modifier = Modifier.padding(vertical = LocalSpacing.current.md)
-                            )
-                        }
-
-                        if (heroSeries != null) {
-                            item {
-                                SeriesHeroBanner(
-                                    series = heroSeries,
-                                    onClick = {
-                                        val isLocked = (heroSeries.isAdult || heroSeries.isUserProtected) && uiState.parentalControlLevel == 1
-                                        if (isLocked) {
-                                            pendingSeriesId = heroSeries.id
-                                            showPinDialog = true
-                                        } else {
-                                            onSeriesClick(heroSeries.id)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-
-                        item(key = "saved_shortcuts") {
-                            SavedCategoryShortcutsRow(
-                                title = stringResource(R.string.library_saved_title),
-                                subtitle = stringResource(R.string.library_saved_subtitle),
-                                emptyHint = stringResource(R.string.series_saved_empty_hint),
-                                shortcuts = savedShortcuts,
-                                managementHint = stringResource(R.string.library_saved_manage_hint),
-                                primaryShortcutLabel = stringResource(R.string.library_browse_all),
-                                isPrimaryShortcutSelected = uiState.selectedCategory == null,
-                                onPrimaryShortcutClick = { viewModel.selectCategory(null) },
-                                selectedShortcutName = uiState.selectedCategory,
-                                onShortcutLongClick = viewModel::showCategoryOptions,
-                                onShortcutClick = viewModel::selectCategory
-                            )
-                        }
-
-                        if (activeLibraryLens != null) {
-                            item(key = "library_lens_chips") {
-                                SelectionChipRow(
-                                    title = stringResource(R.string.library_lens_title),
-                                    subtitle = stringResource(R.string.series_library_lens_subtitle),
-                                    chips = uiState.libraryLensRows.keys.map { lens ->
-                                        SelectionChip(
-                                            key = lens.name,
-                                            label = seriesLibraryLensLabel(lens),
-                                            supportingText = stringResource(
-                                                R.string.library_saved_items_count,
-                                                uiState.libraryLensRows[lens]?.size ?: 0
-                                            )
-                                        )
-                                    },
-                                    selectedKey = activeLibraryLens.name,
-                                    onChipSelected = { selectedLibraryLens = it },
-                                    contentPadding = PaddingValues(horizontal = 0.dp)
-                                )
-                            }
-
-                            item(key = "library_lens_row") {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Surface(
-                                        onClick = viewModel::selectFullLibraryBrowse,
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                                        colors = ClickableSurfaceDefaults.colors(
-                                            containerColor = Color.White.copy(alpha = 0.06f),
-                                            focusedContainerColor = Primary
-                                        ),
-                                        modifier = Modifier.padding(horizontal = 16.dp)
-                                    ) {
-                                        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                                            Text(
-                                                text = stringResource(R.string.library_full_browse_title_series),
-                                                style = MaterialTheme.typography.titleSmall,
-                                                color = Color.White
-                                            )
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(
-                                                text = stringResource(R.string.library_full_browse_subtitle, uiState.libraryCount),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color.White.copy(alpha = 0.8f)
-                                            )
-                                        }
-                                    }
-
-                                    CategoryRow(
-                                        title = seriesLibraryLensLabel(activeLibraryLens),
-                                        items = uiState.libraryLensRows[activeLibraryLens].orEmpty(),
-                                        onSeeAll = if (activeLibraryLens == SeriesLibraryLens.FAVORITES) {
-                                            { viewModel.selectCategory(uiState.favoriteCategoryName) }
-                                        } else {
-                                            null
-                                        },
-                                        keySelector = { it.id }
-                                    ) { series ->
-                                        val isLocked = (series.isAdult || series.isUserProtected) && uiState.parentalControlLevel == 1
-                                        SeriesCard(
-                                            series = series,
-                                            isLocked = isLocked,
-                                            onClick = {
-                                                if (isLocked) {
-                                                    pendingSeriesId = series.id
-                                                    showPinDialog = true
-                                                } else {
-                                                    onSeriesClick(series.id)
-                                                }
-                                            },
-                                            onLongClick = { viewModel.onShowDialog(series) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Continue Watching row (shown first, only if non-empty)
-                        item(key = "continue_watching") {
-                            ContinueWatchingRow(
-                                items = uiState.continueWatching,
-                                onItemClick = { history -> onSeriesClick(history.seriesId ?: history.contentId) }
-                            )
-                        }
-                        items(
-                            items = uiState.seriesByCategory.entries.toList(),
-                            key = { it.key }
-                        ) { (categoryName, seriesList) ->
-                            CategoryRow(
-                                title = categoryName,
-                                items = seriesList,
-                                onSeeAll = { viewModel.selectCategory(categoryName) },
-                                keySelector = { it.id }
-                            ) { series ->
-                                val isLocked = (series.isAdult || series.isUserProtected) && uiState.parentalControlLevel == 1
-                                SeriesCard(
-                                    series = series,
-                                    isLocked = isLocked,
-                                    onClick = {
-                                        if (isLocked) {
-                                            pendingSeriesId = series.id
-                                            showPinDialog = true
-                                        } else {
-                                            onSeriesClick(series.id)
-                                        }
-                                    },
-                                    onLongClick = {
-                                        viewModel.onShowDialog(series)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    // Filtered grid for selected category
-                    val baseSeries = if (uiState.searchQuery.isBlank()) {
-                        uiState.selectedCategoryItems
-                    } else {
-                        uiState.seriesByCategory[uiState.selectedCategory] ?: emptyList()
-                    }
-                    val activeSeries = if (uiState.isReorderMode) uiState.filteredSeries else baseSeries
-                    val resumeSeriesIds = remember(uiState.continueWatching) {
-                        uiState.continueWatching.mapNotNull { history ->
-                            history.seriesId ?: history.contentId
-                        }.toSet()
-                    }
-                    val activeFacet = remember(selectedFacet) {
-                        SeriesLibraryFacet.entries.firstOrNull { it.name == selectedFacet } ?: SeriesLibraryFacet.ALL
-                    }
-                    val activeSort = remember(selectedSort) {
-                        SeriesLibrarySort.entries.firstOrNull { it.name == selectedSort } ?: SeriesLibrarySort.LIBRARY
-                    }
-                    val filteredGridSeries = remember(activeSeries, activeFacet, activeSort, resumeSeriesIds, uiState.isReorderMode) {
-                        if (uiState.isReorderMode) {
-                            activeSeries
-                        } else {
-                            applySeriesFacetAndSort(
-                                items = activeSeries,
-                                facet = activeFacet,
-                                sort = activeSort,
-                                resumeSeriesIds = resumeSeriesIds
-                            )
-                        }
-                    }
-                    val showSelectedCategoryControls = !uiState.isReorderMode &&
-                        (selectedSavedCategory != null || activeSeries.size > 8)
-                    
-                    var draggingSeries by remember { mutableStateOf<com.streamvault.domain.model.Series?>(null) }
-                    
-                    LaunchedEffect(uiState.isReorderMode) {
-                        if (!uiState.isReorderMode) {
-                            draggingSeries = null
-                        }
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        if (selectedSavedCategory != null) {
-                            SavedCategoryShortcutsRow(
-                                title = stringResource(R.string.library_saved_title),
-                                subtitle = stringResource(R.string.library_saved_subtitle),
-                                emptyHint = stringResource(R.string.series_saved_empty_hint),
-                                shortcuts = savedShortcuts,
-                                managementHint = stringResource(R.string.library_saved_manage_hint),
-                                primaryShortcutLabel = stringResource(R.string.library_browse_all),
-                                isPrimaryShortcutSelected = uiState.selectedCategory == null,
-                                onPrimaryShortcutClick = { viewModel.selectCategory(null) },
-                                selectedShortcutName = uiState.selectedCategory,
-                                onShortcutLongClick = viewModel::showCategoryOptions,
-                                onShortcutClick = viewModel::selectCategory
-                            )
-
-                            SavedCategoryContextCard(
-                                categoryName = selectedSavedCategory.name,
-                                itemCount = uiState.categoryCounts[selectedSavedCategory.name] ?: filteredGridSeries.size,
-                                onManageClick = { viewModel.showCategoryOptions(selectedSavedCategory.name) },
-                                onBrowseAllClick = { viewModel.selectCategory(null) },
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                            )
-                        }
-
-                        if (showSelectedCategoryControls) {
-                            SelectionChipRow(
-                                title = stringResource(R.string.library_filter_title),
-                                chips = buildSeriesFacetChips(
-                                    items = activeSeries,
-                                    resumeSeriesIds = resumeSeriesIds
-                                ),
-                                selectedKey = activeFacet.name,
-                                onChipSelected = { selectedFacet = it },
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                contentPadding = PaddingValues(horizontal = 0.dp)
-                            )
-
-                            SelectionChipRow(
-                                title = stringResource(R.string.library_sort_title),
-                                chips = SeriesLibrarySort.entries.map { sort ->
-                                    SelectionChip(
-                                        key = sort.name,
-                                        label = when (sort) {
-                                            SeriesLibrarySort.LIBRARY -> stringResource(R.string.library_sort_library)
-                                            SeriesLibrarySort.TITLE -> stringResource(R.string.library_sort_az)
-                                            SeriesLibrarySort.UPDATED -> stringResource(R.string.library_sort_updated)
-                                            SeriesLibrarySort.RATING -> stringResource(R.string.library_sort_rating)
-                                        }
-                                    )
-                                },
-                                selectedKey = activeSort.name,
-                                onChipSelected = { selectedSort = it },
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                contentPadding = PaddingValues(horizontal = 0.dp)
-                            )
-                        }
-
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 138.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .onPreviewKeyEvent { event ->
-                                    if (uiState.isReorderMode && event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                                        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-                                            if (draggingSeries != null) {
-                                                draggingSeries = null
-                                                true
-                                            } else {
-                                                viewModel.exitCategoryReorderMode()
-                                                true
-                                            }
-                                        } else false
-                                    } else false
-                                },
-                            contentPadding = PaddingValues(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Column(modifier = Modifier.padding(bottom = 16.dp)) {
-                                    Text(
-                                        text = when (uiState.selectedCategory) {
-                                            uiState.fullLibraryCategoryName -> stringResource(R.string.library_full_browse_title_series)
-                                            else -> uiState.selectedCategory ?: ""
-                                        },
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = Primary,
-                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                                    )
-                                    if (!uiState.isReorderMode && uiState.selectedCategoryTotalCount > 0) {
-                                        Spacer(Modifier.height(6.dp))
-                                        Text(
-                                            text = stringResource(
-                                                R.string.library_loaded_results,
-                                                uiState.selectedCategoryLoadedCount,
-                                                uiState.selectedCategoryTotalCount
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = OnSurfaceDim
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (filteredGridSeries.isEmpty()) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Text(
-                                        text = stringResource(R.string.library_filter_empty),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = OnSurfaceDim,
-                                        modifier = Modifier.padding(bottom = 12.dp)
-                                    )
-                                }
-                            }
-                            
-                            gridItems(
-                                items = filteredGridSeries,
-                                key = { it.id }
-                            ) { series ->
-                            val isLocked = (series.isAdult || series.isUserProtected) && uiState.parentalControlLevel == 1
-                            val isDraggingThis = draggingSeries == series
-
-                            SeriesCard(
-                                series = series,
-                                isLocked = isLocked,
-                                isReorderMode = uiState.isReorderMode,
-                                isDragging = isDraggingThis,
-                                onClick = {
-                                    if (uiState.isReorderMode) {
-                                        draggingSeries = if (isDraggingThis) null else series
-                                    } else if (isLocked) {
-                                        pendingSeriesId = series.id
-                                        showPinDialog = true
-                                    } else {
-                                        onSeriesClick(series.id)
-                                    }
-                                },
-                                onLongClick = {
-                                    if (!uiState.isReorderMode) {
-                                        viewModel.onShowDialog(series)
-                                    }
-                                },
-                                modifier = Modifier.onPreviewKeyEvent { event ->
-                                    if (uiState.isReorderMode && isDraggingThis && event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                                        when (event.nativeKeyEvent.keyCode) {
-                                            android.view.KeyEvent.KEYCODE_DPAD_LEFT,
-                                            android.view.KeyEvent.KEYCODE_DPAD_UP -> {
-                                                viewModel.moveItemUp(series)
-                                                true
-                                            }
-                                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
-                                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                                viewModel.moveItemDown(series)
-                                                true
-                                            }
-                                            else -> false
-                                        }
-                                    } else false
-                                }
-                            )
-                            }
-
-                            if (!uiState.isReorderMode && uiState.canLoadMoreSelectedCategory) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    LoadMoreCard(
-                                        label = stringResource(
-                                            R.string.library_load_more,
-                                            uiState.selectedCategoryLoadedCount,
-                                            uiState.selectedCategoryTotalCount
-                                        ),
-                                        onClick = viewModel::loadMoreSelectedCategory,
-                                        modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
         }
         SnackbarHost(
@@ -856,25 +265,6 @@ fun SeriesScreen(
     }
 }
 
-@Composable
-fun SeriesHeroBanner(
-    series: com.streamvault.domain.model.Series,
-    onClick: () -> Unit
-) {
-    BrowseHeroPanel(
-        title = series.name,
-        subtitle = series.plot ?: stringResource(R.string.series_library_lens_subtitle),
-        onClick = onClick,
-        eyebrow = series.genre ?: series.categoryName,
-        imageUrl = series.backdropUrl ?: series.posterUrl,
-        metadata = listOfNotNull(
-            series.releaseDate,
-            series.rating.takeIf { it > 0f }?.let { "RTG ${String.format("%.1f", it)}" }
-        ),
-        actionLabel = stringResource(R.string.player_resume).substringBefore(" ")
-    )
-}
-
 private enum class SeriesLibraryFacet {
     ALL,
     FAVORITES,
@@ -890,12 +280,14 @@ private fun SeriesVodContent(
     onSelectedFacetChange: (String) -> Unit,
     selectedSort: String,
     onSelectedSortChange: (String) -> Unit,
-    onNavigate: (String) -> Unit,
     onSeriesClick: (Long) -> Unit,
     onProtectedSeriesClick: (Long) -> Unit,
     onShowDialog: (Series) -> Unit,
     onSelectCategory: (String?) -> Unit,
     onSelectFullLibraryBrowse: () -> Unit,
+    onOpenContinueWatching: () -> Unit,
+    onOpenTopRated: () -> Unit,
+    onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
     onDismissReorder: () -> Unit
 ) {
@@ -981,7 +373,7 @@ private fun SeriesVodContent(
                                     key = "resume",
                                     label = stringResource(R.string.library_lens_continue),
                                     detail = "${continueWatching.size} items",
-                                    onClick = { }
+                                    onClick = onOpenContinueWatching
                                 )
                             )
                         }
@@ -991,7 +383,7 @@ private fun SeriesVodContent(
                                     key = SeriesLibraryLens.TOP_RATED.name,
                                     label = stringResource(R.string.library_lens_top_rated),
                                     detail = "${topRatedSeries.size} picks",
-                                    onClick = { }
+                                    onClick = onOpenTopRated
                                 )
                             )
                         }
@@ -1001,7 +393,7 @@ private fun SeriesVodContent(
                                     key = SeriesLibraryLens.FRESH.name,
                                     label = stringResource(R.string.library_lens_fresh_series),
                                     detail = "${freshSeries.size} picks",
-                                    onClick = { }
+                                    onClick = onOpenFresh
                                 )
                             )
                         }
@@ -1172,7 +564,7 @@ private fun SeriesVodContent(
                             key = uiState.selectedCategory ?: "",
                             label = uiState.selectedCategory ?: stringResource(R.string.nav_series),
                             detail = "${uiState.selectedCategoryTotalCount} titles",
-                            onClick = { }
+                            onClick = { showCategoryPicker = true }
                         )
                     )
                 }

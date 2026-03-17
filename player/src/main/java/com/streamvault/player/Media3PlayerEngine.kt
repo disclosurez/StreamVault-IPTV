@@ -38,6 +38,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.graphics.Color as AndroidColor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -85,7 +86,7 @@ class Media3PlayerEngine @Inject constructor(
             AudioManager.AUDIOFOCUS_GAIN -> {
                 hasAudioFocus = true
                 isDucked = false
-                exoPlayer?.volume = currentVolume
+                applyPlayerVolume()
                 if (shouldResumeOnAudioFocusGain) {
                     shouldResumeOnAudioFocusGain = false
                     exoPlayer?.playWhenReady = true
@@ -94,7 +95,7 @@ class Media3PlayerEngine @Inject constructor(
 
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 isDucked = true
-                exoPlayer?.volume = (currentVolume * 0.2f).coerceAtLeast(0.05f)
+                applyPlayerVolume()
             }
 
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
@@ -102,7 +103,7 @@ class Media3PlayerEngine @Inject constructor(
                 isDucked = false
                 shouldResumeOnAudioFocusGain = exoPlayer?.isPlaying == true
                 exoPlayer?.playWhenReady = false
-                exoPlayer?.volume = currentVolume
+                applyPlayerVolume()
             }
 
             AudioManager.AUDIOFOCUS_LOSS -> {
@@ -110,7 +111,7 @@ class Media3PlayerEngine @Inject constructor(
                 isDucked = false
                 shouldResumeOnAudioFocusGain = false
                 exoPlayer?.playWhenReady = false
-                exoPlayer?.volume = currentVolume
+                applyPlayerVolume()
             }
         }
     }
@@ -155,6 +156,18 @@ class Media3PlayerEngine @Inject constructor(
 
     private val _mediaTitle = MutableStateFlow<String?>(null)
     override val mediaTitle: StateFlow<String?> = _mediaTitle.asStateFlow()
+
+    private fun effectiveVolume(): Float {
+        return when {
+            _isMuted.value -> 0f
+            isDucked -> (currentVolume * 0.2f).coerceAtLeast(0.05f)
+            else -> currentVolume
+        }
+    }
+
+    private fun applyPlayerVolume() {
+        exoPlayer?.volume = effectiveVolume()
+    }
 
     private fun getOrCreatePlayer(): ExoPlayer {
         return exoPlayer ?: createPlayer().also {
@@ -392,6 +405,7 @@ class Media3PlayerEngine @Inject constructor(
         _error.tryEmit(null)
         _playerStats.value = PlayerStats() // reset stats
         _mediaTitle.value = null
+        applyPlayerVolume()
 
         // If we already preloaded this exact stream, use the cached source
         val mediaSource = if (preloadedStreamInfo?.url == streamInfo.url && preloadedSource != null) {
@@ -534,23 +548,36 @@ class Media3PlayerEngine @Inject constructor(
 
     override fun setVolume(volume: Float) {
         currentVolume = volume.coerceIn(0f, 1f)
-        _isMuted.value = false
-        exoPlayer?.volume = if (isDucked) {
-            (currentVolume * 0.2f).coerceAtLeast(0.05f)
-        } else {
-            currentVolume
+        if (currentVolume > 0f) {
+            volumeBeforeMute = currentVolume
+            _isMuted.value = false
         }
+        applyPlayerVolume()
+    }
+
+    override fun setMuted(muted: Boolean) {
+        if (muted == _isMuted.value) {
+            applyPlayerVolume()
+            return
+        }
+
+        if (muted) {
+            if (currentVolume > 0f) {
+                volumeBeforeMute = currentVolume.coerceAtLeast(0.1f)
+            }
+            _isMuted.value = true
+        } else {
+            _isMuted.value = false
+            if (currentVolume <= 0f) {
+                currentVolume = volumeBeforeMute.coerceIn(0.1f, 1f)
+            }
+        }
+
+        applyPlayerVolume()
     }
 
     override fun toggleMute() {
-        if (_isMuted.value) {
-            _isMuted.value = false
-            exoPlayer?.volume = volumeBeforeMute
-        } else {
-            volumeBeforeMute = currentVolume.coerceAtLeast(0.1f)
-            _isMuted.value = true
-            exoPlayer?.volume = 0f
-        }
+        setMuted(!_isMuted.value)
     }
 
     override fun setScrubbingMode(enabled: Boolean) {
@@ -724,16 +751,25 @@ class Media3PlayerEngine @Inject constructor(
     override fun createRenderView(context: Context, resizeMode: PlayerSurfaceResizeMode): View {
         return PlayerView(context).apply {
             useController = false
+            setShutterBackgroundColor(AndroidColor.TRANSPARENT)
+            setKeepContentOnPlayerReset(true)
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-            player = exoPlayer
+            enableComposeSurfaceSyncWorkaroundIfAvailable()
             applyResizeMode(resizeMode)
         }
     }
 
     override fun bindRenderView(renderView: View, resizeMode: PlayerSurfaceResizeMode) {
         val playerView = renderView as? PlayerView ?: return
-        if (playerView.player !== exoPlayer) {
-            playerView.player = exoPlayer
+        val player = getOrCreatePlayer()
+        playerView.enableComposeSurfaceSyncWorkaroundIfAvailable()
+        if (playerView.player !== player) {
+            playerView.player = player
+        } else {
+            // Compose can keep the same PlayerView instance while its underlying surface is recreated.
+            // Reattaching the player forces Media3 to reconnect video output to the fresh surface.
+            playerView.player = null
+            playerView.player = player
         }
         playerView.applyResizeMode(resizeMode)
     }
@@ -746,11 +782,18 @@ class Media3PlayerEngine @Inject constructor(
         }
     }
 
+    private fun PlayerView.enableComposeSurfaceSyncWorkaroundIfAvailable() {
+        runCatching {
+            javaClass.getMethod("setEnableComposeSurfaceSyncWorkaround", Boolean::class.javaPrimitiveType)
+                .invoke(this, true)
+        }
+    }
+
     private fun requestAudioFocusIfNeeded(): Boolean {
         if (hasAudioFocus) {
             if (isDucked) {
                 isDucked = false
-                exoPlayer?.volume = currentVolume
+                applyPlayerVolume()
             }
             return true
         }
@@ -762,7 +805,7 @@ class Media3PlayerEngine @Inject constructor(
             return false
         }
         isDucked = false
-        exoPlayer?.volume = currentVolume
+        applyPlayerVolume()
         return true
     }
 

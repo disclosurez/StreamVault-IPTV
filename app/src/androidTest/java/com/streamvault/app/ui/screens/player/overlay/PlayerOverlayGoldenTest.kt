@@ -47,6 +47,8 @@ class PlayerOverlayGoldenTest {
                         audioTrackCount = 2,
                         videoQualityCount = 2,
                         currentRecordingStatus = null,
+                        isMuted = false,
+                        mediaTitle = null,
                         playButtonFocusRequester = FocusRequester(),
                         onClose = {},
                         onTogglePlayPause = {},
@@ -62,6 +64,7 @@ class PlayerOverlayGoldenTest {
                         onOpenAudioTracks = {},
                         onOpenVideoTracks = {},
                         onOpenSplitScreen = {},
+                        onToggleMute = {},
                         clockLabelOverride = TestFixtures.fixedClock
                     )
                 }

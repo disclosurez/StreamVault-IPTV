@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,6 +43,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.R
+import com.streamvault.app.ui.components.ChannelLogoBadge
 import com.streamvault.app.ui.components.rememberCrossfadeImageModel
 import com.streamvault.app.ui.design.AppColors
 import com.streamvault.app.ui.design.AppMotion
@@ -92,25 +94,16 @@ fun LiveChannelRowCard(
                     .width(logoWidth)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(AppColors.SurfaceEmphasis),
-                contentAlignment = Alignment.Center
             ) {
-                // Fallback initials always visible; covered by AsyncImage on successful load
-                Text(
-                    text = channel.name.take(2).uppercase(),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = AppColors.TextSecondary
+                ChannelLogoBadge(
+                    channelName = channel.name,
+                    logoUrl = channel.logoUrl,
+                    backgroundColor = AppColors.SurfaceEmphasis,
+                    contentPadding = PaddingValues(logoPadding),
+                    textStyle = MaterialTheme.typography.titleLarge,
+                    textColor = AppColors.TextSecondary,
+                    modifier = Modifier.fillMaxSize()
                 )
-                if (!channel.logoUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = rememberCrossfadeImageModel(channel.logoUrl),
-                        contentDescription = channel.name,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(logoPadding),
-                        contentScale = ContentScale.Fit
-                    )
-                }
             }
             Column(
                 modifier = Modifier.weight(1f),

@@ -89,6 +89,8 @@ class SyncManager @Inject constructor(
         private val startId: Long  // retained for API compatibility but no longer used in ID generation
     ) {
         private val categoryIds = LinkedHashMap<String, Long>()
+        val count: Int
+            get() = categoryIds.size
 
         fun idFor(name: String): Long {
             return categoryIds.getOrPut(name) { stableId(providerId, type, name) }
@@ -439,6 +441,8 @@ class SyncManager @Inject constructor(
         var nextMilestone = PROGRESS_INTERVAL
         val warnings = mutableListOf<String>()
         var insecureStreamCount = 0
+        var publishedLiveCategoryCount = 0
+        var publishedMovieCategoryCount = 0
 
         openPlaylistStream(provider) { streamed ->
             progress(onProgress, "Parsing Playlist...")
@@ -455,6 +459,14 @@ class SyncManager @Inject constructor(
                 ) { entry ->
                     parsedCount++
                     if (parsedCount >= nextMilestone) {
+                        if (includeLive && liveCategories.count > publishedLiveCategoryCount) {
+                            categoryDao.insertAll(liveCategories.entities())
+                            publishedLiveCategoryCount = liveCategories.count
+                        }
+                        if (includeMovies && movieCategories.count > publishedMovieCategoryCount) {
+                            categoryDao.insertAll(movieCategories.entities())
+                            publishedMovieCategoryCount = movieCategories.count
+                        }
                         progress(onProgress, "Imported $parsedCount playlist entries...")
                         nextMilestone += PROGRESS_INTERVAL
                     }

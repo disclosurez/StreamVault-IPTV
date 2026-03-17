@@ -62,6 +62,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.R
+import com.streamvault.app.ui.components.ChannelLogoBadge
 import com.streamvault.app.ui.components.rememberCrossfadeImageModel
 import com.streamvault.app.ui.components.shell.StatusPill
 import com.streamvault.app.ui.design.AppColors
@@ -200,27 +201,17 @@ fun ChannelInfoOverlay(
                             modifier = Modifier
                                 .size(52.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(AppColors.SurfaceEmphasis.copy(alpha = 0.46f))
-                                .border(1.dp, AppColors.Focus.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center
+                                .border(1.dp, AppColors.Focus.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
                         ) {
-                            if (!currentChannel.logoUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = rememberCrossfadeImageModel(currentChannel.logoUrl),
-                                    contentDescription = currentChannel.name,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(6.dp),
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                                )
-                            } else {
-                                Text(
-                                    text = currentChannel.name.take(2).uppercase(Locale.getDefault()),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = AppColors.TextSecondary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            ChannelLogoBadge(
+                                channelName = currentChannel.name,
+                                logoUrl = currentChannel.logoUrl,
+                                backgroundColor = AppColors.SurfaceEmphasis.copy(alpha = 0.46f),
+                                contentPadding = PaddingValues(6.dp),
+                                textStyle = MaterialTheme.typography.labelLarge,
+                                textColor = AppColors.TextSecondary,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
                     }
                     Column(

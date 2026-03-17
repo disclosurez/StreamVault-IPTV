@@ -38,6 +38,7 @@ interface PlayerEngine {
     fun seekBackward(ms: Long = 10_000)
     fun setDecoderMode(mode: DecoderMode)
     fun setVolume(volume: Float)
+    fun setMuted(muted: Boolean)
     fun selectAudioTrack(trackId: String)
     fun selectSubtitleTrack(trackId: String?) // null to disable subtitles
     fun release()

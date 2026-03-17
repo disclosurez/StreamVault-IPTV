@@ -80,7 +80,11 @@ fun ChipRowSection(
             contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(chips, key = { it.key }) { chip ->
+            items(
+                items = chips,
+                key = { it.key },
+                contentType = { "selection_chip" }
+            ) { chip ->
                 val isSelected = chip.key == selectedKey
                 Surface(
                     onClick = chip.onClick,

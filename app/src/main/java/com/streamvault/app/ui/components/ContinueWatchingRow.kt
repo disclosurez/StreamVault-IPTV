@@ -70,7 +70,11 @@ fun ContinueWatchingRow(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(items = items, key = { it.id }) { history ->
+            items(
+                items = items,
+                key = { it.id },
+                contentType = { it.contentType }
+            ) { history ->
                 ContinueWatchingTile(history = history, onClick = { onItemClick(history) })
             }
         }

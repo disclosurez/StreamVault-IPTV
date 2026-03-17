@@ -143,6 +143,10 @@ class MainActivity : ComponentActivity() {
         applyPlayerPictureInPictureParams()
     }
 
+    fun enterPlayerPictureInPictureModeFromPlayer(): Boolean {
+        return enterPlayerPictureInPictureModeIfEligible()
+    }
+
     private fun enterPlayerPictureInPictureModeIfEligible(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) {
             return false

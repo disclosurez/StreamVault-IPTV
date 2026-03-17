@@ -16,7 +16,6 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import java.util.concurrent.TimeUnit
 
 @HiltAndroidApp
 class StreamVaultApp : Application(), SingletonImageLoader.Factory {
@@ -28,6 +27,7 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
         // BLD-H02: Require network + device idle so the worker doesn't drain battery.
         val gcConstraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresBatteryNotLow(true)
             .setRequiresDeviceIdle(true)
             .build()
 

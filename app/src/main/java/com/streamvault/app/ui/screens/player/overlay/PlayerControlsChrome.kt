@@ -10,9 +10,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,10 +36,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -89,6 +93,7 @@ fun PlayerControlsOverlay(
     isMuted: Boolean,
     mediaTitle: String?,
     playButtonFocusRequester: FocusRequester,
+    quickActionsFocusRequester: FocusRequester,
     onClose: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSeekBackward: () -> Unit,
@@ -103,7 +108,10 @@ fun PlayerControlsOverlay(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
+    onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit,
+    onSeekToPosition: (Long) -> Unit = {},
+    onSetScrubbingMode: (Boolean) -> Unit = {},
     clockLabelOverride: String? = null,
     modifier: Modifier = Modifier
 ) {
@@ -137,6 +145,7 @@ fun PlayerControlsOverlay(
                 currentRecordingStatus = currentRecordingStatus,
                 isMuted = isMuted,
                 mediaTitle = mediaTitle,
+                quickActionsFocusRequester = quickActionsFocusRequester,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 onRestartProgram = onRestartProgram,
                 onOpenArchive = onOpenArchive,
@@ -148,13 +157,17 @@ fun PlayerControlsOverlay(
                 onOpenAudioTracks = onOpenAudioTracks,
                 onOpenVideoTracks = onOpenVideoTracks,
                 onOpenSplitScreen = onOpenSplitScreen,
-                onToggleMute = onToggleMute
+                onEnterPictureInPicture = onEnterPictureInPicture,
+                onToggleMute = onToggleMute,
+                onSeekToPosition = onSeekToPosition,
+                onSetScrubbingMode = onSetScrubbingMode
             )
 
             if (contentType != "LIVE") {
                 PlayerTransportBar(
                     isPlaying = isPlaying,
                     playButtonFocusRequester = playButtonFocusRequester,
+                    quickActionsFocusRequester = quickActionsFocusRequester,
                     onSeekBackward = onSeekBackward,
                     onSeekForward = onSeekForward,
                     onTogglePlayPause = onTogglePlayPause,
@@ -429,6 +442,7 @@ private fun PlayerBottomBar(
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     mediaTitle: String?,
+    quickActionsFocusRequester: FocusRequester,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
     onStartRecording: () -> Unit,
@@ -439,7 +453,10 @@ private fun PlayerBottomBar(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
+    onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit,
+    onSeekToPosition: (Long) -> Unit,
+    onSetScrubbingMode: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -483,6 +500,7 @@ private fun PlayerBottomBar(
                     currentRecordingStatus = currentRecordingStatus,
                     isMuted = isMuted,
                     mediaTitle = mediaTitle,
+                    quickActionsFocusRequester = quickActionsFocusRequester,
                     onRestartProgram = onRestartProgram,
                     onOpenArchive = onOpenArchive,
                     onStartRecording = onStartRecording,
@@ -493,11 +511,13 @@ private fun PlayerBottomBar(
                     onOpenAudioTracks = onOpenAudioTracks,
                     onOpenVideoTracks = onOpenVideoTracks,
                     onOpenSplitScreen = onOpenSplitScreen,
+                    onEnterPictureInPicture = onEnterPictureInPicture,
                     onToggleMute = onToggleMute
                 )
             } else if (contentType != "LIVE") {
                 PlayerVodInfo(
                     title = title,
+                    contentType = contentType,
                     currentPosition = currentPosition,
                     duration = duration,
                     aspectRatioLabel = aspectRatioLabel,
@@ -505,10 +525,14 @@ private fun PlayerBottomBar(
                     audioTrackCount = audioTrackCount,
                     videoQualityCount = videoQualityCount,
                     isMuted = isMuted,
+                    quickActionsFocusRequester = quickActionsFocusRequester,
+                    onSeekToPosition = onSeekToPosition,
+                    onSetScrubbingMode = onSetScrubbingMode,
                     onToggleAspectRatio = onToggleAspectRatio,
                     onOpenSubtitleTracks = onOpenSubtitleTracks,
                     onOpenAudioTracks = onOpenAudioTracks,
                     onOpenVideoTracks = onOpenVideoTracks,
+                    onEnterPictureInPicture = onEnterPictureInPicture,
                     onToggleMute = onToggleMute
                 )
             }
@@ -529,6 +553,7 @@ private fun PlayerLiveInfo(
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     mediaTitle: String?,
+    quickActionsFocusRequester: FocusRequester,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
     onStartRecording: () -> Unit,
@@ -539,9 +564,15 @@ private fun PlayerLiveInfo(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
+    onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit
 ) {
     val primaryActions = buildList {
+        add(PlayerActionSpec(
+            stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
+            onToggleMute
+        ))
+        add(PlayerActionSpec(stringResource(R.string.player_picture_in_picture), onEnterPictureInPicture))
         if (currentProgram?.hasArchive == true) {
             add(PlayerActionSpec(stringResource(R.string.player_restart), onRestartProgram))
             add(PlayerActionSpec(stringResource(R.string.player_archive), onOpenArchive))
@@ -555,10 +586,6 @@ private fun PlayerLiveInfo(
     }
     val secondaryActions = buildList {
         add(PlayerActionSpec(stringResource(R.string.player_aspect_ratio_label, aspectRatioLabel), onToggleAspectRatio))
-        add(PlayerActionSpec(
-            stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
-            onToggleMute
-        ))
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }
@@ -576,11 +603,17 @@ private fun PlayerLiveInfo(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 PlayerMetaPill(text = stringResource(R.string.player_live_now), accent = true)
                 PlayerMetaPill(text = stringResource(R.string.player_live_channel, displayChannelNumber))
                 if (currentProgram?.hasArchive == true) {
                     PlayerMetaPill(text = stringResource(R.string.player_archive_badge))
+                }
+                if (isMuted) {
+                    PlayerMetaPill(text = stringResource(R.string.player_muted_badge))
                 }
             }
             Text(
@@ -641,12 +674,17 @@ private fun PlayerLiveInfo(
         Spacer(modifier = Modifier.height(10.dp))
     }
 
-    PlayerQuickActionRows(primaryActions, secondaryActions)
+    PlayerQuickActionRows(
+        primaryActions = primaryActions,
+        secondaryActions = secondaryActions,
+        firstActionFocusRequester = quickActionsFocusRequester
+    )
 }
 
 @Composable
 private fun PlayerVodInfo(
     title: String,
+    contentType: String,
     currentPosition: Long,
     duration: Long,
     aspectRatioLabel: String,
@@ -654,10 +692,14 @@ private fun PlayerVodInfo(
     audioTrackCount: Int,
     videoQualityCount: Int,
     isMuted: Boolean,
+    quickActionsFocusRequester: FocusRequester,
+    onSeekToPosition: (Long) -> Unit,
+    onSetScrubbingMode: (Boolean) -> Unit,
     onToggleAspectRatio: () -> Unit,
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
+    onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit
 ) {
     val actions = buildList {
@@ -666,6 +708,7 @@ private fun PlayerVodInfo(
             stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
             onToggleMute
         ))
+        add(PlayerActionSpec(stringResource(R.string.player_picture_in_picture), onEnterPictureInPicture))
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }
@@ -681,7 +724,17 @@ private fun PlayerVodInfo(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        PlayerMetaPill(text = stringResource(R.string.player_playback_label), accent = true)
+        PlayerMetaPill(
+            text = if (contentType == "MOVIE") {
+                stringResource(R.string.player_type_movie)
+            } else {
+                stringResource(R.string.player_type_series)
+            },
+            accent = true
+        )
+        if (isMuted) {
+            PlayerMetaPill(text = stringResource(R.string.player_muted_badge))
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
@@ -693,17 +746,58 @@ private fun PlayerVodInfo(
     Spacer(modifier = Modifier.height(14.dp))
 
     Row(verticalAlignment = Alignment.CenterVertically) {
+        var sliderValue by remember(duration, currentPosition) {
+            mutableStateOf(
+                if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
+            )
+        }
+        var isScrubbing by remember { mutableStateOf(false) }
+        val latestSeekCallback by rememberUpdatedState(onSeekToPosition)
+        val latestScrubbingCallback by rememberUpdatedState(onSetScrubbingMode)
+
+        LaunchedEffect(duration, currentPosition, isScrubbing) {
+            if (!isScrubbing) {
+                sliderValue = if (duration > 0) {
+                    currentPosition.toFloat() / duration.toFloat()
+                } else {
+                    0f
+                }
+            }
+        }
+
         Text(
-            text = formatDuration(currentPosition),
+            text = formatDuration(
+                if (isScrubbing && duration > 0) {
+                    (sliderValue * duration).toLong()
+                } else {
+                    currentPosition
+                }
+            ),
             style = MaterialTheme.typography.labelMedium,
             color = Color.White
         )
         Slider(
-            value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
-            onValueChange = { },
+            value = sliderValue,
+            onValueChange = { newValue ->
+                if (!isScrubbing) {
+                    isScrubbing = true
+                    latestScrubbingCallback(true)
+                }
+                sliderValue = newValue
+            },
+            onValueChangeFinished = {
+                if (duration > 0) {
+                    latestSeekCallback((sliderValue.coerceIn(0f, 1f) * duration).toLong())
+                }
+                if (isScrubbing) {
+                    latestScrubbingCallback(false)
+                    isScrubbing = false
+                }
+            },
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 16.dp),
+            enabled = duration > 0,
             colors = SliderDefaults.colors(
                 activeTrackColor = Primary,
                 inactiveTrackColor = Color.White.copy(alpha = 0.2f)
@@ -716,13 +810,19 @@ private fun PlayerVodInfo(
         )
     }
 
-    PlayerQuickActionRows(actions, emptyList())
+    PlayerQuickActionRows(
+        primaryActions = actions,
+        secondaryActions = emptyList(),
+        firstActionFocusRequester = quickActionsFocusRequester,
+        primaryActionsUpFocusRequester = quickActionsFocusRequester
+    )
 }
 
 @Composable
 private fun PlayerTransportBar(
     isPlaying: Boolean,
     playButtonFocusRequester: FocusRequester,
+    quickActionsFocusRequester: FocusRequester,
     onSeekBackward: () -> Unit,
     onSeekForward: () -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -751,7 +851,10 @@ private fun PlayerTransportBar(
             PlayerTransportButton(
                 label = "\u23EA",
                 contentDescription = stringResource(R.string.player_rewind),
-                onClick = onSeekBackward
+                onClick = onSeekBackward,
+                modifier = Modifier.focusProperties {
+                    down = quickActionsFocusRequester
+                }
             )
             Surface(
                 onClick = onTogglePlayPause,
@@ -763,6 +866,9 @@ private fun PlayerTransportBar(
                 modifier = Modifier
                     .size(80.dp)
                     .focusRequester(playButtonFocusRequester)
+                    .focusProperties {
+                        down = quickActionsFocusRequester
+                    }
                     .semantics { contentDescription = playPauseDescription }
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
@@ -785,7 +891,10 @@ private fun PlayerTransportBar(
             PlayerTransportButton(
                 label = "\u23E9",
                 contentDescription = stringResource(R.string.player_forward),
-                onClick = onSeekForward
+                onClick = onSeekForward,
+                modifier = Modifier.focusProperties {
+                    down = quickActionsFocusRequester
+                }
             )
         }
     }
@@ -794,7 +903,8 @@ private fun PlayerTransportBar(
 @Composable
 private fun PlayerQuickSettingsButton(
     text: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         onClick = onClick,
@@ -802,7 +912,8 @@ private fun PlayerQuickSettingsButton(
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.White.copy(alpha = 0.1f),
             focusedContainerColor = Primary.copy(alpha = 0.9f)
-        )
+        ),
+        modifier = modifier
     ) {
         Text(
             text = text,
@@ -817,7 +928,8 @@ private fun PlayerQuickSettingsButton(
 private fun PlayerTransportButton(
     label: String,
     contentDescription: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         onClick = onClick,
@@ -826,7 +938,7 @@ private fun PlayerTransportButton(
             containerColor = Color.White.copy(alpha = 0.1f),
             focusedContainerColor = Color.White.copy(alpha = 0.3f)
         ),
-        modifier = Modifier
+        modifier = modifier
             .size(56.dp)
             .semantics { this.contentDescription = contentDescription }
     ) {
@@ -860,10 +972,13 @@ private fun PlayerMetaPill(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PlayerQuickActionRows(
     primaryActions: List<PlayerActionSpec>,
-    secondaryActions: List<PlayerActionSpec>
+    secondaryActions: List<PlayerActionSpec>,
+    firstActionFocusRequester: FocusRequester,
+    primaryActionsUpFocusRequester: FocusRequester? = null
 ) {
     val rows = listOf(primaryActions, secondaryActions).filter { it.isNotEmpty() }
     if (rows.isEmpty()) return
@@ -872,12 +987,31 @@ private fun PlayerQuickActionRows(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEachIndexed { index, row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (index == 1) {
                     PlayerMetaPill(text = stringResource(R.string.player_more_controls))
                 }
-                row.forEach { action ->
-                    PlayerQuickSettingsButton(action.label, action.onClick)
+                row.forEachIndexed { actionIndex, action ->
+                    PlayerQuickSettingsButton(
+                        text = action.label,
+                        onClick = action.onClick,
+                        modifier = Modifier
+                            .then(
+                                if (index == 0 && actionIndex == 0) {
+                                    Modifier.focusRequester(firstActionFocusRequester)
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .focusProperties {
+                                if (index == 0 && actionIndex == 0 && primaryActionsUpFocusRequester != null) {
+                                    up = primaryActionsUpFocusRequester
+                                }
+                            }
+                    )
                 }
             }
         }

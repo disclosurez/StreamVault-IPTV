@@ -77,6 +77,8 @@ class PlayerSmokeTest {
                     audioTrackCount = 2,
                     videoQualityCount = 2,
                     currentRecordingStatus = null,
+                    isMuted = false,
+                    mediaTitle = null,
                     playButtonFocusRequester = playButtonFocusRequester,
                     onClose = {},
                     onTogglePlayPause = {},
@@ -92,6 +94,7 @@ class PlayerSmokeTest {
                     onOpenAudioTracks = {},
                     onOpenVideoTracks = {},
                     onOpenSplitScreen = {},
+                    onToggleMute = {},
                     clockLabelOverride = TestFixtures.fixedClock
                 )
                 LaunchedEffect(Unit) {
@@ -101,6 +104,52 @@ class PlayerSmokeTest {
         }
 
         composeRule.onNodeWithText(">").assertIsFocused()
+    }
+
+    @Test
+    fun playerControlsOverlay_showsMuteActionWhenMuted() {
+        composeRule.setContent {
+            StreamVaultTheme {
+                PlayerControlsOverlay(
+                    visible = true,
+                    title = TestFixtures.liveTitle,
+                    contentType = "LIVE",
+                    isPlaying = true,
+                    currentProgram = null,
+                    currentChannelName = TestFixtures.liveTitle,
+                    displayChannelNumber = TestFixtures.displayChannelNumber,
+                    currentPosition = 0L,
+                    duration = 0L,
+                    aspectRatioLabel = TestFixtures.aspectRatioLabel,
+                    subtitleTrackCount = 1,
+                    audioTrackCount = 2,
+                    videoQualityCount = 2,
+                    currentRecordingStatus = null,
+                    isMuted = true,
+                    mediaTitle = null,
+                    playButtonFocusRequester = FocusRequester(),
+                    onClose = {},
+                    onTogglePlayPause = {},
+                    onSeekBackward = {},
+                    onSeekForward = {},
+                    onRestartProgram = {},
+                    onOpenArchive = {},
+                    onStartRecording = {},
+                    onStopRecording = {},
+                    onScheduleRecording = {},
+                    onToggleAspectRatio = {},
+                    onOpenSubtitleTracks = {},
+                    onOpenAudioTracks = {},
+                    onOpenVideoTracks = {},
+                    onOpenSplitScreen = {},
+                    onToggleMute = {},
+                    clockLabelOverride = TestFixtures.fixedClock
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Muted").assertExists()
+        composeRule.onNodeWithText("Unmute").assertExists()
     }
 
     @Test

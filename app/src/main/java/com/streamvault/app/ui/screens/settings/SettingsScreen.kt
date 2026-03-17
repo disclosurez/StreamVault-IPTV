@@ -967,6 +967,11 @@ private fun ProviderSettingsCard(
                 }
                 ProviderCompactStat(title = stringResource(R.string.settings_diagnostic_epg), count = model.epgCount)
             }
+
+            ProviderDiagnosticsPanel(
+                provider = provider,
+                diagnostics = model
+            )
         }
 
         if (syncWarnings.isNotEmpty()) {

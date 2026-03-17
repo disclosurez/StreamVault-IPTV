@@ -1,5 +1,6 @@
 package com.streamvault.data.repository
 
+import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.FavoriteDao
 import com.streamvault.data.local.dao.VirtualGroupDao
 import com.streamvault.data.local.entity.CategoryCount
@@ -15,7 +16,8 @@ import javax.inject.Singleton
 @Singleton
 class FavoriteRepositoryImpl @Inject constructor(
     private val favoriteDao: FavoriteDao,
-    private val virtualGroupDao: VirtualGroupDao
+    private val virtualGroupDao: VirtualGroupDao,
+    private val transactionRunner: DatabaseTransactionRunner
 ) : FavoriteRepository {
 
     override fun getFavorites(contentType: ContentType?): Flow<List<Favorite>> {
@@ -50,14 +52,16 @@ class FavoriteRepositoryImpl @Inject constructor(
         contentType: ContentType,
         groupId: Long?
     ): Result<Unit> = try {
-        val maxPos = favoriteDao.getMaxPosition(groupId) ?: -1
-        val favorite = Favorite(
-            contentId = contentId,
-            contentType = contentType,
-            position = maxPos + 1,
-            groupId = groupId
-        )
-        favoriteDao.insert(favorite.toEntity())
+        transactionRunner.inTransaction {
+            val maxPos = favoriteDao.getMaxPosition(groupId) ?: -1
+            val favorite = Favorite(
+                contentId = contentId,
+                contentType = contentType,
+                position = maxPos + 1,
+                groupId = groupId
+            )
+            favoriteDao.insert(favorite.toEntity())
+        }
         Result.success(Unit)
     } catch (e: Exception) {
         Result.error("Failed to add favorite: ${e.message}", e)

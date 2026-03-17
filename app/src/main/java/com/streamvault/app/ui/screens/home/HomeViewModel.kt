@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.streamvault.app.di.AuxiliaryPlayerEngine
 import com.streamvault.app.ui.model.LiveTvChannelMode
 import com.streamvault.data.preferences.PreferencesRepository
+import com.streamvault.data.sync.SyncManager
 import com.streamvault.domain.manager.ParentalControlManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
@@ -14,6 +15,7 @@ import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.StreamInfo
+import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.repository.CategoryRepository
 import com.streamvault.domain.repository.ChannelRepository
@@ -26,6 +28,7 @@ import com.streamvault.player.PlaybackState
 import com.streamvault.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.streamvault.app.R
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -48,6 +51,7 @@ class HomeViewModel @Inject constructor(
     private val playbackHistoryRepository: PlaybackHistoryRepository,
     private val getCustomCategories: GetCustomCategories,
     private val parentalControlManager: ParentalControlManager,
+    private val syncManager: SyncManager,
     @AuxiliaryPlayerEngine
     private val playerEngineProvider: InjectProvider<PlayerEngine>
 ) : ViewModel() {
@@ -100,7 +104,13 @@ class HomeViewModel @Inject constructor(
                     }
                 }
 
-                _uiState.update { it.copy(filteredChannels = markedChannels, isLoading = false) }
+                _uiState.update { state ->
+                    if (state.isChannelReorderMode) {
+                        state
+                    } else {
+                        state.copy(filteredChannels = markedChannels)
+                    }
+                }
                 val previewChannelId = _uiState.value.previewChannelId
                 if (previewChannelId != null && markedChannels.none { it.id == previewChannelId }) {
                     clearPreview()
@@ -152,6 +162,22 @@ class HomeViewModel @Inject constructor(
                         clearPreview()
                     }
                 }
+        }
+
+        viewModelScope.launch {
+            syncManager.syncState.collectLatest { syncState ->
+                val isSyncing = syncState is SyncState.Syncing
+                _uiState.update { state ->
+                    state.copy(
+                        isSyncing = isSyncing,
+                        isLoading = when {
+                            state.hasChannels -> false
+                            isSyncing && state.selectedCategory != null -> true
+                            else -> state.isLoading && isSyncing
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -256,7 +282,13 @@ class HomeViewModel @Inject constructor(
         if (_uiState.value.selectedCategory?.id == category.id) return
         parentalControlManager.clearUnlockedCategories(_uiState.value.provider?.id)
         clearPreview()
-        _uiState.update { it.copy(selectedCategory = category, isLoading = true) }
+        _uiState.update {
+            it.copy(
+                selectedCategory = category,
+                isLoading = true,
+                errorMessage = null
+            )
+        }
         _preferredInitialCategoryId.value = null
         if (category.id != VirtualCategoryIds.RECENT) {
             val providerId = _uiState.value.provider?.id
@@ -290,50 +322,65 @@ class HomeViewModel @Inject constructor(
         loadChannelsJob?.cancel()
         loadChannelsJob = viewModelScope.launch {
             try {
-            val queryFlow = _uiState.map { it.channelSearchQuery }
-                .debounce(150)
-                .distinctUntilChanged()
+                _uiState.update {
+                    it.copy(
+                        isLoading = true,
+                        errorMessage = null
+                    )
+                }
 
-            val channelsFlow = if (category.isVirtual) {
-                val orderedFlow = if (category.id == VirtualCategoryIds.RECENT) {
-                    playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit = 24)
-                        .map { it.toRecentLiveContentIds() }
-                        .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
-                } else if (category.id == VirtualCategoryIds.FAVORITES) {
-                    favoriteRepository.getFavorites(ContentType.LIVE)
-                        .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
-                        .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
+                val queryFlow = _uiState.map { it.channelSearchQuery }
+                    .debounce(150)
+                    .distinctUntilChanged()
+
+                val channelsFlow = if (category.isVirtual) {
+                    val orderedFlow = if (category.id == VirtualCategoryIds.RECENT) {
+                        playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit = 24)
+                            .map { it.toRecentLiveContentIds() }
+                            .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
+                    } else if (category.id == VirtualCategoryIds.FAVORITES) {
+                        favoriteRepository.getFavorites(ContentType.LIVE)
+                            .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
+                            .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
+                    } else {
+                        val groupId = -category.id
+                        favoriteRepository.getFavoritesByGroup(groupId)
+                            .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
+                            .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
+                    }
+
+                    combine(orderedFlow, queryFlow) { channels, query ->
+                        if (query.isBlank()) {
+                            channels
+                        } else {
+                            channels.filter { it.name.contains(query, ignoreCase = true) }
+                        }
+                    }
                 } else {
-                    val groupId = -category.id
-                    favoriteRepository.getFavoritesByGroup(groupId)
-                        .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
-                        .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
-                }
-
-                combine(orderedFlow, queryFlow) { channels, query ->
-                    if (query.isBlank()) {
-                        channels
-                    } else {
-                        channels.filter { it.name.contains(query, ignoreCase = true) }
+                    queryFlow.flatMapLatest { query ->
+                        if (query.isBlank()) {
+                            channelRepository.getChannelsByCategory(providerId, category.id)
+                        } else {
+                            channelRepository.searchChannelsByCategory(providerId, category.id, query)
+                        }
                     }
                 }
-            } else {
-                queryFlow.flatMapLatest { query ->
-                    if (query.isBlank()) {
-                        channelRepository.getChannelsByCategory(providerId, category.id)
-                    } else {
-                        channelRepository.searchChannelsByCategory(providerId, category.id, query)
+
+                channelsFlow.collect { channels ->
+                    val numberedChannels = channels.mapIndexed { index, channel ->
+                        channel.copy(number = index + 1)
+                    }
+                    _localChannels.value = numberedChannels
+                    _uiState.update {
+                        it.copy(
+                            hasChannels = numberedChannels.isNotEmpty(),
+                            isLoading = numberedChannels.isEmpty() && it.isSyncing,
+                            errorMessage = null
+                        )
                     }
                 }
-            }
-
-            channelsFlow.collect { channels ->
-                val numberedChannels = channels.mapIndexed { index, channel ->
-                    channel.copy(number = index + 1)
-                }
-                _uiState.update { it.copy(hasChannels = numberedChannels.isNotEmpty(), isLoading = false, errorMessage = null) }
-                _localChannels.value = numberedChannels
-            }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -346,10 +393,12 @@ class HomeViewModel @Inject constructor(
     }
 
     fun updateCategorySearchQuery(query: String) {
+        if (_uiState.value.isChannelReorderMode) return
         _uiState.update { it.copy(categorySearchQuery = query) }
     }
 
     fun updateChannelSearchQuery(query: String) {
+        if (_uiState.value.isChannelReorderMode) return
         _uiState.update { it.copy(channelSearchQuery = query) }
     }
 
@@ -886,6 +935,7 @@ data class HomeUiState(
     val filteredChannels: List<Channel> = emptyList(),
     val hasChannels: Boolean = false,
     val isLoading: Boolean = true,
+    val isSyncing: Boolean = false,
     val categorySearchQuery: String = "",
     val channelSearchQuery: String = "",
     val showDialog: Boolean = false,
