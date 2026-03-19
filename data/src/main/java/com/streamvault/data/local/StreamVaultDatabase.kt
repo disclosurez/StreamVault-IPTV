@@ -26,7 +26,7 @@ import com.streamvault.data.local.entity.*
         PlaybackHistoryEntity::class,
         SyncMetadataEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = true   // ← was false; schema JSON now tracked in version control
 )
 @TypeConverters(RoomEnumConverters::class)
@@ -926,6 +926,24 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_channel_preferences_channel_id ON channel_preferences(channel_id)"
+                )
+            }
+        }
+
+        /**
+         * Migration 13 → 14: add targeted secondary indexes for broad EPG windows,
+         * provider/type category filtering, and virtual group content type lookups.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_programs_provider_id_start_time_end_time ON programs(provider_id, start_time, end_time)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_categories_provider_id_type ON categories(provider_id, type)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_virtual_groups_content_type ON virtual_groups(content_type)"
                 )
             }
         }

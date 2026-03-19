@@ -23,6 +23,7 @@ import com.streamvault.app.ui.theme.ErrorColor
 import com.streamvault.app.ui.theme.FocusBorder
 import com.streamvault.app.ui.theme.Primary
 import com.streamvault.app.ui.theme.SurfaceElevated
+import com.streamvault.app.ui.design.requestFocusSafely
 import kotlinx.coroutines.delay
 import androidx.compose.ui.res.stringResource
 import com.streamvault.app.R
@@ -46,7 +47,7 @@ fun PinDialog(
     val firstKeyFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        runCatching { firstKeyFocusRequester.requestFocus() }
+        firstKeyFocusRequester.requestFocusSafely(tag = "PinDialog", target = "PIN keypad")
         delay(500)
         canInteract = true
     }

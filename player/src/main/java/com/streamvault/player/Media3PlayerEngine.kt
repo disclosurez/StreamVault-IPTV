@@ -46,6 +46,7 @@ import kotlin.math.abs
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.Locale
 
 @OptIn(UnstableApi::class)
 class Media3PlayerEngine @Inject constructor(
@@ -63,6 +64,14 @@ class Media3PlayerEngine @Inject constructor(
      * Set to true for multi-view slots so each instance doesn't compete for 4K bandwidth.
      */
     var constrainResolutionForMultiView: Boolean = false
+    /**
+     * Multi-view slots should not compete for global audio focus; only the audible slot needs volume.
+     */
+    var bypassAudioFocus: Boolean = false
+    /**
+     * Auxiliary players do not need MediaSession registration.
+     */
+    var enableMediaSession: Boolean = true
     private var pollingJob: Job? = null
     private var lastStreamInfo: StreamInfo? = null
     private var retryCount = 0
@@ -172,7 +181,9 @@ class Media3PlayerEngine @Inject constructor(
     private fun getOrCreatePlayer(): ExoPlayer {
         return exoPlayer ?: createPlayer().also {
             exoPlayer = it
-            mediaSession = MediaSession.Builder(context, it).build()
+            if (enableMediaSession) {
+                mediaSession = MediaSession.Builder(context, it).build()
+            }
         }
     }
 
@@ -368,7 +379,7 @@ class Media3PlayerEngine @Inject constructor(
                                 for (i in 0 until group.length) {
                                     val format = group.mediaTrackGroup.getFormat(i)
                                     val id = format.id ?: "${group.mediaTrackGroup.hashCode()}_$i"
-                                    val name = format.label ?: format.language ?: "Track ${i + 1}"
+                                    val name = buildTrackName(format = format, trackType = type, index = i)
                                     val isSelected = group.isTrackSelected(i)
 
                                     val track = PlayerTrack(
@@ -405,7 +416,18 @@ class Media3PlayerEngine @Inject constructor(
         _error.tryEmit(null)
         _playerStats.value = PlayerStats() // reset stats
         _mediaTitle.value = null
+        _availableAudioTracks.value = emptyList()
+        _availableSubtitleTracks.value = emptyList()
         applyPlayerVolume()
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+            .build()
 
         // If we already preloaded this exact stream, use the cached source
         val mediaSource = if (preloadedStreamInfo?.url == streamInfo.url && preloadedSource != null) {
@@ -688,6 +710,54 @@ class Media3PlayerEngine @Inject constructor(
         _mediaTitle.value = null
     }
 
+    private fun buildTrackName(format: Format, trackType: Int, index: Int): String {
+        val explicitLabel = format.label
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.matches(Regex("(?i)^track\\s*\\d+$")) }
+
+        if (explicitLabel != null) {
+            return explicitLabel
+        }
+
+        val parts = mutableListOf<String>()
+        val languageCode = format.language
+            ?.takeIf { it.isNotBlank() && it != C.LANGUAGE_UNDETERMINED }
+
+        languageCode?.let { code ->
+            val locale = Locale.forLanguageTag(code)
+            val displayLanguage = locale.getDisplayLanguage(Locale.getDefault())
+                .takeIf { it.isNotBlank() }
+                ?: locale.displayLanguage.takeIf { it.isNotBlank() }
+            if (!displayLanguage.isNullOrBlank()) {
+                parts += displayLanguage.replaceFirstChar { char ->
+                    if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString()
+                }
+            }
+        }
+
+        if (trackType == C.TRACK_TYPE_TEXT) {
+            if ((format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0) {
+                parts += "Forced"
+            }
+            if ((format.roleFlags and C.ROLE_FLAG_CAPTION) != 0) {
+                parts += "CC"
+            }
+            if ((format.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0) {
+                parts += "SDH"
+            }
+        }
+
+        if (parts.isNotEmpty()) {
+            return parts.joinToString(" ")
+        }
+
+        return when (trackType) {
+            C.TRACK_TYPE_AUDIO -> "Audio ${index + 1}"
+            C.TRACK_TYPE_TEXT -> "Subtitle ${index + 1}"
+            else -> "Track ${index + 1}"
+        }
+    }
+
     private fun isRecoverableError(error: PlaybackException): Boolean {
         return when (error.errorCode) {
             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
@@ -790,6 +860,13 @@ class Media3PlayerEngine @Inject constructor(
     }
 
     private fun requestAudioFocusIfNeeded(): Boolean {
+        if (bypassAudioFocus) {
+            if (isDucked) {
+                isDucked = false
+                applyPlayerVolume()
+            }
+            return true
+        }
         if (hasAudioFocus) {
             if (isDucked) {
                 isDucked = false

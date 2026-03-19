@@ -13,14 +13,11 @@ interface ChannelRepository {
     fun getCategories(providerId: Long): Flow<List<Category>>
     fun searchChannels(providerId: Long, query: String): Flow<List<Channel>>
     suspend fun getChannel(channelId: Long): Channel?
-    @Deprecated("Use getStreamInfo() for richer metadata", replaceWith = ReplaceWith("getStreamInfo(channel)"))
-    suspend fun getStreamUrl(channel: Channel): Result<String>
-    suspend fun getStreamInfo(channel: Channel): Result<StreamInfo> =
-        getStreamUrl(channel).map { StreamInfo(it) }
+    suspend fun getStreamInfo(channel: Channel): Result<StreamInfo>
     suspend fun refreshChannels(providerId: Long): Result<Unit>
     fun getChannelsByIds(ids: List<Long>): Flow<List<Channel>>
-    suspend fun incrementChannelErrorCount(channelId: Long)
-    suspend fun resetChannelErrorCount(channelId: Long)
+    suspend fun incrementChannelErrorCount(channelId: Long): Result<Unit>
+    suspend fun resetChannelErrorCount(channelId: Long): Result<Unit>
 
     companion object {
         const val ALL_CHANNELS_ID = -1_000_000L

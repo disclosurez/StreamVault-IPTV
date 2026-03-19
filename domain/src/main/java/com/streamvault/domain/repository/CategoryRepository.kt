@@ -2,6 +2,7 @@ package com.streamvault.domain.repository
 
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ContentType
+import com.streamvault.domain.model.Result
 import kotlinx.coroutines.flow.Flow
 
 interface CategoryRepository {
@@ -11,5 +12,5 @@ interface CategoryRepository {
         categoryId: Long,
         type: ContentType,
         isProtected: Boolean
-    )
+    ): Result<Unit>
 }

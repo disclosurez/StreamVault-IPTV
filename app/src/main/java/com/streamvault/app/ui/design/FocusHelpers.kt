@@ -1,5 +1,6 @@
 package com.streamvault.app.ui.design
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -14,6 +15,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 
+private const val FOCUS_TAG = "FocusHelpers"
+
+fun FocusRequester.requestFocusSafely(tag: String = FOCUS_TAG, target: String = "Focus target"): Boolean {
+    return try {
+        requestFocus()
+        true
+    } catch (e: IllegalStateException) {
+        Log.d(tag, "$target focus request failed: ${e.message}")
+        false
+    }
+}
+
 @Composable
 fun TvInitialFocus(
     focusRequester: FocusRequester,
@@ -21,7 +34,7 @@ fun TvInitialFocus(
 ) {
     LaunchedEffect(focusRequester, enabled) {
         if (enabled) {
-            runCatching { focusRequester.requestFocus() }
+            focusRequester.requestFocusSafely(target = "Initial TV focus")
         }
     }
 }

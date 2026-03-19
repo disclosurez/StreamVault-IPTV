@@ -12,6 +12,10 @@ import com.streamvault.data.local.entity.MovieEntity
 import com.streamvault.data.mapper.toDomain
 import com.streamvault.data.mapper.toEntity
 import com.streamvault.data.parser.M3uParser
+import com.streamvault.data.remote.xtream.XtreamAuthenticationException
+import com.streamvault.data.remote.xtream.XtreamNetworkException
+import com.streamvault.data.remote.xtream.XtreamParsingException
+import com.streamvault.data.remote.xtream.XtreamRequestException
 import com.streamvault.data.remote.xtream.XtreamApiService
 import com.streamvault.data.remote.xtream.XtreamProvider
 import com.streamvault.data.remote.xtream.XtreamUrlFactory
@@ -29,10 +33,15 @@ import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -122,40 +131,54 @@ class SyncManager @Inject constructor(
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
+    private val _syncStatesByProvider = MutableStateFlow<Map<Long, SyncState>>(emptyMap())
+    val syncStatesByProvider: StateFlow<Map<Long, SyncState>> = _syncStatesByProvider.asStateFlow()
+    private val syncMutex = Mutex()
+
+    fun syncStateForProvider(providerId: Long): Flow<SyncState> =
+        syncStatesByProvider.map { states -> states[providerId] ?: SyncState.Idle }
+
+    fun currentSyncState(providerId: Long): SyncState =
+        _syncStatesByProvider.value[providerId] ?: SyncState.Idle
 
     suspend fun sync(
         providerId: Long,
         force: Boolean = false,
         onProgress: ((String) -> Unit)? = null
-    ): com.streamvault.domain.model.Result<Unit> {
+    ): com.streamvault.domain.model.Result<Unit> = syncMutex.withLock {
         val providerEntity = providerDao.getById(providerId)
-            ?: return com.streamvault.domain.model.Result.error("Provider $providerId not found")
+            ?: return@withLock com.streamvault.domain.model.Result.error("Provider $providerId not found")
 
         val provider = providerEntity
             .copy(password = CredentialCrypto.decryptIfNeeded(providerEntity.password))
             .toDomain()
-        _syncState.value = SyncState.Syncing("Starting...")
+        publishSyncState(providerId, SyncState.Syncing("Starting..."))
 
-        return try {
+        try {
             val outcome = when (provider.type) {
                 ProviderType.XTREAM_CODES -> syncXtream(provider, force, onProgress)
                 ProviderType.M3U -> syncM3u(provider, force, onProgress)
             }
             providerDao.updateSyncTime(providerId, System.currentTimeMillis())
-            _syncState.value = if (outcome.partial) {
+            publishSyncState(providerId, if (outcome.partial) {
                 SyncState.Partial("Sync completed with warnings", outcome.warnings)
             } else {
                 SyncState.Success()
-            }
+            })
             com.streamvault.domain.model.Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed for provider $providerId: ${redactUrlForLogs(e.message)}")
-            _syncState.value = SyncState.Error(e.message ?: "Unknown error", e)
+            publishSyncState(providerId, SyncState.Error(e.message ?: "Unknown error", e))
             com.streamvault.domain.model.Result.error(e.message ?: "Sync failed", e)
         }
     }
 
-    fun resetState() {
+    fun resetState(providerId: Long? = null) {
+        if (providerId == null) {
+            _syncStatesByProvider.value = emptyMap()
+        } else {
+            _syncStatesByProvider.update { states -> states - providerId }
+        }
         _syncState.value = SyncState.Idle
     }
 
@@ -163,25 +186,25 @@ class SyncManager @Inject constructor(
         providerId: Long,
         section: SyncRepairSection,
         onProgress: ((String) -> Unit)? = null
-    ): com.streamvault.domain.model.Result<Unit> {
+    ): com.streamvault.domain.model.Result<Unit> = syncMutex.withLock {
         val providerEntity = providerDao.getById(providerId)
-            ?: return com.streamvault.domain.model.Result.error("Provider $providerId not found")
+            ?: return@withLock com.streamvault.domain.model.Result.error("Provider $providerId not found")
 
         val provider = providerEntity
             .copy(password = CredentialCrypto.decryptIfNeeded(providerEntity.password))
             .toDomain()
 
-        return try {
+        try {
             when (section) {
                 SyncRepairSection.EPG -> syncEpgOnly(provider, onProgress)
                 SyncRepairSection.MOVIES -> syncMoviesOnly(provider, onProgress)
                 SyncRepairSection.SERIES -> syncSeriesOnly(provider, onProgress)
             }
-            _syncState.value = SyncState.Success()
+            publishSyncState(providerId, SyncState.Success())
             com.streamvault.domain.model.Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Section retry failed for provider $providerId [$section]: ${redactUrlForLogs(e.message)}")
-            _syncState.value = SyncState.Error(e.message ?: "Retry failed", e)
+            publishSyncState(providerId, SyncState.Error(e.message ?: "Retry failed", e))
             com.streamvault.domain.model.Result.error(e.message ?: "Retry failed", e)
         }
     }
@@ -195,7 +218,7 @@ class SyncManager @Inject constructor(
         UrlSecurityPolicy.validateXtreamServerUrl(provider.serverUrl)?.let { message ->
             throw IllegalStateException(message)
         }
-        progress(onProgress, "Connecting to server...")
+        progress(provider.id, onProgress, "Connecting to server...")
         val api = XtreamProvider(
             providerId = provider.id,
             api = xtreamApiService,
@@ -208,7 +231,7 @@ class SyncManager @Inject constructor(
         val now = System.currentTimeMillis()
 
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
-            progress(onProgress, "Downloading Live TV...")
+            progress(provider.id, onProgress, "Downloading Live TV...")
             val cats = retryTransient { api.getLiveCategories().getOrThrow("Live categories") }
             categoryDao.replaceAll(provider.id, "LIVE", cats.map { it.toEntity(provider.id) })
 
@@ -220,7 +243,7 @@ class SyncManager @Inject constructor(
         }
 
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastMovieSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
-            progress(onProgress, "Downloading Movies...")
+            progress(provider.id, onProgress, "Downloading Movies...")
             val catsResult = runCatching { retryTransient { api.getVodCategories().getOrThrow("VOD categories") } }
             catsResult.getOrNull()?.let {
                 categoryDao.replaceAll(provider.id, "MOVIE", it.map { category -> category.toEntity(provider.id) })
@@ -235,7 +258,7 @@ class SyncManager @Inject constructor(
         }
 
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastSeriesSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
-            progress(onProgress, "Downloading Series...")
+            progress(provider.id, onProgress, "Downloading Series...")
             val catsResult = runCatching { retryTransient { api.getSeriesCategories().getOrThrow("Series categories") } }
             catsResult.getOrNull()?.let {
                 categoryDao.replaceAll(provider.id, "SERIES", it.map { category -> category.toEntity(provider.id) })
@@ -251,7 +274,7 @@ class SyncManager @Inject constructor(
 
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastEpgSync, ContentCachePolicy.EPG_TTL_MILLIS, now)) {
             try {
-                progress(onProgress, "Downloading EPG...")
+                progress(provider.id, onProgress, "Downloading EPG...")
                 val base = provider.serverUrl.trimEnd('/')
                 val xmltvUrl = provider.epgUrl.ifBlank {
                     XtreamUrlFactory.buildXmltvUrl(base, provider.username, provider.password)
@@ -306,7 +329,7 @@ class SyncManager @Inject constructor(
                 warnings.add(epgValidationError)
             } else {
                 try {
-                    progress(onProgress, "Downloading EPG...")
+                    progress(provider.id, onProgress, "Downloading EPG...")
                     retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
                     metadata = metadata.copy(lastEpgSync = now)
                     syncMetadataRepository.updateMetadata(metadata)
@@ -324,7 +347,7 @@ class SyncManager @Inject constructor(
         provider: Provider,
         onProgress: ((String) -> Unit)?
     ) {
-        progress(onProgress, "Retrying EPG...")
+        progress(provider.id, onProgress, "Retrying EPG...")
         val epgUrl = when (provider.type) {
             ProviderType.XTREAM_CODES -> {
                 val base = provider.serverUrl.trimEnd('/')
@@ -354,7 +377,7 @@ class SyncManager @Inject constructor(
         val now = System.currentTimeMillis()
         when (provider.type) {
             ProviderType.XTREAM_CODES -> {
-                progress(onProgress, "Retrying Movies...")
+                progress(provider.id, onProgress, "Retrying Movies...")
                 val api = XtreamProvider(
                     providerId = provider.id,
                     api = xtreamApiService,
@@ -373,7 +396,7 @@ class SyncManager @Inject constructor(
                 syncMetadataRepository.updateMetadata(metadata)
             }
             ProviderType.M3U -> {
-                progress(onProgress, "Retrying Movies...")
+                progress(provider.id, onProgress, "Retrying Movies...")
                 val stats = withContext(Dispatchers.IO) {
                     importM3uPlaylist(provider, onProgress, includeLive = false, includeMovies = true)
                 }
@@ -394,7 +417,7 @@ class SyncManager @Inject constructor(
         if (provider.type != ProviderType.XTREAM_CODES) {
             throw IllegalStateException("Series retry is available only for Xtream providers")
         }
-        progress(onProgress, "Retrying Series...")
+        progress(provider.id, onProgress, "Retrying Series...")
         val api = XtreamProvider(
             providerId = provider.id,
             api = xtreamApiService,
@@ -425,7 +448,7 @@ class SyncManager @Inject constructor(
         UrlSecurityPolicy.validatePlaylistSourceUrl(provider.m3uUrl.ifBlank { provider.serverUrl })?.let { message ->
             throw IllegalStateException(message)
         }
-        progress(onProgress, "Downloading Playlist...")
+        progress(provider.id, onProgress, "Downloading Playlist...")
         val existingChannelIds = if (includeLive) channelDao.getIdMappings(provider.id).associate { it.remoteId to it.id } else emptyMap()
         val existingMovieIds = if (includeMovies) movieDao.getIdMappings(provider.id).associate { it.remoteId to it.id } else emptyMap()
         val liveCategories = CategoryAccumulator(provider.id, ContentType.LIVE, 1L)
@@ -445,7 +468,7 @@ class SyncManager @Inject constructor(
         var publishedMovieCategoryCount = 0
 
         openPlaylistStream(provider) { streamed ->
-            progress(onProgress, "Parsing Playlist...")
+            progress(provider.id, onProgress, "Parsing Playlist...")
             maybeDecompressPlaylist(streamed).use { input ->
                 m3uParser.parseStreaming(
                     inputStream = input,
@@ -467,7 +490,7 @@ class SyncManager @Inject constructor(
                             categoryDao.insertAll(movieCategories.entities())
                             publishedMovieCategoryCount = movieCategories.count
                         }
-                        progress(onProgress, "Imported $parsedCount playlist entries...")
+                        progress(provider.id, onProgress, "Imported $parsedCount playlist entries...")
                         nextMilestone += PROGRESS_INTERVAL
                     }
                     if (!UrlSecurityPolicy.isAllowedStreamEntryUrl(entry.url)) {
@@ -691,9 +714,14 @@ class SyncManager @Inject constructor(
     /** Delegates to M3uParser to avoid duplicate logic. */
     internal fun isVodEntry(entry: M3uParser.M3uEntry): Boolean = M3uParser.isVodEntry(entry)
 
-    private fun progress(callback: ((String) -> Unit)?, message: String) {
-        _syncState.value = SyncState.Syncing(message)
+    private fun progress(providerId: Long, callback: ((String) -> Unit)?, message: String) {
+        publishSyncState(providerId, SyncState.Syncing(message))
         callback?.invoke(message)
+    }
+
+    private fun publishSyncState(providerId: Long, state: SyncState) {
+        _syncState.value = state
+        _syncStatesByProvider.update { states -> states + (providerId to state) }
     }
 
     private fun redactUrlForLogs(url: String?): String {
@@ -734,6 +762,10 @@ class SyncManager @Inject constructor(
     }
 
     private fun isRetryable(error: Throwable): Boolean {
+        if (error is XtreamAuthenticationException) return false
+        if (error is XtreamParsingException) return false
+        if (error is XtreamRequestException) return false
+        if (error is XtreamNetworkException) return true
         if (error is IOException) return true
 
         val message = error.message.orEmpty().lowercase()
@@ -753,7 +785,7 @@ class SyncManager @Inject constructor(
         return when (this) {
             is com.streamvault.domain.model.Result.Success -> data
             is com.streamvault.domain.model.Result.Error ->
-                throw Exception("Failed to fetch $resourceName: $message")
+                throw exception ?: IllegalStateException("Failed to fetch $resourceName: $message")
             is com.streamvault.domain.model.Result.Loading ->
                 throw Exception("Unexpected loading state for $resourceName")
         }

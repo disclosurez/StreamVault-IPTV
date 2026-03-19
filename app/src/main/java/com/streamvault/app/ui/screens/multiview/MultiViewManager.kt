@@ -23,7 +23,14 @@ class MultiViewManager @Inject constructor() {
     /** Place a channel in a specific slot index (0–3). Replaces whatever was there. */
     fun setChannel(slotIndex: Int, channel: Channel) {
         if (slotIndex !in 0 until MAX_SLOTS) return
-        _slots.value = _slots.value.toMutableList().also { it[slotIndex] = channel }
+        _slots.value = _slots.value.toMutableList().also { slots ->
+            slots.indices.forEach { index ->
+                if (index != slotIndex && slots[index]?.id == channel.id) {
+                    slots[index] = null
+                }
+            }
+            slots[slotIndex] = channel
+        }
     }
 
     /** Clear a specific slot. */

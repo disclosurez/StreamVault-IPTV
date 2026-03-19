@@ -94,6 +94,10 @@ dependencies {
 
     // Media3
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.exoplayer.dash)
+    implementation(libs.media3.exoplayer.rtsp)
+    implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui)
 
     // Room
@@ -133,6 +137,9 @@ dependencies {
     // Core
     implementation(libs.core.ktx)
     implementation(libs.coroutines.android)
+    implementation(libs.appcompat)
+    implementation(libs.mediarouter)
+    implementation(libs.play.services.cast.framework)
 
     // Test
     testImplementation(libs.junit)

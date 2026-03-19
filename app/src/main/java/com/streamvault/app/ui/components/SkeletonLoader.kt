@@ -18,11 +18,13 @@ import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.unit.dp
+import com.streamvault.app.ui.accessibility.rememberReducedMotionEnabled
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-fun Modifier.shimmerEffect(baseColor: Color): Modifier = this.then(ShimmerElement(baseColor))
+fun Modifier.shimmerEffect(baseColor: Color, enabled: Boolean = true): Modifier =
+    if (enabled) this.then(ShimmerElement(baseColor)) else this
 
 private data class ShimmerElement(
     private val baseColor: Color
@@ -101,10 +103,11 @@ private class ShimmerNode(
 fun SkeletonCard(modifier: Modifier = Modifier) {
     val bgColor = MaterialTheme.colorScheme.surfaceVariant
     val shimmerBaseColor = MaterialTheme.colorScheme.onSurface
+    val reducedMotionEnabled = rememberReducedMotionEnabled()
     Box(
         modifier = modifier
             .background(bgColor, RoundedCornerShape(8.dp))
-            .shimmerEffect(baseColor = shimmerBaseColor)
+            .shimmerEffect(baseColor = shimmerBaseColor, enabled = !reducedMotionEnabled)
     )
 }
 
@@ -117,13 +120,14 @@ fun SkeletonRow(
 ) {
     val bgColor = MaterialTheme.colorScheme.surfaceVariant
     val shimmerBaseColor = MaterialTheme.colorScheme.onSurface
+    val reducedMotionEnabled = rememberReducedMotionEnabled()
     Column(modifier = modifier.padding(vertical = 16.dp)) {
         Box(
             modifier = Modifier
                 .width(150.dp)
                 .height(24.dp)
                 .background(bgColor, RoundedCornerShape(4.dp))
-                .shimmerEffect(baseColor = shimmerBaseColor)
+                .shimmerEffect(baseColor = shimmerBaseColor, enabled = !reducedMotionEnabled)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         )
         Spacer(modifier = Modifier.height(16.dp))

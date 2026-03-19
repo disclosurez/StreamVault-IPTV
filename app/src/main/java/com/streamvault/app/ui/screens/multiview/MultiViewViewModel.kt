@@ -7,13 +7,14 @@ import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.streamvault.app.di.AuxiliaryPlayerEngine
-import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.domain.model.Channel
-import com.streamvault.domain.model.ContentType
+import com.streamvault.domain.model.Result
+import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.FavoriteRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
+import com.streamvault.domain.repository.ProviderRepository
 import com.streamvault.player.PlayerEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,7 +38,7 @@ class MultiViewViewModel @Inject constructor(
     private val channelRepository: ChannelRepository,
     private val favoriteRepository: FavoriteRepository,
     private val playbackHistoryRepository: PlaybackHistoryRepository,
-    private val xtreamStreamUrlResolver: XtreamStreamUrlResolver
+    private val providerRepository: ProviderRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MultiViewUiState())
@@ -51,11 +52,13 @@ class MultiViewViewModel @Inject constructor(
     private var thermalStatus: MultiViewThermalStatus = readThermalStatus()
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     private var runtimeActiveSlotLimit: Int = MultiViewManager.MAX_SLOTS
+    private var activeProviderConnectionLimit: Int? = null
     private var sustainedStressSamples: Int = 0
     private var stableSamples: Int = 0
     private var lastPolicyAdjustmentAt: Long = 0L
     private val lastDroppedFramesBySlot = mutableMapOf<Int, Int>()
     private val slotStartupJobs = mutableMapOf<Int, kotlinx.coroutines.Job>()
+    private val slotErrorJobs = mutableMapOf<Int, kotlinx.coroutines.Job>()
     private var slotInitVersion: Long = 0L
 
     /** Flow of the current 4 slot channels from the manager */
@@ -107,6 +110,21 @@ class MultiViewViewModel @Inject constructor(
             }
         }
 
+        viewModelScope.launch {
+            providerRepository.getActiveProvider().collect { provider ->
+                val nextConnectionLimit = provider
+                    ?.takeIf { it.type == ProviderType.XTREAM_CODES }
+                    ?.maxConnections
+                    ?.coerceAtLeast(1)
+                if (activeProviderConnectionLimit != nextConnectionLimit) {
+                    activeProviderConnectionLimit = nextConnectionLimit
+                    if (multiViewManager.hasAnyChannel) {
+                        initSlots()
+                    }
+                }
+            }
+        }
+
         registerThermalListener()
         observeReplacementCandidates()
     }
@@ -116,15 +134,27 @@ class MultiViewViewModel @Inject constructor(
         val initVersion = ++slotInitVersion
         telemetryJob?.cancel()
         cancelSlotStartupJobs()
+        cancelSlotErrorJobs()
         playerEngines.values.forEach { it.release() }
         playerEngines.clear()
         lastDroppedFramesBySlot.clear()
         val channels = multiViewManager.slots.value
-        val maxActiveSlots = runtimeActiveSlotLimit
+        val deviceActiveSlotLimit = runtimeActiveSlotLimit
             .coerceAtLeast(1)
             .coerceAtMost(_uiState.value.performancePolicy.maxActiveSlots)
+        val providerConnectionLimit = activeProviderConnectionLimit
+        val maxActiveSlots = providerConnectionLimit
+            ?.let { deviceActiveSlotLimit.coerceAtMost(it) }
+            ?: deviceActiveSlotLimit
         val slots = channels.mapIndexed { index, channel ->
             if (channel != null) {
+                val performanceBlockedReason = when {
+                    index < maxActiveSlots -> null
+                    providerConnectionLimit != null && providerConnectionLimit < deviceActiveSlotLimit ->
+                        "Held back by the provider connection limit (${providerConnectionLimit} stream(s) max)."
+                    else ->
+                        "Held back by ${_uiState.value.performancePolicy.mode.name.lowercase()} policy on this device tier."
+                }
                 MultiViewSlot(
                     index = index,
                     channel = channel,
@@ -132,11 +162,7 @@ class MultiViewViewModel @Inject constructor(
                     title = channel.name,
                     isLoading = index < maxActiveSlots,
                     isAudioPinned = pinnedAudioSlotIndex == index,
-                    performanceBlockedReason = if (index >= maxActiveSlots) {
-                        "Held back by ${_uiState.value.performancePolicy.mode.name.lowercase()} policy on this device tier."
-                    } else {
-                        null
-                    }
+                    performanceBlockedReason = performanceBlockedReason
                 )
             } else {
                 MultiViewSlot(index = index)
@@ -175,33 +201,51 @@ class MultiViewViewModel @Inject constructor(
                         val engine = playerEngineProvider.get()
                         // Cap each multi-view slot to 720p so slots don't compete for 4K bandwidth
                         (engine as? com.streamvault.player.Media3PlayerEngine)
-                            ?.let { it.constrainResolutionForMultiView = true }
+                            ?.let {
+                                it.constrainResolutionForMultiView = true
+                                it.bypassAudioFocus = true
+                                it.enableMediaSession = false
+                            }
                         if (initVersion != slotInitVersion) {
                             engine.release()
                             return@launch
                         }
                         playerEngines[index] = engine
+                        observeSlotErrors(index, engine, initVersion)
 
-                        val resolvedUrl = xtreamStreamUrlResolver.resolve(
-                            url = slot.streamUrl,
-                            fallbackProviderId = slot.channel?.providerId,
-                            fallbackStreamId = slot.channel?.streamId,
-                            fallbackContentType = ContentType.LIVE
-                        ) ?: throw IllegalStateException("No playable URL for ${slot.title}")
+                        val channel = slot.channel
+                            ?: throw IllegalStateException("Missing channel for slot ${slot.index}")
+                        val streamInfo = when (val result = channelRepository.getStreamInfo(channel)) {
+                            is Result.Success -> result.data
+                            is Result.Error -> throw IllegalStateException(result.message)
+                            Result.Loading -> throw IllegalStateException("Stream info still loading for ${slot.title}")
+                        }
 
-                        engine.prepare(
-                            com.streamvault.domain.model.StreamInfo(url = resolvedUrl)
-                        )
+                        engine.prepare(streamInfo)
                         engine.play()
                         
                         // Copy the engine into the slot UI state as well
-                        updateSlot(index) { it.copy(isLoading = false, playerEngine = engine) }
+                        updateSlot(index) {
+                            it.copy(
+                                isLoading = false,
+                                hasError = false,
+                                errorMessage = null,
+                                playerEngine = engine
+                            )
+                        }
                         
                         // Re-apply audio to make sure the focused one is audible
                         applyFocusAudio(_uiState.value.focusedSlotIndex)
                     } catch (e: Exception) {
                         if (initVersion == slotInitVersion) {
-                            updateSlot(index) { it.copy(isLoading = false, hasError = true) }
+                            updateSlot(index) {
+                                it.copy(
+                                    isLoading = false,
+                                    hasError = true,
+                                    errorMessage = e.message,
+                                    playerEngine = playerEngines[index]
+                                )
+                            }
                         }
                     } finally {
                         slotStartupJobs.remove(index)
@@ -368,6 +412,7 @@ class MultiViewViewModel @Inject constructor(
         telemetryJob?.cancel()
         borderHideJob?.cancel()
         cancelSlotStartupJobs()
+        cancelSlotErrorJobs()
         unregisterThermalListener()
         playerEngines.values.forEach { it.release() }
         playerEngines.clear()
@@ -376,6 +421,30 @@ class MultiViewViewModel @Inject constructor(
     private fun cancelSlotStartupJobs() {
         slotStartupJobs.values.forEach { job -> job.cancel() }
         slotStartupJobs.clear()
+    }
+
+    private fun cancelSlotErrorJobs() {
+        slotErrorJobs.values.forEach { job -> job.cancel() }
+        slotErrorJobs.clear()
+    }
+
+    private fun observeSlotErrors(index: Int, engine: PlayerEngine, initVersion: Long) {
+        slotErrorJobs.remove(index)?.cancel()
+        slotErrorJobs[index] = viewModelScope.launch {
+            engine.error.collect { error ->
+                if (initVersion != slotInitVersion) return@collect
+                if (error != null) {
+                    updateSlot(index) { current ->
+                        current.copy(
+                            isLoading = false,
+                            hasError = true,
+                            errorMessage = error.message,
+                            playerEngine = engine
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun detectDeviceTier(): DevicePerformanceTier {

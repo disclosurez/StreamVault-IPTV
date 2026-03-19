@@ -222,7 +222,11 @@ class SeriesRepositoryImpl @Inject constructor(
             return Result.success(buildSeriesWithPersistedEpisodes(seriesEntity))
         }
 
-        val xtreamProvider = getOrCreateXtreamProvider(providerId, provider)
+        val xtreamProvider = try {
+            getOrCreateXtreamProvider(providerId, provider)
+        } catch (e: Exception) {
+            return Result.error(e.message ?: "Failed to access provider credentials", e)
+        }
 
         return when (val remoteResult = xtreamProvider.getSeriesInfo(seriesEntity.seriesId)) {
             is Result.Success -> {
@@ -323,8 +327,7 @@ class SeriesRepositoryImpl @Inject constructor(
         }
     }
 
-    @Deprecated("Use getEpisodeStreamInfo() instead", ReplaceWith("getEpisodeStreamInfo(episode)"))
-    override suspend fun getEpisodeStreamUrl(episode: Episode): Result<String> =
+    override suspend fun getEpisodeStreamInfo(episode: Episode): Result<StreamInfo> = try {
         xtreamStreamUrlResolver.resolve(
             url = episode.streamUrl,
             fallbackProviderId = episode.providerId,
@@ -332,14 +335,20 @@ class SeriesRepositoryImpl @Inject constructor(
             fallbackContentType = ContentType.SERIES_EPISODE,
             fallbackContainerExtension = episode.containerExtension
         )?.let { resolvedUrl ->
-            Result.success(resolvedUrl)
+            Result.success(StreamInfo(url = resolvedUrl, title = episode.title))
         } ?: Result.error("No stream URL available for episode: ${episode.title}")
+    } catch (e: Exception) {
+        Result.error(e.message ?: "Failed to resolve stream URL for episode: ${episode.title}", e)
+    }
 
     override suspend fun refreshSeries(providerId: Long): Result<Unit> =
         Result.success(Unit) // Handled by ProviderRepository
 
-    override suspend fun updateEpisodeWatchProgress(episodeId: Long, progress: Long) {
+    override suspend fun updateEpisodeWatchProgress(episodeId: Long, progress: Long): Result<Unit> = try {
         episodeDao.updateWatchProgress(episodeId, progress)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error("Failed to update episode watch progress", e)
     }
 
     private suspend fun buildSeriesWithPersistedEpisodes(seriesEntity: SeriesEntity): Series {
@@ -359,21 +368,23 @@ class SeriesRepositoryImpl @Inject constructor(
     }
 
     private fun getOrCreateXtreamProvider(providerId: Long, provider: ProviderEntity): XtreamProvider {
-        val decryptedPassword = CredentialCrypto.decryptIfNeeded(provider.password)
-        val signature = listOf(provider.serverUrl, provider.username, decryptedPassword).joinToString("\u0000")
-        val cached = xtreamProviderCache[providerId]
-        if (cached != null && cached.signature == signature) {
-            return cached.provider
-        }
-
-        return XtreamProvider(
-            providerId = providerId,
-            api = xtreamApiService,
-            serverUrl = provider.serverUrl,
-            username = provider.username,
-            password = decryptedPassword
-        ).also { xtreamProvider ->
-            xtreamProviderCache[providerId] = CachedXtreamProvider(signature, xtreamProvider)
-        }
+        val signature = listOf(provider.serverUrl, provider.username, provider.password).joinToString("\u0000")
+        return xtreamProviderCache.compute(providerId) { _, cached ->
+            if (cached != null && cached.signature == signature) {
+                cached
+            } else {
+                val decryptedPassword = CredentialCrypto.decryptIfNeeded(provider.password)
+                CachedXtreamProvider(
+                    signature = signature,
+                    provider = XtreamProvider(
+                        providerId = providerId,
+                        api = xtreamApiService,
+                        serverUrl = provider.serverUrl,
+                        username = provider.username,
+                        password = decryptedPassword
+                    )
+                )
+            }
+        }!!.provider
     }
 }

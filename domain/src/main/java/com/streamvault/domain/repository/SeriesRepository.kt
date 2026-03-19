@@ -25,10 +25,7 @@ interface SeriesRepository {
     fun searchSeries(providerId: Long, query: String): Flow<List<Series>>
     suspend fun getSeriesById(seriesId: Long): Series?
     suspend fun getSeriesDetails(providerId: Long, seriesId: Long): Result<Series>
-    @Deprecated("Use getEpisodeStreamInfo() for richer metadata", replaceWith = ReplaceWith("getEpisodeStreamInfo(episode)"))
-    suspend fun getEpisodeStreamUrl(episode: Episode): Result<String>
-    suspend fun getEpisodeStreamInfo(episode: Episode): Result<StreamInfo> =
-        getEpisodeStreamUrl(episode).map { StreamInfo(it) }
+    suspend fun getEpisodeStreamInfo(episode: Episode): Result<StreamInfo>
     suspend fun refreshSeries(providerId: Long): Result<Unit>
-    suspend fun updateEpisodeWatchProgress(episodeId: Long, progress: Long)
+    suspend fun updateEpisodeWatchProgress(episodeId: Long, progress: Long): Result<Unit>
 }

@@ -2,7 +2,9 @@ package com.streamvault.app.di
 
 import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.RoomDatabaseTransactionRunner
+import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.data.repository.*
+import com.streamvault.domain.manager.ParentalControlSessionStore
 import com.streamvault.domain.repository.*
 import dagger.Binds
 import dagger.Module
@@ -50,6 +52,9 @@ abstract class RepositoryModule {
 
     @Binds @Singleton
     abstract fun bindRecordingManager(impl: com.streamvault.data.manager.RecordingManagerImpl): com.streamvault.domain.manager.RecordingManager
+
+    @Binds @Singleton
+    abstract fun bindParentalControlSessionStore(impl: PreferencesRepository): ParentalControlSessionStore
 
     companion object {
         @Provides

@@ -20,12 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.remember
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -36,7 +31,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -62,7 +57,7 @@ fun MultiViewPlannerDialog(
     val slots by viewModel.slotsFlow.collectAsStateWithLifecycle()
     val isPickerMode = pendingChannel != null
     val hasAny = slots.any { it != null }
-    var channelPlaced by remember { mutableStateOf(false) }
+    val channelPlaced = pendingChannel != null && slots.any { it?.id == pendingChannel.id }
     val firstSlotFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -71,10 +66,10 @@ fun MultiViewPlannerDialog(
     }
 
     val subtitle = when {
-        isPickerMode && !channelPlaced && pendingChannel != null ->
-            stringResource(R.string.multiview_planner_pick_slot, pendingChannel.name)
-        channelPlaced && pendingChannel != null ->
-            stringResource(R.string.multiview_planner_added, pendingChannel.name)
+        isPickerMode && !channelPlaced ->
+            stringResource(R.string.multiview_planner_pick_slot, pendingChannel!!.name)
+        channelPlaced ->
+            stringResource(R.string.multiview_planner_added, pendingChannel!!.name)
         hasAny ->
             stringResource(R.string.multiview_planner_ready_subtitle)
         else ->
@@ -118,9 +113,9 @@ fun MultiViewPlannerDialog(
                                         else Modifier
                                     ),
                                 onSlotClick = {
-                                    if (pendingChannel != null && isPickerMode && !channelPlaced) {
-                                        viewModel.assignChannelToSlot(slotIndex, pendingChannel)
-                                        channelPlaced = true
+                                    val channelToPlace = pendingChannel ?: return@MultiViewSlotCard
+                                    if (isPickerMode && !channelPlaced) {
+                                        viewModel.assignChannelToSlot(slotIndex, channelToPlace)
                                     }
                                 },
                                 onClearSlot = { viewModel.clearSlot(slotIndex) }

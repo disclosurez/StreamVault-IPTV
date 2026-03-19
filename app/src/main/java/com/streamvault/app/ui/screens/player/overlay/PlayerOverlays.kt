@@ -172,7 +172,19 @@ fun ChannelInfoOverlay(
     isPlaying: Boolean,
     currentAspectRatio: String,
     isDiagnosticsEnabled: Boolean,
-    onOpenSplitScreen: () -> Unit = {}
+    onOpenSplitScreen: () -> Unit = {},
+    subtitleTrackCount: Int = 0,
+    audioTrackCount: Int = 0,
+    videoQualityCount: Int = 0,
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
+    onOpenSubtitleTracks: () -> Unit = {},
+    onOpenAudioTracks: () -> Unit = {},
+    onOpenVideoTracks: () -> Unit = {},
+    onEnterPictureInPicture: () -> Unit = {},
+    isCastConnected: Boolean = false,
+    onCast: () -> Unit = {},
+    onStopCasting: () -> Unit = {}
 ) {
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
@@ -181,25 +193,25 @@ fun ChannelInfoOverlay(
     PlayerOverlayPanel(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 56.dp, vertical = 20.dp)
+            .padding(horizontal = 40.dp, vertical = 16.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (currentChannel != null) {
                         Box(
                             modifier = Modifier
-                                .size(52.dp)
+                                .size(44.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(1.dp, AppColors.Focus.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
                         ) {
@@ -333,107 +345,196 @@ fun ChannelInfoOverlay(
                 }
             }
 
-            Row(
+            LazyRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                contentPadding = PaddingValues(end = 8.dp)
             ) {
-                QuickActionButton(
-                    icon = stringResource(R.string.player_action_playback),
-                    label = if (isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
-                    onClick = {
-                        onOverlayInteracted()
-                        onTogglePlayPause()
-                    },
-                    onInteraction = onOverlayInteracted,
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = Primary.copy(alpha = 0.20f),
-                        focusedContainerColor = Primary,
-                        pressedContainerColor = Primary.copy(alpha = 0.8f)
-                    ),
-                    modifier = Modifier.focusRequester(focusRequester)
-                )
-                QuickActionButton(
-                    icon = if (currentRecordingStatus == RecordingStatus.RECORDING) {
-                        stringResource(R.string.player_stop_recording)
-                    } else {
-                        stringResource(R.string.player_record)
-                    },
-                    label = if (currentRecordingStatus == RecordingStatus.RECORDING) {
-                        stringResource(R.string.player_stop_recording)
-                    } else {
-                        stringResource(R.string.player_record)
-                    },
-                    onClick = {
-                        onOverlayInteracted()
-                        if (currentRecordingStatus == RecordingStatus.RECORDING) {
-                            onStopRecording()
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_playback),
+                        label = if (isPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play),
+                        onClick = {
+                            onOverlayInteracted()
+                            onTogglePlayPause()
+                        },
+                        onInteraction = onOverlayInteracted,
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Primary.copy(alpha = 0.20f),
+                            focusedContainerColor = Primary,
+                            pressedContainerColor = Primary.copy(alpha = 0.8f)
+                        ),
+                        modifier = Modifier.focusRequester(focusRequester)
+                    )
+                }
+                item {
+                    QuickActionButton(
+                        icon = if (currentRecordingStatus == RecordingStatus.RECORDING) {
+                            stringResource(R.string.player_stop_recording)
                         } else {
-                            onStartRecording()
-                        }
-                    },
-                    onInteraction = onOverlayInteracted
-                )
+                            stringResource(R.string.player_record)
+                        },
+                        label = if (currentRecordingStatus == RecordingStatus.RECORDING) {
+                            stringResource(R.string.player_stop_recording)
+                        } else {
+                            stringResource(R.string.player_record)
+                        },
+                        onClick = {
+                            onOverlayInteracted()
+                            if (currentRecordingStatus == RecordingStatus.RECORDING) {
+                                onStopRecording()
+                            } else {
+                                onStartRecording()
+                            }
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
                 if (currentChannel?.catchUpSupported == true && currentProgram?.hasArchive == true) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_action_restart_short),
+                            label = stringResource(R.string.player_restart),
+                            onClick = {
+                                onOverlayInteracted()
+                                onRestartProgram()
+                                onDismiss()
+                            },
+                            onInteraction = onOverlayInteracted
+                        )
+                    }
+                }
+                item {
                     QuickActionButton(
-                        icon = stringResource(R.string.player_action_restart_short),
-                        label = stringResource(R.string.player_restart),
+                        icon = stringResource(R.string.player_action_view),
+                        label = currentAspectRatio,
                         onClick = {
                             onOverlayInteracted()
-                            onRestartProgram()
-                            onDismiss()
+                            onToggleAspectRatio()
                         },
                         onInteraction = onOverlayInteracted
                     )
                 }
-                QuickActionButton(
-                    icon = stringResource(R.string.player_action_view),
-                    label = currentAspectRatio,
-                    onClick = {
-                        onOverlayInteracted()
-                        onToggleAspectRatio()
-                    },
-                    onInteraction = onOverlayInteracted
-                )
                 if (!lastVisitedCategoryName.isNullOrBlank()) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_action_group),
+                            label = lastVisitedCategoryName,
+                            onClick = {
+                                onOverlayInteracted()
+                                onOpenLastGroup()
+                            },
+                            onInteraction = onOverlayInteracted
+                        )
+                    }
+                }
+                item {
                     QuickActionButton(
-                        icon = stringResource(R.string.player_action_group),
-                        label = stringResource(R.string.player_last_group_label, lastVisitedCategoryName),
+                        icon = stringResource(R.string.player_action_guide),
+                        label = stringResource(R.string.player_epg_short),
                         onClick = {
                             onOverlayInteracted()
-                            onOpenLastGroup()
+                            onOpenFullEpg()
                         },
                         onInteraction = onOverlayInteracted
                     )
                 }
-                QuickActionButton(
-                    icon = stringResource(R.string.player_action_guide),
-                    label = stringResource(R.string.player_full_epg),
-                    onClick = {
-                        onOverlayInteracted()
-                        onOpenFullEpg()
-                    },
-                    onInteraction = onOverlayInteracted
-                )
-                QuickActionButton(
-                    icon = stringResource(R.string.player_action_split),
-                    label = stringResource(R.string.multiview_nav),
-                    onClick = {
-                        onOverlayInteracted()
-                        onDismiss()
-                        onOpenSplitScreen()
-                    },
-                    onInteraction = onOverlayInteracted
-                )
-                QuickActionButton(
-                    icon = stringResource(R.string.player_action_diagnostics),
-                    label = stringResource(R.string.player_stats),
-                    onClick = {
-                        onOverlayInteracted()
-                        onToggleDiagnostics()
-                    },
-                    onInteraction = onOverlayInteracted
-                )
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_split),
+                        label = stringResource(R.string.player_multiview_short),
+                        onClick = {
+                            onOverlayInteracted()
+                            onDismiss()
+                            onOpenSplitScreen()
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_diagnostics),
+                        label = stringResource(R.string.player_stats),
+                        onClick = {
+                            onOverlayInteracted()
+                            onToggleDiagnostics()
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_mute),
+                        label = if (isMuted) stringResource(R.string.player_unmute) else stringResource(R.string.player_mute),
+                        onClick = {
+                            onOverlayInteracted()
+                            onToggleMute()
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_cast),
+                        label = if (isCastConnected) stringResource(R.string.player_stop_casting) else stringResource(R.string.player_cast),
+                        onClick = {
+                            onOverlayInteracted()
+                            if (isCastConnected) onStopCasting() else onCast()
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
+                item {
+                    QuickActionButton(
+                        icon = stringResource(R.string.player_action_pip),
+                        label = stringResource(R.string.player_pip_short),
+                        onClick = {
+                            onOverlayInteracted()
+                            onEnterPictureInPicture()
+                        },
+                        onInteraction = onOverlayInteracted
+                    )
+                }
+                if (subtitleTrackCount > 0) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_subs),
+                            label = stringResource(R.string.player_subs),
+                            onClick = {
+                                onOverlayInteracted()
+                                onOpenSubtitleTracks()
+                            },
+                            onInteraction = onOverlayInteracted
+                        )
+                    }
+                }
+                if (audioTrackCount > 0) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_audio),
+                            label = stringResource(R.string.player_audio),
+                            onClick = {
+                                onOverlayInteracted()
+                                onOpenAudioTracks()
+                            },
+                            onInteraction = onOverlayInteracted
+                        )
+                    }
+                }
+                if (videoQualityCount > 0) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_action_quality),
+                            label = stringResource(R.string.player_quality_short),
+                            onClick = {
+                                onOverlayInteracted()
+                                onOpenVideoTracks()
+                            },
+                            onInteraction = onOverlayInteracted
+                        )
+                    }
+                }
             }
         }
     }
@@ -457,7 +558,7 @@ private fun QuickActionButton(
             onClick()
         },
         modifier = modifier
-            .widthIn(min = 92.dp, max = 176.dp)
+            .widthIn(min = 84.dp, max = 138.dp)
             .onFocusChanged {
                 if (it.isFocused) onInteraction()
             },
@@ -466,9 +567,9 @@ private fun QuickActionButton(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             AnimatedContent(
                 targetState = icon,
@@ -479,7 +580,7 @@ private fun QuickActionButton(
             ) { targetIcon ->
                 Text(
                     text = targetIcon.uppercase(Locale.getDefault()),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                     color = AppColors.BrandStrong,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -488,7 +589,7 @@ private fun QuickActionButton(
             }
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
                 color = AppColors.TextPrimary,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,

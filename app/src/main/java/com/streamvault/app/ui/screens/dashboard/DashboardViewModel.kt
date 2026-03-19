@@ -115,7 +115,7 @@ class DashboardViewModel @Inject constructor(
                                 movieCount = movieCount,
                                 seriesCount = seriesCount
                             )
-                        }.combine(syncManager.syncState.onStart { emit(SyncState.Idle) }) { snapshot, syncState ->
+                        }.combine(syncManager.syncStateForProvider(provider.id).onStart { emit(SyncState.Idle) }) { snapshot, syncState ->
                             DashboardUiState(
                                 provider = provider,
                                 favoriteChannels = snapshot.shelves.favoriteChannels,

@@ -26,6 +26,7 @@
 
     <!-- Home -->
     <string name="home_incorrect_pin">Incorrect PIN</string>
+    <string name="home_loading_categories">Loading categories...</string>
     <string name="home_loading_channels">Loading channels...</string>
     <string name="home_categories_title">Categories</string>
     <string name="home_search_categories">Search categories...</string>
@@ -389,6 +390,12 @@
     <string name="saved_preset_home_shelf_global_title">Home Favorites</string>
     <string name="saved_preset_home_shelf_global_subtitle">Live favorites that are eligible for the Home dashboard</string>
     <string name="saved_preset_watch_next">Watch Next</string>
+    <string name="tv_channel_continue_watching_title">Continue Watching</string>
+    <string name="tv_channel_continue_watching_description">Resume titles you started recently</string>
+    <string name="tv_channel_top_movies_title">Top Movies</string>
+    <string name="tv_channel_top_movies_description">Popular picks from %1$s</string>
+    <string name="tv_channel_fresh_series_title">Fresh Series</string>
+    <string name="tv_channel_fresh_series_description">Recently updated series from %1$s</string>
     <string name="saved_preset_live_recall">Live Recall</string>
     <string name="saved_preset_custom_groups">Custom Groups</string>
     <string name="saved_group_manage_title">Manage Custom Groups</string>
@@ -444,6 +451,13 @@
     <string name="search_hint">Search...</string>
     <string name="search_recent_title">Recent Searches</string>
     <string name="search_clear_history">Clear</string>
+    <string name="a11y_selected">Selected</string>
+    <string name="a11y_recent_search">Recent search %1$s</string>
+    <string name="a11y_locked">Locked</string>
+    <string name="a11y_favorite">Favorite</string>
+    <string name="a11y_catch_up_available">Catch-up available</string>
+    <string name="a11y_now_playing">Now playing %1$s</string>
+    <string name="a11y_channel_with_number">Channel %1$d, %2$s</string>
 
     <!-- Provider Setup -->
     <string name="setup_title_streamvault">StreamVault</string>
@@ -520,10 +534,20 @@
     <string name="player_recording_missing_context">Recording needs a valid live channel context.</string>
     <string name="player_subs">Subs</string>
     <string name="player_audio">Audio</string>
+    <string name="player_action_mute">Mute</string>
+    <string name="player_action_cast">Cast</string>
+    <string name="player_action_pip">PiP</string>
+    <string name="player_action_quality">Quality</string>
     <string name="player_mute">Mute</string>
     <string name="player_muted_badge">Muted</string>
+    <string name="player_cast">Cast</string>
+    <string name="player_stop_casting">Stop Casting</string>
     <string name="player_unmute">Unmute</string>
     <string name="player_picture_in_picture">Picture in picture</string>
+    <string name="player_pip_short">PiP</string>
+    <string name="player_epg_short">EPG</string>
+    <string name="player_multiview_short">Multiview</string>
+    <string name="player_quality_short">Quality</string>
     <string name="player_resume_title">Resume Playback</string>
     <string name="player_resume_desc">Do you want to resume %1$s from where you left off?</string>
     <string name="player_resume_start_over">Start Over</string>

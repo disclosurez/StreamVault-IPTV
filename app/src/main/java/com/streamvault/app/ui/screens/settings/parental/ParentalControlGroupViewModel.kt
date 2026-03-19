@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.streamvault.domain.model.Category
+import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.CategoryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -59,12 +60,20 @@ class ParentalControlGroupViewModel @Inject constructor(
 
     fun toggleCategoryProtection(category: Category) {
         viewModelScope.launch {
-            categoryRepository.setCategoryProtection(
+            when (val result = categoryRepository.setCategoryProtection(
                 providerId = providerId,
                 categoryId = category.id,
                 type = category.type,
                 isProtected = !category.isUserProtected
-            )
+            )) {
+                is Result.Success -> Unit
+                is Result.Error -> android.util.Log.w(
+                    "ParentalControlGroupVM",
+                    "Failed to update protection for ${category.name}: ${result.message}",
+                    result.exception
+                )
+                is Result.Loading -> Unit
+            }
         }
     }
 }

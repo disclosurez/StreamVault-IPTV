@@ -10,11 +10,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.paddingFromBaseline
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -60,7 +59,6 @@ import androidx.tv.material3.Text
 import com.streamvault.app.R
 import com.streamvault.app.ui.screens.player.NumericChannelInputState
 import com.streamvault.app.ui.theme.ErrorColor
-import com.streamvault.app.ui.theme.OnSurfaceDim
 import com.streamvault.app.ui.theme.Primary
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.RecordingStatus
@@ -110,6 +108,9 @@ fun PlayerControlsOverlay(
     onOpenSplitScreen: () -> Unit,
     onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit,
+    isCastConnected: Boolean,
+    onCast: () -> Unit,
+    onStopCasting: () -> Unit,
     onSeekToPosition: (Long) -> Unit = {},
     onSetScrubbingMode: (Boolean) -> Unit = {},
     clockLabelOverride: String? = null,
@@ -133,6 +134,7 @@ fun PlayerControlsOverlay(
             PlayerBottomBar(
                 title = title,
                 contentType = contentType,
+                isPlaying = isPlaying,
                 currentProgram = currentProgram,
                 currentChannelName = currentChannelName,
                 displayChannelNumber = displayChannelNumber,
@@ -145,6 +147,7 @@ fun PlayerControlsOverlay(
                 currentRecordingStatus = currentRecordingStatus,
                 isMuted = isMuted,
                 mediaTitle = mediaTitle,
+                playButtonFocusRequester = playButtonFocusRequester,
                 quickActionsFocusRequester = quickActionsFocusRequester,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 onRestartProgram = onRestartProgram,
@@ -159,21 +162,15 @@ fun PlayerControlsOverlay(
                 onOpenSplitScreen = onOpenSplitScreen,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 onToggleMute = onToggleMute,
+                isCastConnected = isCastConnected,
+                onCast = onCast,
+                onStopCasting = onStopCasting,
+                onTogglePlayPause = onTogglePlayPause,
+                onSeekBackward = onSeekBackward,
+                onSeekForward = onSeekForward,
                 onSeekToPosition = onSeekToPosition,
                 onSetScrubbingMode = onSetScrubbingMode
             )
-
-            if (contentType != "LIVE") {
-                PlayerTransportBar(
-                    isPlaying = isPlaying,
-                    playButtonFocusRequester = playButtonFocusRequester,
-                    quickActionsFocusRequester = quickActionsFocusRequester,
-                    onSeekBackward = onSeekBackward,
-                    onSeekForward = onSeekForward,
-                    onTogglePlayPause = onTogglePlayPause,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            }
         }
     }
 }
@@ -430,6 +427,7 @@ private fun PlayerTopBar(
 private fun PlayerBottomBar(
     title: String,
     contentType: String,
+    isPlaying: Boolean,
     currentProgram: Program?,
     currentChannelName: String?,
     displayChannelNumber: Int,
@@ -442,6 +440,7 @@ private fun PlayerBottomBar(
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     mediaTitle: String?,
+    playButtonFocusRequester: FocusRequester,
     quickActionsFocusRequester: FocusRequester,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
@@ -455,6 +454,12 @@ private fun PlayerBottomBar(
     onOpenSplitScreen: () -> Unit,
     onEnterPictureInPicture: () -> Unit,
     onToggleMute: () -> Unit,
+    isCastConnected: Boolean,
+    onCast: () -> Unit,
+    onStopCasting: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSeekBackward: () -> Unit,
+    onSeekForward: () -> Unit,
     onSeekToPosition: (Long) -> Unit,
     onSetScrubbingMode: (Boolean) -> Unit,
     modifier: Modifier = Modifier
@@ -462,7 +467,6 @@ private fun PlayerBottomBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(248.dp)
             .background(
                 Brush.verticalGradient(
                     colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.84f))
@@ -488,54 +492,66 @@ private fun PlayerBottomBar(
                     )
                     .padding(horizontal = 24.dp, vertical = 22.dp)
             ) {
-            if (contentType == "LIVE") {
-                PlayerLiveInfo(
-                    currentProgram = currentProgram,
-                    currentChannelName = currentChannelName,
-                    displayChannelNumber = displayChannelNumber,
-                    aspectRatioLabel = aspectRatioLabel,
-                    subtitleTrackCount = subtitleTrackCount,
-                    audioTrackCount = audioTrackCount,
-                    videoQualityCount = videoQualityCount,
-                    currentRecordingStatus = currentRecordingStatus,
-                    isMuted = isMuted,
-                    mediaTitle = mediaTitle,
-                    quickActionsFocusRequester = quickActionsFocusRequester,
-                    onRestartProgram = onRestartProgram,
-                    onOpenArchive = onOpenArchive,
-                    onStartRecording = onStartRecording,
-                    onStopRecording = onStopRecording,
-                    onScheduleRecording = onScheduleRecording,
-                    onToggleAspectRatio = onToggleAspectRatio,
-                    onOpenSubtitleTracks = onOpenSubtitleTracks,
-                    onOpenAudioTracks = onOpenAudioTracks,
-                    onOpenVideoTracks = onOpenVideoTracks,
-                    onOpenSplitScreen = onOpenSplitScreen,
-                    onEnterPictureInPicture = onEnterPictureInPicture,
-                    onToggleMute = onToggleMute
-                )
-            } else if (contentType != "LIVE") {
-                PlayerVodInfo(
-                    title = title,
-                    contentType = contentType,
-                    currentPosition = currentPosition,
-                    duration = duration,
-                    aspectRatioLabel = aspectRatioLabel,
-                    subtitleTrackCount = subtitleTrackCount,
-                    audioTrackCount = audioTrackCount,
-                    videoQualityCount = videoQualityCount,
-                    isMuted = isMuted,
-                    quickActionsFocusRequester = quickActionsFocusRequester,
-                    onSeekToPosition = onSeekToPosition,
-                    onSetScrubbingMode = onSetScrubbingMode,
-                    onToggleAspectRatio = onToggleAspectRatio,
-                    onOpenSubtitleTracks = onOpenSubtitleTracks,
-                    onOpenAudioTracks = onOpenAudioTracks,
-                    onOpenVideoTracks = onOpenVideoTracks,
-                    onEnterPictureInPicture = onEnterPictureInPicture,
-                    onToggleMute = onToggleMute
-                )
-            }
+                if (contentType == "LIVE") {
+                    PlayerLiveInfo(
+                        currentProgram = currentProgram,
+                        currentChannelName = currentChannelName,
+                        displayChannelNumber = displayChannelNumber,
+                        aspectRatioLabel = aspectRatioLabel,
+                        subtitleTrackCount = subtitleTrackCount,
+                        audioTrackCount = audioTrackCount,
+                        videoQualityCount = videoQualityCount,
+                        currentRecordingStatus = currentRecordingStatus,
+                        isMuted = isMuted,
+                        mediaTitle = mediaTitle,
+                        playButtonFocusRequester = playButtonFocusRequester,
+                        quickActionsFocusRequester = quickActionsFocusRequester,
+                        onRestartProgram = onRestartProgram,
+                        onOpenArchive = onOpenArchive,
+                        onStartRecording = onStartRecording,
+                        onStopRecording = onStopRecording,
+                        onScheduleRecording = onScheduleRecording,
+                        onToggleAspectRatio = onToggleAspectRatio,
+                        onOpenSubtitleTracks = onOpenSubtitleTracks,
+                        onOpenAudioTracks = onOpenAudioTracks,
+                        onOpenVideoTracks = onOpenVideoTracks,
+                        onOpenSplitScreen = onOpenSplitScreen,
+                        onEnterPictureInPicture = onEnterPictureInPicture,
+                        onToggleMute = onToggleMute,
+                        isCastConnected = isCastConnected,
+                        onCast = onCast,
+                        onStopCasting = onStopCasting
+                    )
+                } else {
+                    PlayerVodInfo(
+                        title = title,
+                        contentType = contentType,
+                        isPlaying = isPlaying,
+                        currentPosition = currentPosition,
+                        duration = duration,
+                        aspectRatioLabel = aspectRatioLabel,
+                        subtitleTrackCount = subtitleTrackCount,
+                        audioTrackCount = audioTrackCount,
+                        videoQualityCount = videoQualityCount,
+                        isMuted = isMuted,
+                        playButtonFocusRequester = playButtonFocusRequester,
+                        quickActionsFocusRequester = quickActionsFocusRequester,
+                        onSeekToPosition = onSeekToPosition,
+                        onSetScrubbingMode = onSetScrubbingMode,
+                        onToggleAspectRatio = onToggleAspectRatio,
+                        onOpenSubtitleTracks = onOpenSubtitleTracks,
+                        onOpenAudioTracks = onOpenAudioTracks,
+                        onOpenVideoTracks = onOpenVideoTracks,
+                        onEnterPictureInPicture = onEnterPictureInPicture,
+                        onToggleMute = onToggleMute,
+                        isCastConnected = isCastConnected,
+                        onCast = onCast,
+                        onStopCasting = onStopCasting,
+                        onTogglePlayPause = onTogglePlayPause,
+                        onSeekBackward = onSeekBackward,
+                        onSeekForward = onSeekForward
+                    )
+                }
             }
         }
     }
@@ -553,6 +569,7 @@ private fun PlayerLiveInfo(
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     mediaTitle: String?,
+    playButtonFocusRequester: FocusRequester,
     quickActionsFocusRequester: FocusRequester,
     onRestartProgram: () -> Unit,
     onOpenArchive: () -> Unit,
@@ -565,12 +582,19 @@ private fun PlayerLiveInfo(
     onOpenVideoTracks: () -> Unit,
     onOpenSplitScreen: () -> Unit,
     onEnterPictureInPicture: () -> Unit,
-    onToggleMute: () -> Unit
+    onToggleMute: () -> Unit,
+    isCastConnected: Boolean,
+    onCast: () -> Unit,
+    onStopCasting: () -> Unit
 ) {
     val primaryActions = buildList {
         add(PlayerActionSpec(
             stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
             onToggleMute
+        ))
+        add(PlayerActionSpec(
+            stringResource(if (isCastConnected) R.string.player_stop_casting else R.string.player_cast),
+            if (isCastConnected) onStopCasting else onCast
         ))
         add(PlayerActionSpec(stringResource(R.string.player_picture_in_picture), onEnterPictureInPicture))
         if (currentProgram?.hasArchive == true) {
@@ -589,7 +613,7 @@ private fun PlayerLiveInfo(
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }
-        if (audioTrackCount > 1) {
+        if (audioTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_audio), onOpenAudioTracks))
         }
         if (videoQualityCount > 1) {
@@ -677,7 +701,8 @@ private fun PlayerLiveInfo(
     PlayerQuickActionRows(
         primaryActions = primaryActions,
         secondaryActions = secondaryActions,
-        firstActionFocusRequester = quickActionsFocusRequester
+        firstActionFocusRequester = quickActionsFocusRequester,
+        primaryActionsUpFocusRequester = playButtonFocusRequester
     )
 }
 
@@ -685,6 +710,7 @@ private fun PlayerLiveInfo(
 private fun PlayerVodInfo(
     title: String,
     contentType: String,
+    isPlaying: Boolean,
     currentPosition: Long,
     duration: Long,
     aspectRatioLabel: String,
@@ -692,6 +718,7 @@ private fun PlayerVodInfo(
     audioTrackCount: Int,
     videoQualityCount: Int,
     isMuted: Boolean,
+    playButtonFocusRequester: FocusRequester,
     quickActionsFocusRequester: FocusRequester,
     onSeekToPosition: (Long) -> Unit,
     onSetScrubbingMode: (Boolean) -> Unit,
@@ -700,23 +727,46 @@ private fun PlayerVodInfo(
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
     onEnterPictureInPicture: () -> Unit,
-    onToggleMute: () -> Unit
+    onToggleMute: () -> Unit,
+    isCastConnected: Boolean,
+    onCast: () -> Unit,
+    onStopCasting: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSeekBackward: () -> Unit,
+    onSeekForward: () -> Unit
 ) {
+    val playbackLabel = stringResource(R.string.player_playback_label)
     val actions = buildList {
         add(PlayerActionSpec(stringResource(R.string.player_aspect_ratio_label, aspectRatioLabel), onToggleAspectRatio))
         add(PlayerActionSpec(
             stringResource(if (isMuted) R.string.player_unmute else R.string.player_mute),
             onToggleMute
         ))
+        add(PlayerActionSpec(
+            stringResource(if (isCastConnected) R.string.player_stop_casting else R.string.player_cast),
+            if (isCastConnected) onStopCasting else onCast
+        ))
         add(PlayerActionSpec(stringResource(R.string.player_picture_in_picture), onEnterPictureInPicture))
         if (subtitleTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_subs), onOpenSubtitleTracks))
         }
-        if (audioTrackCount > 1) {
+        if (audioTrackCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_audio), onOpenAudioTracks))
         }
         if (videoQualityCount > 1) {
             add(PlayerActionSpec(stringResource(R.string.player_video_quality), onOpenVideoTracks))
+        }
+    }
+    var sliderValue by remember(duration, currentPosition) {
+        mutableStateOf(if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f)
+    }
+    var isScrubbing by remember { mutableStateOf(false) }
+    val latestSeekCallback by rememberUpdatedState(onSeekToPosition)
+    val latestScrubbingCallback by rememberUpdatedState(onSetScrubbingMode)
+
+    LaunchedEffect(duration, currentPosition, isScrubbing) {
+        if (!isScrubbing) {
+            sliderValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
         }
     }
 
@@ -745,159 +795,159 @@ private fun PlayerVodInfo(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        var sliderValue by remember(duration, currentPosition) {
-            mutableStateOf(
-                if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
-            )
-        }
-        var isScrubbing by remember { mutableStateOf(false) }
-        val latestSeekCallback by rememberUpdatedState(onSeekToPosition)
-        val latestScrubbingCallback by rememberUpdatedState(onSetScrubbingMode)
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        colors = SurfaceDefaults.colors(containerColor = Color.White.copy(alpha = 0.06f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                colors = SurfaceDefaults.colors(containerColor = Color.Black.copy(alpha = 0.24f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PlayerTransportButton(
+                        label = "\u23EA",
+                        contentDescription = stringResource(R.string.player_rewind),
+                        onClick = onSeekBackward,
+                        modifier = Modifier.focusProperties {
+                            down = quickActionsFocusRequester
+                        }
+                    )
+                    Surface(
+                        onClick = onTogglePlayPause,
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Primary.copy(alpha = 0.84f),
+                            focusedContainerColor = Primary
+                        ),
+                        modifier = Modifier
+                            .size(72.dp)
+                            .focusRequester(playButtonFocusRequester)
+                            .focusProperties {
+                                down = quickActionsFocusRequester
+                            }
+                            .semantics { contentDescription = playbackLabel }
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            if (isPlaying) {
+                                Text(
+                                    text = "II",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    color = Color.White
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = stringResource(R.string.player_play),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+                        }
+                    }
+                    PlayerTransportButton(
+                        label = "\u23E9",
+                        contentDescription = stringResource(R.string.player_forward),
+                        onClick = onSeekForward,
+                        modifier = Modifier.focusProperties {
+                            down = quickActionsFocusRequester
+                        }
+                    )
+                }
+            }
 
-        LaunchedEffect(duration, currentPosition, isScrubbing) {
-            if (!isScrubbing) {
-                sliderValue = if (duration > 0) {
-                    currentPosition.toFloat() / duration.toFloat()
-                } else {
-                    0f
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = playbackLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White.copy(alpha = 0.78f)
+                    )
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.58f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = formatDuration(
+                            if (isScrubbing && duration > 0) {
+                                (sliderValue * duration).toLong()
+                            } else {
+                                currentPosition
+                            }
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White
+                    )
+                    Slider(
+                        value = sliderValue,
+                        onValueChange = { newValue ->
+                            if (!isScrubbing) {
+                                isScrubbing = true
+                                latestScrubbingCallback(true)
+                            }
+                            sliderValue = newValue
+                        },
+                        onValueChangeFinished = {
+                            if (duration > 0) {
+                                latestSeekCallback((sliderValue.coerceIn(0f, 1f) * duration).toLong())
+                            }
+                            if (isScrubbing) {
+                                latestScrubbingCallback(false)
+                                isScrubbing = false
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 16.dp)
+                            .focusProperties {
+                                down = quickActionsFocusRequester
+                            }
+                            .semantics { contentDescription = playbackLabel },
+                        enabled = duration > 0,
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = Primary,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                        )
+                    )
+                    Text(
+                        text = formatDuration(duration),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White
+                    )
                 }
             }
         }
-
-        Text(
-            text = formatDuration(
-                if (isScrubbing && duration > 0) {
-                    (sliderValue * duration).toLong()
-                } else {
-                    currentPosition
-                }
-            ),
-            style = MaterialTheme.typography.labelMedium,
-            color = Color.White
-        )
-        Slider(
-            value = sliderValue,
-            onValueChange = { newValue ->
-                if (!isScrubbing) {
-                    isScrubbing = true
-                    latestScrubbingCallback(true)
-                }
-                sliderValue = newValue
-            },
-            onValueChangeFinished = {
-                if (duration > 0) {
-                    latestSeekCallback((sliderValue.coerceIn(0f, 1f) * duration).toLong())
-                }
-                if (isScrubbing) {
-                    latestScrubbingCallback(false)
-                    isScrubbing = false
-                }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 16.dp),
-            enabled = duration > 0,
-            colors = SliderDefaults.colors(
-                activeTrackColor = Primary,
-                inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-            )
-        )
-        Text(
-            text = formatDuration(duration),
-            style = MaterialTheme.typography.labelMedium,
-            color = Color.White
-        )
     }
 
     PlayerQuickActionRows(
         primaryActions = actions,
         secondaryActions = emptyList(),
         firstActionFocusRequester = quickActionsFocusRequester,
-        primaryActionsUpFocusRequester = quickActionsFocusRequester
+        primaryActionsUpFocusRequester = playButtonFocusRequester
     )
-}
-
-@Composable
-private fun PlayerTransportBar(
-    isPlaying: Boolean,
-    playButtonFocusRequester: FocusRequester,
-    quickActionsFocusRequester: FocusRequester,
-    onSeekBackward: () -> Unit,
-    onSeekForward: () -> Unit,
-    onTogglePlayPause: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val playPauseDescription = if (isPlaying) {
-        stringResource(R.string.player_pause)
-    } else {
-        stringResource(R.string.player_play)
-    }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(999.dp),
-        colors = SurfaceDefaults.colors(containerColor = Color.Black.copy(alpha = 0.52f))
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = stringResource(R.string.player_playback_label),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.7f)
-            )
-            PlayerTransportButton(
-                label = "\u23EA",
-                contentDescription = stringResource(R.string.player_rewind),
-                onClick = onSeekBackward,
-                modifier = Modifier.focusProperties {
-                    down = quickActionsFocusRequester
-                }
-            )
-            Surface(
-                onClick = onTogglePlayPause,
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = Primary.copy(alpha = 0.8f),
-                    focusedContainerColor = Primary
-                ),
-                modifier = Modifier
-                    .size(80.dp)
-                    .focusRequester(playButtonFocusRequester)
-                    .focusProperties {
-                        down = quickActionsFocusRequester
-                    }
-                    .semantics { contentDescription = playPauseDescription }
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    if (isPlaying) {
-                        Text(
-                            text = "II",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = stringResource(R.string.player_play),
-                            tint = Color.White,
-                            modifier = Modifier.size(38.dp)
-                        )
-                    }
-                }
-            }
-            PlayerTransportButton(
-                label = "\u23E9",
-                contentDescription = stringResource(R.string.player_forward),
-                onClick = onSeekForward,
-                modifier = Modifier.focusProperties {
-                    down = quickActionsFocusRequester
-                }
-            )
-        }
-    }
 }
 
 @Composable

@@ -11,6 +11,7 @@ import com.streamvault.domain.model.LibraryBrowseQuery
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.PagedResult
 import com.streamvault.domain.model.Result
+import com.streamvault.domain.model.StreamInfo
 import com.streamvault.domain.repository.MovieRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -196,8 +197,7 @@ class MovieRepositoryImpl @Inject constructor(
         return if (movie != null) Result.success(movie) else Result.error("Movie not found")
     }
 
-    @Deprecated("Use getStreamInfo() instead", ReplaceWith("getStreamInfo(movie)"))
-    override suspend fun getStreamUrl(movie: Movie): Result<String> =
+    override suspend fun getStreamInfo(movie: Movie): Result<StreamInfo> = try {
         xtreamStreamUrlResolver.resolve(
             url = movie.streamUrl,
             fallbackProviderId = movie.providerId,
@@ -205,13 +205,19 @@ class MovieRepositoryImpl @Inject constructor(
             fallbackContentType = ContentType.MOVIE,
             fallbackContainerExtension = movie.containerExtension
         )?.let { resolvedUrl ->
-            Result.success(resolvedUrl)
+            Result.success(StreamInfo(url = resolvedUrl, title = movie.name))
         } ?: Result.error("No stream URL available for movie: ${movie.name}")
+    } catch (e: Exception) {
+        Result.error(e.message ?: "Failed to resolve stream URL for movie: ${movie.name}", e)
+    }
 
     override suspend fun refreshMovies(providerId: Long): Result<Unit> =
         Result.success(Unit) // Handled by ProviderRepository
 
-    override suspend fun updateWatchProgress(movieId: Long, progress: Long) {
+    override suspend fun updateWatchProgress(movieId: Long, progress: Long): Result<Unit> = try {
         movieDao.updateWatchProgress(movieId, progress)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error("Failed to update movie watch progress", e)
     }
 }

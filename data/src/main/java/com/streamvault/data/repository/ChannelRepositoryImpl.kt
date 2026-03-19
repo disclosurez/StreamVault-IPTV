@@ -9,6 +9,7 @@ import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.Result
+import com.streamvault.domain.model.StreamInfo
 import com.streamvault.domain.repository.ChannelRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,6 +29,13 @@ class ChannelRepositoryImpl @Inject constructor(
     private val parentalControlManager: com.streamvault.domain.manager.ParentalControlManager,
     private val xtreamStreamUrlResolver: XtreamStreamUrlResolver
 ) : ChannelRepository {
+
+    private data class ChannelGroupAccumulator(
+        var primary: ChannelEntity,
+        val alternatives: MutableList<ChannelEntity> = mutableListOf()
+    )
+
+    private val channelPriorityComparator = compareBy<ChannelEntity>({ it.errorCount }, { it.name.length })
 
     override fun getChannels(providerId: Long): Flow<List<Channel>> =
         combine(
@@ -170,16 +178,18 @@ class ChannelRepositoryImpl @Inject constructor(
     override suspend fun getChannel(channelId: Long): Channel? =
         channelDao.getById(channelId)?.toDomain()
 
-    @Deprecated("Use getStreamInfo() instead", ReplaceWith("getStreamInfo(channel)"))
-    override suspend fun getStreamUrl(channel: Channel): Result<String> =
+    override suspend fun getStreamInfo(channel: Channel): Result<StreamInfo> = try {
         xtreamStreamUrlResolver.resolve(
             url = channel.streamUrl,
             fallbackProviderId = channel.providerId,
             fallbackStreamId = channel.streamId,
             fallbackContentType = ContentType.LIVE
         )?.let { resolvedUrl ->
-            Result.success(resolvedUrl)
+            Result.success(StreamInfo(url = resolvedUrl, title = channel.name))
         } ?: Result.error("No stream URL available for channel: ${channel.name}")
+    } catch (e: Exception) {
+        Result.error(e.message ?: "Failed to resolve stream URL for channel: ${channel.name}", e)
+    }
 
     override suspend fun refreshChannels(providerId: Long): Result<Unit> {
         // Refresh is handled by ProviderRepository.refreshProviderData
@@ -189,26 +199,43 @@ class ChannelRepositoryImpl @Inject constructor(
     override fun getChannelsByIds(ids: List<Long>): Flow<List<Channel>> =
         channelDao.getByIds(ids).map { entities -> entities.map { it.toDomain() } }
 
-    override suspend fun incrementChannelErrorCount(channelId: Long) {
+    override suspend fun incrementChannelErrorCount(channelId: Long): Result<Unit> = try {
         channelDao.incrementErrorCount(channelId)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error("Failed to increment channel error count", e)
     }
 
-    override suspend fun resetChannelErrorCount(channelId: Long) {
+    override suspend fun resetChannelErrorCount(channelId: Long): Result<Unit> = try {
         channelDao.resetErrorCount(channelId)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error("Failed to reset channel error count", e)
     }
 
     private fun groupAndMapChannels(entities: List<ChannelEntity>, unlockedCats: Set<Long>): List<Channel> {
-        return entities.groupBy { channelGroupKey(it) }.values.map { group ->
-            // Sort group to pick the primary channel based on reliability and name length
-            val sortedGroup = group.sortedWith(compareBy({ it.errorCount }, { it.name.length }))
-            val primaryEntity = sortedGroup.first()
-            val alternativeStreams = sortedGroup.drop(1).map { it.streamUrl }
-            
-            val domain = primaryEntity.toDomain().copy(
-                alternativeStreams = alternativeStreams
-            )
-            
-            // If category is unlocked, mark channel as NOT protected/ADULT for this session
+        val grouped = LinkedHashMap<String, ChannelGroupAccumulator>()
+        entities.forEach { entity ->
+            val key = channelGroupKey(entity)
+            val existing = grouped[key]
+            if (existing == null) {
+                grouped[key] = ChannelGroupAccumulator(primary = entity)
+            } else if (channelPriorityComparator.compare(entity, existing.primary) < 0) {
+                existing.alternatives += existing.primary
+                existing.primary = entity
+            } else {
+                existing.alternatives += entity
+            }
+        }
+
+        return grouped.values.map { group ->
+            val primaryEntity = group.primary
+            val alternativeStreams = group.alternatives
+                .sortedWith(channelPriorityComparator)
+                .map { it.streamUrl }
+
+            val domain = primaryEntity.toDomain().copy(alternativeStreams = alternativeStreams)
+
             if (primaryEntity.categoryId != null && unlockedCats.contains(primaryEntity.categoryId)) {
                 domain.copy(isUserProtected = false, isAdult = false)
             } else {
@@ -233,11 +260,15 @@ class ChannelRepositoryImpl @Inject constructor(
     }
 
     private fun groupPrimaryChannelEntities(entities: List<ChannelEntity>): List<ChannelEntity> {
-        return entities.groupBy { channelGroupKey(it) }
-            .values
-            .map { group ->
-                group.minWith(compareBy<ChannelEntity> { it.errorCount }.thenBy { it.name.length })
+        val primaries = LinkedHashMap<String, ChannelEntity>()
+        entities.forEach { entity ->
+            val key = channelGroupKey(entity)
+            val current = primaries[key]
+            if (current == null || channelPriorityComparator.compare(entity, current) < 0) {
+                primaries[key] = entity
             }
+        }
+        return primaries.values.toList()
     }
 
     private fun channelGroupKey(entity: ChannelEntity): String =

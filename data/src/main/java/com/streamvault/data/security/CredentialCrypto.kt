@@ -46,7 +46,9 @@ object CredentialCrypto {
         return try {
             val payload = value.removePrefix(PREFIX)
             val bytes = java.util.Base64.getDecoder().decode(payload)
-            if (bytes.size <= IV_SIZE_BYTES) return value
+            if (bytes.size <= IV_SIZE_BYTES) {
+                throw CredentialDecryptionException(cause = IllegalArgumentException("Encrypted credential payload is truncated"))
+            }
 
             val iv = bytes.copyOfRange(0, IV_SIZE_BYTES)
             val ciphertext = bytes.copyOfRange(IV_SIZE_BYTES, bytes.size)
@@ -59,11 +61,8 @@ object CredentialCrypto {
             )
             String(cipher.doFinal(ciphertext), Charsets.UTF_8)
         } catch (e: Exception) {
-            // Decryption failed (e.g. key invalidated after device reset).
-            // Return empty string — the caller will surface an auth failure rather than
-            // silently sending a garbled ciphertext blob as the password.
             Log.e(TAG, "Keystore decryption failed. Stored credential is unreadable.", e)
-            ""
+            throw CredentialDecryptionException(cause = e)
         }
     }
 

@@ -36,6 +36,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -181,6 +184,28 @@ fun LiveChannelRowSurface(
     rowHeight: Dp = 68.dp
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val favoriteLabel = stringResource(R.string.a11y_favorite)
+    val catchUpLabel = stringResource(R.string.a11y_catch_up_available)
+    val lockedLabel = stringResource(R.string.a11y_locked)
+    val channelDescription = buildString {
+        append(
+            channel.number.takeIf { it > 0 }?.let {
+                stringResource(R.string.a11y_channel_with_number, it, channel.name)
+            } ?: channel.name
+        )
+        channel.currentProgram?.title?.takeIf { it.isNotBlank() }?.let {
+            append(". ")
+            append(stringResource(R.string.a11y_now_playing, it))
+        }
+        if (channel.isFavorite) {
+            append(". ")
+            append(favoriteLabel)
+        }
+        if (channel.catchUpSupported) {
+            append(". ")
+            append(catchUpLabel)
+        }
+    }
     val scale by animateFloatAsState(
         targetValue = if (isDragging) FocusSpec.FocusedScale else 1f,
         animationSpec = AppMotion.FocusSpec,
@@ -195,6 +220,12 @@ fun LiveChannelRowSurface(
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+            }
+            .semantics(mergeDescendants = true) {
+                contentDescription = channelDescription
+                if (isLocked) {
+                    stateDescription = lockedLabel
+                }
             }
             .onFocusChanged { isFocused = it.isFocused },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),

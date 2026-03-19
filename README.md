@@ -66,6 +66,12 @@ Android TV requires **explicit focus management**. Compose for TV handles much o
 - **Favorites**: Stored locally in Room. Toggling a favorite is optimistic and instant in the UI.
 - **Custom Groups**: Users can create custom "Virtual Categories" to organize channels.
 
+### 📦 TV Compose And Accessibility Tracking
+- `androidx.tv:tv-material` is intentionally pinned in `gradle/libs.versions.toml`.
+- The library is now stable, but `SearchScreen` still uses `FilterChip` APIs behind `ExperimentalTvMaterial3Api`.
+- Reduced-motion handling now respects Android's animator duration scale for shimmer and image crossfades.
+- See `docs/audit/tv-compose-accessibility.md` for the current migration risk and accessibility checklist.
+
 ---
 
 ## 🚀 Getting Started

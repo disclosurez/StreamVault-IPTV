@@ -24,11 +24,8 @@ interface MovieRepository {
     fun searchMovies(providerId: Long, query: String): Flow<List<Movie>>
     suspend fun getMovie(movieId: Long): Movie?
     suspend fun getMovieDetails(providerId: Long, movieId: Long): Result<Movie>
-    @Deprecated("Use getStreamInfo() for richer metadata", replaceWith = ReplaceWith("getStreamInfo(movie)"))
-    suspend fun getStreamUrl(movie: Movie): Result<String>
-    suspend fun getStreamInfo(movie: Movie): Result<StreamInfo> =
-        getStreamUrl(movie).map { StreamInfo(it) }
+    suspend fun getStreamInfo(movie: Movie): Result<StreamInfo>
     suspend fun refreshMovies(providerId: Long): Result<Unit>
-    suspend fun updateWatchProgress(movieId: Long, progress: Long)
+    suspend fun updateWatchProgress(movieId: Long, progress: Long): Result<Unit>
     suspend fun getWatchProgress(movieId: Long): Long? = null
 }

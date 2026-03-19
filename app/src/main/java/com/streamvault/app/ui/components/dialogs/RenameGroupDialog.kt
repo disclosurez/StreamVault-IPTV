@@ -38,6 +38,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
+import com.streamvault.app.ui.design.requestFocusSafely
 import com.streamvault.app.ui.design.FocusSpec
 import com.streamvault.app.R
 import com.streamvault.app.ui.theme.FocusBorder
@@ -59,7 +60,7 @@ fun RenameGroupDialog(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(Unit) {
-        runCatching { focusRequester.requestFocus() }
+        focusRequester.requestFocusSafely(tag = "RenameGroupDialog", target = "Rename group field")
         keyboardController?.show()
         delay(500)
         canInteract = true

@@ -30,6 +30,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
@@ -71,12 +74,16 @@ fun SearchInput(
             .height(40.dp)
             .background(backgroundColor, RoundedCornerShape(8.dp))
             .border(borderWidth, borderColor, RoundedCornerShape(8.dp))
+            .semantics(mergeDescendants = true) {
+                contentDescription = placeholder
+                stateDescription = value.ifBlank { placeholder }
+            }
             .onFocusChanged {
                 isFocused = enabled && it.hasFocus
             }
             .focusProperties {
                 canFocus = enabled
-                enter = { focusRequester }
+                onEnter = { focusRequester }
             }
             .clickable(enabled = enabled) {
                 focusRequester.requestFocus()
@@ -89,7 +96,7 @@ fun SearchInput(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Default.Search,
-                contentDescription = placeholder,
+                contentDescription = null,
                 tint = if (isFocused) Primary else OnSurfaceDim,
                 modifier = Modifier.padding(end = 6.dp)
             )

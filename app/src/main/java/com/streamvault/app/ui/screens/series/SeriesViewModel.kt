@@ -69,7 +69,7 @@ class SeriesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
+                        favoriteRepository.getFavorites(ContentType.SERIES),
                         getCustomCategories(ContentType.SERIES),
                         seriesRepository.getCategories(provider.id),
                         seriesRepository.getCategoryItemCounts(provider.id),
@@ -134,7 +134,7 @@ class SeriesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
+                        favoriteRepository.getFavorites(ContentType.SERIES),
                         getCustomCategories(ContentType.SERIES),
                         seriesRepository.getCategories(provider.id),
                         seriesRepository.getCategoryItemCounts(provider.id)
@@ -209,7 +209,7 @@ class SeriesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
+                        favoriteRepository.getFavorites(ContentType.SERIES),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         seriesRepository.getTopRatedPreview(provider.id, PREVIEW_ROW_LIMIT),
                         seriesRepository.getFreshPreview(provider.id, PREVIEW_ROW_LIMIT)

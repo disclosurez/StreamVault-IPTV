@@ -1,7 +1,10 @@
 package com.streamvault.app.navigation
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.dropUnlessResumed
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
@@ -25,6 +28,7 @@ import com.streamvault.app.ui.screens.provider.ProviderSetupScreen
 import com.streamvault.app.ui.screens.series.SeriesScreen
 import com.streamvault.app.ui.screens.settings.SettingsScreen
 import com.streamvault.app.ui.screens.welcome.WelcomeScreen
+import com.streamvault.app.MainActivity
 import java.io.Serializable
 
 
@@ -39,6 +43,7 @@ data class PlayerNavigationRequest(
     val providerId: Long? = null,
     val isVirtual: Boolean = false,
     val contentType: String = "LIVE",
+    val artworkUrl: String? = null,
     val archiveStartMs: Long? = null,
     val archiveEndMs: Long? = null,
     val archiveTitle: String? = null,
@@ -58,6 +63,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val PLAYER = "player"
     const val SEARCH = "search"
+    const val SEARCH_DESTINATION = "search?query={query}"
     const val SERIES_DETAIL = "series_detail/{seriesId}"
     const val WELCOME = "welcome"
     const val PARENTAL_CONTROL_GROUPS = "parental_control_groups/{providerId}"
@@ -101,7 +107,8 @@ object Routes {
             internalId = movie.id,
             categoryId = movie.categoryId,
             providerId = movie.providerId,
-            contentType = "MOVIE"
+            contentType = "MOVIE",
+            artworkUrl = movie.posterUrl ?: movie.backdropUrl
         )
     }
 
@@ -111,9 +118,13 @@ object Routes {
             title = "${episode.title} - S${episode.seasonNumber}E${episode.episodeNumber}",
             internalId = episode.id,
             providerId = episode.providerId,
-            contentType = "SERIES_EPISODE"
+            contentType = "SERIES_EPISODE",
+            artworkUrl = episode.coverUrl
         )
     }
+
+    fun search(query: String? = null): String =
+        if (query.isNullOrBlank()) SEARCH else "$SEARCH?query=${Uri.encode(query)}"
 
     fun player(
         streamUrl: String,
@@ -124,6 +135,7 @@ object Routes {
         providerId: Long? = null,
         isVirtual: Boolean = false,
         contentType: String = "LIVE",
+        artworkUrl: String? = null,
         archiveStartMs: Long? = null,
         archiveEndMs: Long? = null,
         archiveTitle: String? = null,
@@ -138,6 +150,7 @@ object Routes {
             providerId = providerId,
             isVirtual = isVirtual,
             contentType = contentType,
+            artworkUrl = artworkUrl,
             archiveStartMs = archiveStartMs,
             archiveEndMs = archiveEndMs,
             archiveTitle = archiveTitle,
@@ -169,8 +182,30 @@ private fun NavHostController.navigateToPlayer(request: PlayerNavigationRequest)
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(mainActivity: MainActivity) {
     val navController = rememberNavController()
+    val externalNavigationRequest = mainActivity.externalNavigationRequestFlow.collectAsStateWithLifecycle().value
+
+    LaunchedEffect(externalNavigationRequest) {
+        when (val request = externalNavigationRequest) {
+            is ExternalNavigationRequest.Player -> {
+                navController.navigateToPlayer(request.request)
+                mainActivity.clearExternalNavigationRequest()
+            }
+
+            is ExternalNavigationRequest.Route -> {
+                navController.navigate(request.route) { launchSingleTop = true }
+                mainActivity.clearExternalNavigationRequest()
+            }
+
+            is ExternalNavigationRequest.Search -> {
+                navController.navigate(Routes.search(request.query)) { launchSingleTop = true }
+                mainActivity.clearExternalNavigationRequest()
+            }
+
+            null -> Unit
+        }
+    }
 
     // NAV-M02/NAV-H02: Single helper replacing repeated tab lambdas without serializing
     // each tab's full UI tree into saved state on every switch.
@@ -493,8 +528,14 @@ fun AppNavigation() {
             )
         }
 
-        composable(Routes.SEARCH) {
+        composable(
+            route = Routes.SEARCH_DESTINATION,
+            arguments = listOf(
+                navArgument("query") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
             com.streamvault.app.ui.screens.search.SearchScreen(
+                initialQuery = backStackEntry.arguments?.getString("query").orEmpty(),
                 onChannelClick = { channel ->
                     navController.navigateToPlayer(
                         Routes.livePlayer(
@@ -531,12 +572,20 @@ fun AppNavigation() {
                 providerId = playerRequest?.providerId,
                 isVirtual = playerRequest?.isVirtual ?: false,
                 contentType = playerRequest?.contentType ?: "LIVE",
+                artworkUrl = playerRequest?.artworkUrl,
                 archiveStartMs = playerRequest?.archiveStartMs,
                 archiveEndMs = playerRequest?.archiveEndMs,
                 archiveTitle = playerRequest?.archiveTitle,
                 returnRoute = playerRequest?.returnRoute,
                 onBack = { navController.popBackStack() },
-                onNavigate = { route -> navController.navigateIfResumed(route) { launchSingleTop = true } }
+                onNavigate = { route ->
+                    navController.navigateIfResumed(route) {
+                        launchSingleTop = true
+                        if (route == Routes.MULTI_VIEW) {
+                            popUpTo(Routes.PLAYER) { inclusive = true }
+                        }
+                    }
+                }
             )
         }
 

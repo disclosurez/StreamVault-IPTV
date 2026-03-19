@@ -66,6 +66,7 @@ dependencies {
 
     // DataStore
     implementation(libs.datastore.preferences)
+    implementation(libs.security.crypto)
 
     // Core
     implementation(libs.core.ktx)

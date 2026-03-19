@@ -69,7 +69,7 @@ class MoviesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
+                        favoriteRepository.getFavorites(ContentType.MOVIE),
                         getCustomCategories(ContentType.MOVIE),
                         movieRepository.getCategories(provider.id),
                         movieRepository.getCategoryItemCounts(provider.id),
@@ -134,7 +134,7 @@ class MoviesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
+                        favoriteRepository.getFavorites(ContentType.MOVIE),
                         getCustomCategories(ContentType.MOVIE),
                         movieRepository.getCategories(provider.id),
                         movieRepository.getCategoryItemCounts(provider.id)
@@ -208,7 +208,7 @@ class MoviesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
+                        favoriteRepository.getFavorites(ContentType.MOVIE),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         movieRepository.getTopRatedPreview(provider.id, PREVIEW_ROW_LIMIT),
                         movieRepository.getFreshPreview(provider.id, PREVIEW_ROW_LIMIT)

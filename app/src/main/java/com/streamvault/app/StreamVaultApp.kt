@@ -7,6 +7,7 @@ import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import com.streamvault.app.ui.accessibility.isReducedMotionEnabled
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.Dispatchers
 import okio.Path.Companion.toOkioPath
@@ -58,7 +59,7 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
             // Limit concurrent decoding and fetching to 6 for TV hardware constraints
             .fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(6))
             .decoderCoroutineContext(Dispatchers.Default.limitedParallelism(4))
-            .crossfade(true)
+            .crossfade(!isReducedMotionEnabled(context))
             .build()
     }
 }

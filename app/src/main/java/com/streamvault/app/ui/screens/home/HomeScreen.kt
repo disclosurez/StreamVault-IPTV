@@ -6,8 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -32,7 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.*
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -52,8 +50,6 @@ import com.streamvault.app.ui.components.dialogs.PremiumDialog
 import com.streamvault.app.ui.components.dialogs.PremiumDialogFooterButton
 import com.streamvault.app.ui.components.dialogs.RenameGroupDialog
 import com.streamvault.app.ui.components.ReorderTopBar
-import com.streamvault.app.ui.components.SkeletonCard
-import com.streamvault.app.ui.components.shimmerEffect
 import com.streamvault.app.ui.components.shell.AppNavigationChrome
 import com.streamvault.app.ui.components.shell.AppScreenScaffold
 import com.streamvault.app.ui.design.FocusRestoreHost
@@ -80,6 +76,29 @@ import java.util.Locale
 private enum class FocusRestoreTarget {
     CATEGORY,
     CHANNEL
+}
+
+@Composable
+private fun HomeLoadingPane(
+    message: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            CircularProgressIndicator(color = Color.White)
+            Text(
+                text = message,
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
 }
 
 
@@ -260,46 +279,29 @@ fun HomeScreen(
                 )
             }
 
-            if (uiState.isLoading && uiState.categories.isEmpty()) {
+            if (uiState.isCategoriesLoading && uiState.categories.isEmpty()) {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    // Sidebar skeleton
-                    Column(
+                    Box(
                         modifier = Modifier
                             .width(272.dp)
                             .fillMaxHeight()
                             .background(SurfaceElevated)
-                            .padding(vertical = 16.dp, horizontal = 16.dp)
+                            .padding(horizontal = 16.dp, vertical = 24.dp)
                     ) {
-                        repeat(10) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .padding(vertical = 4.dp)
-                                    .background(Color.DarkGray, RoundedCornerShape(8.dp))
-                                    .shimmerEffect(baseColor = MaterialTheme.colorScheme.onSurface)
-                            )
-                        }
+                        HomeLoadingPane(
+                            message = stringResource(R.string.home_loading_categories)
+                        )
                     }
-                    // Content skeleton
-                    Column(
+
+                    Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
                             .padding(24.dp)
                     ) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 180.dp),
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            items(20) {
-                                SkeletonCard(
-                                    modifier = Modifier.aspectRatio(16f/9f)
-                                )
-                            }
-                        }
+                        HomeLoadingPane(
+                            message = stringResource(R.string.home_loading_channels)
+                        )
                     }
                 }
             } else {
@@ -312,6 +314,11 @@ fun HomeScreen(
                             it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
                     }
                 }
+                val isCategoryLocked: (Category) -> Boolean = remember(uiState.parentalControlLevel) {
+                    { category ->
+                        (category.isAdult || category.isUserProtected) && uiState.parentalControlLevel == 1
+                    }
+                }
                 var lastFocusedCategoryId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var lastFocusedChannelId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var preferredRestoreTarget by rememberSaveable { mutableStateOf(FocusRestoreTarget.CHANNEL.name) }
@@ -321,8 +328,10 @@ fun HomeScreen(
                 val visibleCategoryIds = remember(visibleCategories) {
                     visibleCategories.mapTo(mutableSetOf()) { it.id }
                 }
-                val displayedCategory = uiState.selectedCategory?.takeIf { it.id in visibleCategoryIds }
-                    ?: visibleCategories.firstOrNull()
+                val displayedCategory = uiState.selectedCategory?.takeIf {
+                    it.id in visibleCategoryIds && !isCategoryLocked(it)
+                } ?: visibleCategories.firstOrNull { !isCategoryLocked(it) }
+                val hasBlockedCategorySearch = displayedCategory == null && visibleCategories.isNotEmpty()
 
                 LaunchedEffect(uiState.categories) {
                     val validIds = uiState.categories.mapTo(mutableSetOf()) { it.id }
@@ -334,11 +343,15 @@ fun HomeScreen(
                     channelFocusRequesters.keys.retainAll(validIds)
                 }
 
-                LaunchedEffect(uiState.categorySearchQuery, displayedCategory?.id, isReorderMode) {
+                LaunchedEffect(uiState.categorySearchQuery, displayedCategory?.id, isReorderMode, hasBlockedCategorySearch) {
                     if (isReorderMode) return@LaunchedEffect
-                    val selectedCategory = uiState.selectedCategory ?: return@LaunchedEffect
-                    if (displayedCategory?.id == selectedCategory.id) return@LaunchedEffect
-                    displayedCategory?.let(viewModel::selectCategory)
+                    if (displayedCategory == null) {
+                        viewModel.clearVisibleChannelsForFilteredCategories()
+                        return@LaunchedEffect
+                    }
+                    val selectedCategory = uiState.selectedCategory
+                    if (selectedCategory?.id == displayedCategory.id) return@LaunchedEffect
+                    viewModel.selectCategory(displayedCategory)
                 }
 
                 LaunchedEffect(
@@ -544,7 +557,7 @@ fun HomeScreen(
                             items = visibleCategories,
                             key = { it.id }
                         ) { category ->
-                            val isLocked = (category.isAdult || category.isUserProtected) && uiState.parentalControlLevel == 1
+                            val isLocked = isCategoryLocked(category)
                             val categoryFocusRequester = categoryFocusRequesters.getOrPut(category.id) { FocusRequester() }
 
                             CategoryItem(
@@ -605,7 +618,11 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.spacedBy(if (isDenseMode) 2.dp else 4.dp)
                         ) {
                             Text(
-                                text = displayedCategory?.name ?: stringResource(R.string.home_all_channels),
+                                text = displayedCategory?.name ?: if (hasBlockedCategorySearch) {
+                                    stringResource(R.string.home_locked_short)
+                                } else {
+                                    stringResource(R.string.home_all_channels)
+                                },
                                 style = if (isDenseMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                                 color = OnBackground
                             )
@@ -708,29 +725,48 @@ fun HomeScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text(
-                                        text = stringResource(R.string.home_no_channels_found),
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = OnBackground
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.home_no_channels_found_subtitle),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = OnSurfaceDim
-                                    )
-                                    val selectedCategory = uiState.selectedCategory
-                                    if (selectedCategory?.isVirtual == true && selectedCategory.id == VirtualCategoryIds.FAVORITES) {
+                                    if (hasBlockedCategorySearch) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Lock,
+                                            contentDescription = null,
+                                            tint = OnBackground,
+                                            modifier = Modifier.size(34.dp)
+                                        )
                                         Text(
-                                            text = stringResource(R.string.home_add_favorites_hint),
+                                            text = stringResource(R.string.home_locked_short),
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = OnBackground
+                                        )
+                                        Text(
+                                            text = stringResource(R.string.home_no_channels_found_subtitle),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = OnSurfaceDim
                                         )
-                                    } else if (selectedCategory?.isVirtual == true && selectedCategory.id == VirtualCategoryIds.RECENT) {
+                                    } else {
                                         Text(
-                                            text = stringResource(R.string.home_recent_channels_hint),
+                                            text = stringResource(R.string.home_no_channels_found),
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = OnBackground
+                                        )
+                                        Text(
+                                            text = stringResource(R.string.home_no_channels_found_subtitle),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = OnSurfaceDim
                                         )
+                                        val selectedCategory = uiState.selectedCategory
+                                        if (selectedCategory?.isVirtual == true && selectedCategory.id == VirtualCategoryIds.FAVORITES) {
+                                            Text(
+                                                text = stringResource(R.string.home_add_favorites_hint),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = OnSurfaceDim
+                                            )
+                                        } else if (selectedCategory?.isVirtual == true && selectedCategory.id == VirtualCategoryIds.RECENT) {
+                                            Text(
+                                                text = stringResource(R.string.home_recent_channels_hint),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = OnSurfaceDim
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -904,6 +940,7 @@ fun HomeScreen(
             onLaunch = {
                 pendingSplitPlannerChannel = null
                 viewModel.onDismissDialog()
+                viewModel.clearPreview()
                 onNavigate(Routes.MULTI_VIEW)
             },
             viewModel = multiViewViewModel
@@ -946,6 +983,7 @@ fun HomeScreen(
             onDismiss = { showSplitManagerDialog = false },
             onLaunch = {
                 showSplitManagerDialog = false
+                viewModel.clearPreview()
                 onNavigate(Routes.MULTI_VIEW)
             },
             viewModel = multiViewViewModel

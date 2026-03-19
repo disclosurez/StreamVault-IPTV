@@ -18,12 +18,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +39,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -65,6 +74,21 @@ import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.Series
 import com.streamvault.app.ui.design.FocusSpec
 
+private object ChannelProgressTicker {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val nowMs = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(30_000L)
+        }
+    }.stateIn(
+        scope = scope,
+        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 30_000L),
+        initialValue = System.currentTimeMillis()
+    )
+}
+
 @Composable
 fun FocusableCard(
     onClick: () -> Unit,
@@ -74,6 +98,8 @@ fun FocusableCard(
     height: Dp = 240.dp,
     isReorderMode: Boolean = false,
     isDragging: Boolean = false,
+    semanticsDescription: String? = null,
+    semanticsStateDescription: String? = null,
     content: @Composable BoxScope.(Boolean) -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -97,6 +123,10 @@ fun FocusableCard(
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+            }
+            .semantics(mergeDescendants = true) {
+                semanticsDescription?.let { contentDescription = it }
+                semanticsStateDescription?.let { stateDescription = it }
             }
             .onFocusChanged { isFocused = it.isFocused },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
@@ -138,14 +168,29 @@ fun ChannelCard(
     isReorderMode: Boolean = false,
     isDragging: Boolean = false
 ) {
-    // Ticks every 30s so EPG progress bars stay accurate without busy-looping
-    val nowMs by produceState(initialValue = System.currentTimeMillis()) {
-        while (true) {
-            delay(30_000L)
-            value = System.currentTimeMillis()
+    val nowMs by ChannelProgressTicker.nowMs.collectAsState()
+    val channelCardShape = LocalAppShapes.current.small
+    val channelDescription = buildString {
+        append(
+            channel.number.takeIf { it > 0 }?.let {
+                stringResource(R.string.a11y_channel_with_number, it, channel.name)
+            } ?: channel.name
+        )
+        if (!isLocked) {
+            channel.currentProgram?.title?.takeIf { it.isNotBlank() }?.let {
+                append(". ")
+                append(stringResource(R.string.a11y_now_playing, it))
+            }
+            if (channel.isFavorite) {
+                append(". ")
+                append(stringResource(R.string.a11y_favorite))
+            }
+            if (channel.catchUpSupported) {
+                append(". ")
+                append(stringResource(R.string.a11y_catch_up_available))
+            }
         }
     }
-    val channelCardShape = LocalAppShapes.current.small
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -153,7 +198,9 @@ fun ChannelCard(
         width = 220.dp,
         height = 124.dp,
         isReorderMode = isReorderMode,
-        isDragging = isDragging
+        isDragging = isDragging,
+        semanticsDescription = channelDescription,
+        semanticsStateDescription = if (isLocked) stringResource(R.string.a11y_locked) else null
     ) { isFocused ->
         if (!isLocked) {
             ChannelLogoBadge(
@@ -266,6 +313,17 @@ fun MovieCard(
     isReorderMode: Boolean = false,
     isDragging: Boolean = false
 ) {
+    val movieDescription = buildString {
+        append(movie.name)
+        movie.year?.takeIf { it.isNotBlank() }?.let {
+            append(". ")
+            append(it)
+        }
+        if (movie.isFavorite && !isLocked) {
+            append(". ")
+            append(stringResource(R.string.a11y_favorite))
+        }
+    }
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -273,7 +331,9 @@ fun MovieCard(
         width = 136.dp,
         height = 204.dp,
         isReorderMode = isReorderMode,
-        isDragging = isDragging
+        isDragging = isDragging,
+        semanticsDescription = movieDescription,
+        semanticsStateDescription = if (isLocked) stringResource(R.string.a11y_locked) else null
     ) {
         if (!isLocked) {
             MoviePosterCard(
@@ -347,6 +407,20 @@ fun SeriesCard(
     isReorderMode: Boolean = false,
     isDragging: Boolean = false
 ) {
+    val seriesDescription = buildString {
+        append(series.name)
+        subtitle?.takeIf { it.isNotBlank() }?.let {
+            append(". ")
+            append(it)
+        } ?: series.genre?.takeIf { it.isNotBlank() }?.let {
+            append(". ")
+            append(it)
+        }
+        if (series.isFavorite && !isLocked) {
+            append(". ")
+            append(stringResource(R.string.a11y_favorite))
+        }
+    }
     FocusableCard(
         onClick = onClick,
         onLongClick = onLongClick,
@@ -354,7 +428,9 @@ fun SeriesCard(
         width = 136.dp,
         height = 204.dp,
         isReorderMode = isReorderMode,
-        isDragging = isDragging
+        isDragging = isDragging,
+        semanticsDescription = seriesDescription,
+        semanticsStateDescription = if (isLocked) stringResource(R.string.a11y_locked) else null
     ) {
         if (!isLocked) {
             SeriesPosterCard(

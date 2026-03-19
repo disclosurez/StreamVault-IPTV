@@ -1,5 +1,7 @@
 package com.streamvault.app
 
+import android.app.SearchManager
+import android.content.Intent
 import android.app.PictureInPictureParams
 import android.os.Bundle
 import android.os.Build
@@ -7,7 +9,15 @@ import android.os.StrictMode
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
+import com.streamvault.app.cast.CastManager
+import com.streamvault.app.cast.CastRouteChooserActivity
 import com.streamvault.app.navigation.AppNavigation
+import com.streamvault.app.navigation.ExternalNavigationRequest
+import com.streamvault.app.navigation.PlayerNavigationRequest
+import com.streamvault.app.tv.LauncherRecommendationsManager
+import com.streamvault.app.tv.WatchNextManager
+import com.streamvault.app.tvinput.TvInputChannelSyncManager
 import com.streamvault.app.ui.theme.StreamVaultTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -28,12 +38,19 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.AssetManager
 import android.content.res.Resources
+import android.speech.RecognizerIntent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        const val EXTRA_PLAYER_REQUEST = "com.streamvault.app.extra.PLAYER_REQUEST"
+        const val EXTRA_EXTERNAL_ROUTE = "com.streamvault.app.extra.EXTERNAL_ROUTE"
+    }
 
     private data class PlayerPictureInPictureState(
         val enabled: Boolean = false,
@@ -44,8 +61,24 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var preferencesRepository: PreferencesRepository
 
+    @Inject
+    lateinit var watchNextManager: WatchNextManager
+
+    @Inject
+    lateinit var launcherRecommendationsManager: LauncherRecommendationsManager
+
+    @Inject
+    lateinit var tvInputChannelSyncManager: TvInputChannelSyncManager
+
+    @Inject
+    lateinit var castManager: CastManager
+
     private val _pictureInPictureModeFlow = MutableStateFlow(false)
     val pictureInPictureModeFlow: StateFlow<Boolean> = _pictureInPictureModeFlow.asStateFlow()
+
+    private val _externalNavigationRequestFlow = MutableStateFlow<ExternalNavigationRequest?>(null)
+    val externalNavigationRequestFlow: StateFlow<ExternalNavigationRequest?> =
+        _externalNavigationRequestFlow.asStateFlow()
 
     private var playerPictureInPictureState = PlayerPictureInPictureState()
 
@@ -60,6 +93,13 @@ class MainActivity : ComponentActivity() {
         }
         super.onCreate(savedInstanceState)
         _pictureInPictureModeFlow.value = isInPictureInPictureMode
+        handleExternalIntent(intent)
+        castManager.ensureInitialized()
+        lifecycleScope.launch {
+            watchNextManager.refreshWatchNext()
+            launcherRecommendationsManager.refreshRecommendations()
+            tvInputChannelSyncManager.refreshTvInputCatalog()
+        }
         setContent {
             val appLanguage by preferencesRepository.appLanguage.collectAsState(initial = "system")
             val currentContext = LocalContext.current
@@ -105,10 +145,16 @@ class MainActivity : ComponentActivity() {
                 LocalLayoutDirection provides layoutDirection
             ) {
                 StreamVaultTheme {
-                    AppNavigation()
+                    AppNavigation(mainActivity = this@MainActivity)
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleExternalIntent(intent)
     }
 
     override fun onUserLeaveHint() {
@@ -143,16 +189,24 @@ class MainActivity : ComponentActivity() {
         applyPlayerPictureInPictureParams()
     }
 
-    fun enterPlayerPictureInPictureModeFromPlayer(): Boolean {
-        return enterPlayerPictureInPictureModeIfEligible()
+    fun clearExternalNavigationRequest() {
+        _externalNavigationRequestFlow.value = null
     }
 
-    private fun enterPlayerPictureInPictureModeIfEligible(): Boolean {
+    fun enterPlayerPictureInPictureModeFromPlayer(): Boolean {
+        return enterPlayerPictureInPictureModeIfEligible(requirePlaying = false)
+    }
+
+    fun openCastRouteChooser() {
+        startActivity(Intent(this, CastRouteChooserActivity::class.java))
+    }
+
+    private fun enterPlayerPictureInPictureModeIfEligible(requirePlaying: Boolean = true): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode) {
             return false
         }
         val state = playerPictureInPictureState
-        if (!state.enabled || !state.isPlaying) {
+        if (!state.enabled || (requirePlaying && !state.isPlaying)) {
             return false
         }
         val params = buildPlayerPictureInPictureParams(state)
@@ -179,5 +233,37 @@ class MainActivity : ComponentActivity() {
     private fun videoAspectRatioOrNull(videoWidth: Int, videoHeight: Int): Rational? {
         if (videoWidth <= 0 || videoHeight <= 0) return null
         return Rational(videoWidth, videoHeight)
+    }
+
+    private fun handleExternalIntent(intent: Intent?) {
+        val request = intent?.toExternalNavigationRequest() ?: return
+        _externalNavigationRequestFlow.value = request
+    }
+
+    private fun Intent.toExternalNavigationRequest(): ExternalNavigationRequest? {
+        readPlayerRequestExtra()?.let { return ExternalNavigationRequest.Player(it) }
+        getStringExtra(EXTRA_EXTERNAL_ROUTE)?.let { return ExternalNavigationRequest.Route(it) }
+
+        val query = when (action) {
+            Intent.ACTION_SEARCH,
+            Intent.ACTION_ASSIST,
+            RecognizerIntent.ACTION_VOICE_SEARCH_HANDS_FREE -> {
+                getStringExtra(SearchManager.QUERY)
+                    ?: getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            }
+
+            else -> null
+        }?.trim().orEmpty()
+
+        return query.takeIf { it.isNotBlank() }?.let(ExternalNavigationRequest::Search)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.readPlayerRequestExtra(): PlayerNavigationRequest? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getSerializableExtra(EXTRA_PLAYER_REQUEST, PlayerNavigationRequest::class.java)
+        } else {
+            getSerializableExtra(EXTRA_PLAYER_REQUEST) as? PlayerNavigationRequest
+        }
     }
 }

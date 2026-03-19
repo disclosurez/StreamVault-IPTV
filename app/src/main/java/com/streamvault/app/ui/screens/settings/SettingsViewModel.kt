@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.streamvault.app.R
+import com.streamvault.app.tvinput.TvInputChannelSyncManager
 import com.streamvault.app.ui.model.LiveTvChannelMode
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.data.sync.SyncManager
@@ -54,7 +55,8 @@ class SettingsViewModel @Inject constructor(
     private val recordingManager: RecordingManager,
     private val syncManager: SyncManager,
     private val syncMetadataRepository: SyncMetadataRepository,
-    private val playbackHistoryRepository: com.streamvault.domain.repository.PlaybackHistoryRepository
+    private val playbackHistoryRepository: com.streamvault.domain.repository.PlaybackHistoryRepository,
+    private val tvInputChannelSyncManager: TvInputChannelSyncManager
 ) : ViewModel() {
     private val appContext = application
 
@@ -204,9 +206,16 @@ class SettingsViewModel @Inject constructor(
     fun clearHistory() {
         viewModelScope.launch {
             _uiState.update { it.copy(isSyncing = true) }
-            playbackHistoryRepository.clearAllHistory()
-            preferencesRepository.clearAllRecentData()
-            _uiState.update { it.copy(isSyncing = false, userMessage = appContext.getString(R.string.settings_history_cleared)) }
+            when (val result = playbackHistoryRepository.clearAllHistory()) {
+                is Result.Success -> {
+                    preferencesRepository.clearAllRecentData()
+                    _uiState.update { it.copy(isSyncing = false, userMessage = appContext.getString(R.string.settings_history_cleared)) }
+                }
+                is Result.Error -> {
+                    _uiState.update { it.copy(isSyncing = false, userMessage = "Failed to clear history: ${result.message}") }
+                }
+                Result.Loading -> Unit
+            }
         }
     }
 
@@ -229,9 +238,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isSyncing = true) }
             val result = providerRepository.refreshProviderData(providerId, force = true)
+            if (result !is Result.Error) {
+                tvInputChannelSyncManager.refreshTvInputCatalog()
+            }
             val refreshedProvider = providerRepository.getProvider(providerId)
             _uiState.update { state ->
-                val partialWarnings = (syncManager.syncState.value as? SyncState.Partial)?.warnings.orEmpty()
+                val partialWarnings = (syncManager.currentSyncState(providerId) as? SyncState.Partial)?.warnings.orEmpty()
                 val warningsMessage = partialWarnings
                     .take(3)
                     .joinToString(separator = ", ")

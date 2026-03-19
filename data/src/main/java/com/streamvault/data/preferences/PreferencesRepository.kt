@@ -1,6 +1,9 @@
 package com.streamvault.data.preferences
 
 import android.content.Context
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -11,6 +14,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.streamvault.data.local.dao.ChannelPreferenceDao
 import com.streamvault.data.local.entity.ChannelPreferenceEntity
+import com.streamvault.domain.manager.ParentalControlSessionState
+import com.streamvault.domain.manager.ParentalControlSessionStore
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
@@ -31,11 +36,13 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class PreferencesRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val channelPreferenceDao: ChannelPreferenceDao
-) {
+) : ParentalControlSessionStore {
     companion object {
         private const val PIN_SALT_BYTES = 16
         private const val PIN_HASH_ITERATIONS = 120_000
         private const val PIN_HASH_KEY_BITS = 256
+        private const val PIN_MAX_ATTEMPTS = 5
+        private const val PIN_LOCKOUT_DURATION_MS = 15 * 60 * 1000L
         private val secureRandom = SecureRandom()
     }
 
@@ -60,6 +67,27 @@ class PreferencesRepository @Inject constructor(
         val MULTIVIEW_PERFORMANCE_MODE = stringPreferencesKey("multiview_performance_mode")
         val IS_INCOGNITO_MODE = booleanPreferencesKey("is_incognito_mode")
         val PLAYER_MUTED = booleanPreferencesKey("player_muted")
+    }
+
+    private object ParentalSessionKeys {
+        const val FILE_NAME = "parental_control_session"
+        const val UNLOCK_ENTRIES = "unlock_entries"
+        const val UNLOCK_TIMEOUT_MS = "unlock_timeout_ms"
+        const val PIN_FAILED_ATTEMPTS = "pin_failed_attempts"
+        const val PIN_LOCKOUT_UNTIL_MS = "pin_lockout_until_ms"
+    }
+
+    private val parentalSessionPreferences: SharedPreferences by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            ParentalSessionKeys.FILE_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
     }
 
     val lastActiveProviderId: Flow<Long?> = context.dataStore.data.map { preferences ->
@@ -127,6 +155,10 @@ class PreferencesRepository @Inject constructor(
     }
 
     suspend fun verifyParentalPin(pin: String): Boolean {
+        if (isPinLockedOut()) {
+            return false
+        }
+
         val preferences = context.dataStore.data.first()
 
         val storedHash = preferences[PreferencesKeys.PARENTAL_PIN_HASH]
@@ -135,7 +167,9 @@ class PreferencesRepository @Inject constructor(
         if (!storedHash.isNullOrBlank() && !storedSaltBase64.isNullOrBlank()) {
             val salt = runCatching { java.util.Base64.getDecoder().decode(storedSaltBase64) }.getOrNull()
                 ?: return false
-            return hashPin(pin, salt) == storedHash
+            val valid = hashPin(pin, salt) == storedHash
+            updatePinAttemptState(valid)
+            return valid
         }
 
         val legacyPin = preferences[PreferencesKeys.LEGACY_PARENTAL_PIN]
@@ -146,7 +180,34 @@ class PreferencesRepository @Inject constructor(
             setParentalPin(pin)
         }
 
+        updatePinAttemptState(valid)
+
         return valid
+    }
+
+    override fun readSessionState(): ParentalControlSessionState {
+        val timeoutMs = parentalSessionPreferences.getLong(
+            ParentalSessionKeys.UNLOCK_TIMEOUT_MS,
+            ParentalControlSessionState.DEFAULT_UNLOCK_TIMEOUT_MS
+        )
+        return ParentalControlSessionState(
+            unlockedCategoryExpirationsByProvider = decodeUnlockEntries(
+                parentalSessionPreferences.getString(ParentalSessionKeys.UNLOCK_ENTRIES, null)
+            ),
+            unlockTimeoutMs = timeoutMs
+        )
+    }
+
+    override fun writeSessionState(state: ParentalControlSessionState) {
+        parentalSessionPreferences.edit().apply {
+            putLong(ParentalSessionKeys.UNLOCK_TIMEOUT_MS, state.unlockTimeoutMs)
+            val encodedUnlocks = encodeUnlockEntries(state.unlockedCategoryExpirationsByProvider)
+            if (encodedUnlocks.isBlank()) {
+                remove(ParentalSessionKeys.UNLOCK_ENTRIES)
+            } else {
+                putString(ParentalSessionKeys.UNLOCK_ENTRIES, encodedUnlocks)
+            }
+        }.apply()
     }
 
     suspend fun clearDefaultViewMode() {
@@ -342,6 +403,67 @@ class PreferencesRepository @Inject constructor(
         val spec = PBEKeySpec(pin.toCharArray(), salt, PIN_HASH_ITERATIONS, PIN_HASH_KEY_BITS)
         val secret = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec)
         return java.util.Base64.getEncoder().encodeToString(secret.encoded)
+    }
+
+    private fun isPinLockedOut(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val lockoutUntilMs = parentalSessionPreferences.getLong(ParentalSessionKeys.PIN_LOCKOUT_UNTIL_MS, 0L)
+        if (lockoutUntilMs <= nowMs) {
+            if (lockoutUntilMs != 0L || parentalSessionPreferences.getInt(ParentalSessionKeys.PIN_FAILED_ATTEMPTS, 0) != 0) {
+                parentalSessionPreferences.edit()
+                    .remove(ParentalSessionKeys.PIN_LOCKOUT_UNTIL_MS)
+                    .remove(ParentalSessionKeys.PIN_FAILED_ATTEMPTS)
+                    .apply()
+            }
+            return false
+        }
+        return true
+    }
+
+    private fun updatePinAttemptState(valid: Boolean, nowMs: Long = System.currentTimeMillis()) {
+        val editor = parentalSessionPreferences.edit()
+        if (valid) {
+            editor.remove(ParentalSessionKeys.PIN_FAILED_ATTEMPTS)
+            editor.remove(ParentalSessionKeys.PIN_LOCKOUT_UNTIL_MS)
+            editor.apply()
+            return
+        }
+
+        val failedAttempts = parentalSessionPreferences.getInt(ParentalSessionKeys.PIN_FAILED_ATTEMPTS, 0) + 1
+        if (failedAttempts >= PIN_MAX_ATTEMPTS) {
+            editor.remove(ParentalSessionKeys.PIN_FAILED_ATTEMPTS)
+            editor.putLong(ParentalSessionKeys.PIN_LOCKOUT_UNTIL_MS, nowMs + PIN_LOCKOUT_DURATION_MS)
+        } else {
+            editor.putInt(ParentalSessionKeys.PIN_FAILED_ATTEMPTS, failedAttempts)
+        }
+        editor.apply()
+    }
+
+    private fun encodeUnlockEntries(entries: Map<Long, Map<Long, Long>>): String {
+        return entries.entries
+            .sortedBy { it.key }
+            .flatMap { (providerId, categories) ->
+                categories.entries
+                    .sortedBy { it.key }
+                    .map { (categoryId, expiresAtMs) -> "$providerId:$categoryId:$expiresAtMs" }
+            }
+            .joinToString(",")
+    }
+
+    private fun decodeUnlockEntries(encoded: String?): Map<Long, Map<Long, Long>> {
+        return encoded
+            .orEmpty()
+            .split(',')
+            .asSequence()
+            .mapNotNull { token ->
+                val parts = token.split(':')
+                if (parts.size != 3) return@mapNotNull null
+                val providerId = parts[0].toLongOrNull() ?: return@mapNotNull null
+                val categoryId = parts[1].toLongOrNull() ?: return@mapNotNull null
+                val expiresAtMs = parts[2].toLongOrNull() ?: return@mapNotNull null
+                Triple(providerId, categoryId, expiresAtMs)
+            }
+            .groupBy({ it.first }, { it.second to it.third })
+            .mapValues { (_, categoryEntries) -> categoryEntries.associate { (categoryId, expiresAtMs) -> categoryId to expiresAtMs } }
     }
 
     private fun hasStoredParentalPin(preferences: Preferences): Boolean {

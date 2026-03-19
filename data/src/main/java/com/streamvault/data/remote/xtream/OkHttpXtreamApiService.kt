@@ -11,6 +11,7 @@ import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.SerializationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -46,13 +47,28 @@ class OkHttpXtreamApiService(
             .url(endpoint)
             .get()
             .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("HTTP ${response.code}")
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val message = "HTTP ${response.code}"
+                    when (response.code) {
+                        401, 403 -> throw XtreamAuthenticationException(response.code, message)
+                        in 500..599, 429 -> throw XtreamNetworkException(message)
+                        else -> throw XtreamRequestException(response.code, message)
+                    }
+                }
+                val body = response.body?.string()?.takeIf { it.isNotBlank() }
+                    ?: throw XtreamParsingException("Empty response body")
+                try {
+                    json.decodeFromString<T>(body)
+                } catch (e: SerializationException) {
+                    throw XtreamParsingException("Server returned malformed data", e)
+                }
             }
-            val body = response.body?.string()?.takeIf { it.isNotBlank() }
-                ?: throw IOException("Empty response body")
-            json.decodeFromString<T>(body)
+        } catch (e: XtreamApiException) {
+            throw e
+        } catch (e: IOException) {
+            throw XtreamNetworkException(e.message ?: "Network request failed", e)
         }
     }
 }

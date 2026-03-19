@@ -241,6 +241,7 @@ data class EpisodeEntity(
     )],
     indices = [
         Index(value = ["provider_id"]),
+        Index(value = ["provider_id", "type"]),
         Index(value = ["provider_id", "category_id", "type"], unique = true)
     ]
 )
@@ -261,6 +262,7 @@ data class CategoryEntity(
     indices = [
         Index(value = ["provider_id"]),
         Index(value = ["provider_id", "channel_id"]),
+        Index(value = ["provider_id", "start_time", "end_time"]),
         Index(value = ["start_time"]),
         Index(value = ["provider_id", "channel_id", "start_time"]),
         Index(value = ["provider_id", "channel_id", "start_time", "end_time"], unique = true)
@@ -305,7 +307,10 @@ data class FavoriteEntity(
 
 @Entity(
     tableName = "virtual_groups",
-    indices = [Index(value = ["position"])]
+    indices = [
+        Index(value = ["position"]),
+        Index(value = ["content_type"])
+    ]
 )
 data class VirtualGroupEntity(
     @PrimaryKey(autoGenerate = true)

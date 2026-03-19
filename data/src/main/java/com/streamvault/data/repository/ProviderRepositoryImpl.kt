@@ -6,6 +6,7 @@ import com.streamvault.data.mapper.*
 import com.streamvault.data.remote.xtream.XtreamApiService
 import com.streamvault.data.remote.xtream.XtreamProvider
 import com.streamvault.data.security.CredentialCrypto
+import com.streamvault.data.security.CredentialDecryptionException
 import com.streamvault.data.sync.SyncManager
 import com.streamvault.data.util.ProviderInputSanitizer
 import com.streamvault.data.util.UrlSecurityPolicy
@@ -90,9 +91,13 @@ class ProviderRepositoryImpl @Inject constructor(
         } else {
             providerDao.getByUrlAndUser(normalizedServerUrl, normalizedUsername)
         }
-        val effectivePassword = password.takeIf { it.isNotBlank() }
-            ?: existingProvider?.password?.let(CredentialCrypto::decryptIfNeeded)
-            ?: ""
+        val effectivePassword = try {
+            password.takeIf { it.isNotBlank() }
+                ?: existingProvider?.password?.let(CredentialCrypto::decryptIfNeeded)
+                ?: ""
+        } catch (e: CredentialDecryptionException) {
+            return Result.error(e.message ?: CredentialDecryptionException.MESSAGE, e)
+        }
         val provider = createXtreamProvider(0, normalizedServerUrl, normalizedUsername, effectivePassword)
         return when (val authResult = provider.authenticate()) {
             is Result.Success -> {
@@ -121,7 +126,7 @@ class ProviderRepositoryImpl @Inject constructor(
 
                 when (val syncResult = syncManager.sync(providerData.id, force = false, onProgress = onProgress)) {
                     is Result.Success -> {
-                        val finalStatus = if (syncManager.syncState.value is SyncState.Partial) {
+                        val finalStatus = if (syncManager.currentSyncState(providerData.id) is SyncState.Partial) {
                             ProviderStatus.PARTIAL
                         } else {
                             ProviderStatus.ACTIVE
@@ -201,7 +206,7 @@ class ProviderRepositoryImpl @Inject constructor(
 
         when (val syncResult = syncManager.sync(providerData.id, force = false, onProgress = onProgress)) {
             is Result.Success -> {
-                val finalStatus = if (syncManager.syncState.value is SyncState.Partial) {
+                val finalStatus = if (syncManager.currentSyncState(providerData.id) is SyncState.Partial) {
                     ProviderStatus.PARTIAL
                 } else {
                     ProviderStatus.ACTIVE
@@ -236,7 +241,7 @@ class ProviderRepositoryImpl @Inject constructor(
     ): Result<Unit> {
         return when (val syncResult = syncManager.sync(providerId, force = force, onProgress = onProgress)) {
             is Result.Success -> {
-                val finalStatus = if (syncManager.syncState.value is SyncState.Partial) {
+                val finalStatus = if (syncManager.currentSyncState(providerId) is SyncState.Partial) {
                     ProviderStatus.PARTIAL
                 } else {
                     ProviderStatus.ACTIVE

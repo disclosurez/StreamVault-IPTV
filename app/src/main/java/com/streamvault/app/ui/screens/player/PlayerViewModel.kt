@@ -2,8 +2,15 @@ package com.streamvault.app.ui.screens.player
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.streamvault.app.cast.CastConnectionState
+import com.streamvault.app.cast.CastManager
+import com.streamvault.app.cast.CastMediaRequest
+import com.streamvault.app.cast.CastStartResult
 import com.streamvault.app.di.MainPlayerEngine
+import com.streamvault.app.tv.LauncherRecommendationsManager
+import com.streamvault.app.tv.WatchNextManager
 import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
+import com.streamvault.data.security.CredentialDecryptionException
 import com.streamvault.domain.manager.RecordingManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Program
@@ -88,7 +95,7 @@ enum class AspectRatio(val modeName: String) {
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModel @Inject constructor(
-    @MainPlayerEngine
+    @param:MainPlayerEngine
     val playerEngine: PlayerEngine,
     private val epgRepository: EpgRepository,
     private val channelRepository: ChannelRepository,
@@ -99,6 +106,9 @@ class PlayerViewModel @Inject constructor(
     private val preferencesRepository: com.streamvault.data.preferences.PreferencesRepository,
     private val getCustomCategories: GetCustomCategories,
     private val recordingManager: RecordingManager,
+    private val watchNextManager: WatchNextManager,
+    private val launcherRecommendationsManager: LauncherRecommendationsManager,
+    private val castManager: CastManager,
     private val xtreamStreamUrlResolver: XtreamStreamUrlResolver
 ) : ViewModel() {
 
@@ -187,6 +197,15 @@ class PlayerViewModel @Inject constructor(
     private var lastRecordedLivePlaybackKey: Pair<Long, Long>? = null
     private var currentStreamClassLabel: String = "Primary"
     private var prepareRequestVersion: Long = 0L
+    private var currentArtworkUrl: String? = null
+
+    val castConnectionState: StateFlow<CastConnectionState> = castManager.connectionState
+
+    private fun logRepositoryFailure(operation: String, result: com.streamvault.domain.model.Result<Unit>) {
+        if (result is com.streamvault.domain.model.Result.Error) {
+            android.util.Log.w("PlayerVM", "$operation failed: ${result.message}", result.exception)
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -203,7 +222,10 @@ class PlayerViewModel @Inject constructor(
                     zapBufferWatchdogJob?.cancel()
                     _currentChannel.value?.let { channel ->
                         if (channel.errorCount > 0) {
-                            channelRepository.resetChannelErrorCount(channel.id)
+                            logRepositoryFailure(
+                                operation = "Reset channel error count",
+                                result = channelRepository.resetChannelErrorCount(channel.id)
+                            )
                         }
                     }
                 }
@@ -248,7 +270,10 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             markStreamFailure(currentStreamUrl)
             setLastFailureReason(error.message)
-            channelRepository.incrementChannelErrorCount(channel.id)
+            logRepositoryFailure(
+                operation = "Increment channel error count",
+                result = channelRepository.incrementChannelErrorCount(channel.id)
+            )
 
             val switched = when (recoveryType) {
                 PlayerRecoveryType.NETWORK,
@@ -459,6 +484,7 @@ class PlayerViewModel @Inject constructor(
         isVirtual: Boolean = false,
         contentType: String = "CHANNEL",
         title: String = "",
+        artworkUrl: String? = null,
         archiveStartMs: Long? = null,
         archiveEndMs: Long? = null,
         archiveTitle: String? = null
@@ -468,6 +494,7 @@ class PlayerViewModel @Inject constructor(
         currentProviderId = providerId
         currentContentId = internalChannelId
         currentTitle = title
+        currentArtworkUrl = artworkUrl
         currentContentType = try { ContentType.valueOf(contentType) } catch (e: Exception) { ContentType.LIVE }
         currentStreamClassLabel = if (archiveStartMs != null && archiveEndMs != null) "Catch-up" else "Primary"
         if (currentContentType != ContentType.LIVE) {
@@ -562,12 +589,21 @@ class PlayerViewModel @Inject constructor(
             archiveEndMs > archiveStartMs
         ) {
             viewModelScope.launch {
-                val catchUpUrl = providerRepository.buildCatchUpUrl(
-                    providerId = currentProviderId,
-                    streamId = currentContentId,
-                    start = archiveStartMs / 1000L,
-                    end = archiveEndMs / 1000L
-                )
+                val catchUpUrl = try {
+                    providerRepository.buildCatchUpUrl(
+                        providerId = currentProviderId,
+                        streamId = currentContentId,
+                        start = archiveStartMs / 1000L,
+                        end = archiveEndMs / 1000L
+                    )
+                } catch (e: CredentialDecryptionException) {
+                    setLastFailureReason(e.message ?: CredentialDecryptionException.MESSAGE)
+                    showPlayerNotice(
+                        message = e.message ?: CredentialDecryptionException.MESSAGE,
+                        recoveryType = PlayerRecoveryType.SOURCE
+                    )
+                    return@launch
+                }
                 if (catchUpUrl != null) {
                     currentTitle = archiveTitle?.takeIf { it.isNotBlank() } ?: currentTitle
                     currentStreamUrl = catchUpUrl
@@ -691,12 +727,18 @@ class PlayerViewModel @Inject constructor(
                 contentType = currentContentType,
                 providerId = currentProviderId,
                 title = currentTitle,
+                posterUrl = currentArtworkUrl,
                 streamUrl = currentStreamUrl,
                 resumePositionMs = pos,
                 totalDurationMs = dur,
                 lastWatchedAt = System.currentTimeMillis()
             )
-            playbackHistoryRepository.updateResumePosition(history)
+            logRepositoryFailure(
+                operation = "Persist playback resume position",
+                result = playbackHistoryRepository.updateResumePosition(history)
+            )
+            watchNextManager.refreshWatchNext()
+            launcherRecommendationsManager.refreshRecommendations()
         }
     }
 
@@ -725,6 +767,56 @@ class PlayerViewModel @Inject constructor(
         if (currentContentType != ContentType.LIVE) {
             viewModelScope.launch { persistPlaybackProgress() }
         }
+    }
+
+    fun handOffPlaybackToMultiView() {
+        if (currentContentType != ContentType.LIVE) {
+            viewModelScope.launch { persistPlaybackProgress() }
+        }
+        playerEngine.release()
+    }
+
+    fun castCurrentMedia(onRouteSelectionRequired: () -> Unit) {
+        viewModelScope.launch {
+            val request = buildCastRequest()
+            if (request == null) {
+                showPlayerNotice(
+                    message = "This item cannot be sent to a Cast receiver.",
+                    recoveryType = PlayerRecoveryType.SOURCE
+                )
+                return@launch
+            }
+
+            when (castManager.startCasting(request)) {
+                CastStartResult.STARTED -> {
+                    playerEngine.pause()
+                    showPlayerNotice(
+                        message = "Casting to the connected device.",
+                        recoveryType = PlayerRecoveryType.NETWORK
+                    )
+                }
+
+                CastStartResult.ROUTE_SELECTION_REQUIRED -> onRouteSelectionRequired()
+
+                CastStartResult.UNAVAILABLE -> showPlayerNotice(
+                    message = "Google Cast is unavailable on this device.",
+                    recoveryType = PlayerRecoveryType.SOURCE
+                )
+
+                CastStartResult.UNSUPPORTED -> showPlayerNotice(
+                    message = "This stream format is not supported by Google Cast.",
+                    recoveryType = PlayerRecoveryType.SOURCE
+                )
+            }
+        }
+    }
+
+    fun stopCasting() {
+        castManager.stopCasting()
+        showPlayerNotice(
+            message = "Cast session disconnected.",
+            recoveryType = PlayerRecoveryType.NETWORK
+        )
     }
 
     private fun fetchEpg(providerId: Long, epgChannelId: String?) {
@@ -1102,14 +1194,17 @@ class PlayerViewModel @Inject constructor(
         lastRecordedLivePlaybackKey = playbackKey
 
         viewModelScope.launch {
-            playbackHistoryRepository.recordPlayback(
-                PlaybackHistory(
-                    contentId = channel.id,
-                    contentType = ContentType.LIVE,
-                    providerId = currentProviderId,
-                    title = channel.name,
-                    streamUrl = channel.streamUrl,
-                    lastWatchedAt = System.currentTimeMillis()
+            logRepositoryFailure(
+                operation = "Record live playback",
+                result = playbackHistoryRepository.recordPlayback(
+                    PlaybackHistory(
+                        contentId = channel.id,
+                        contentType = ContentType.LIVE,
+                        providerId = currentProviderId,
+                        title = channel.name,
+                        streamUrl = channel.streamUrl,
+                        lastWatchedAt = System.currentTimeMillis()
+                    )
                 )
             )
         }
@@ -1363,7 +1458,17 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
 
-            val catchUpUrl = providerRepository.buildCatchUpUrl(providerId, streamId, start, end)
+            val catchUpUrl = try {
+                providerRepository.buildCatchUpUrl(providerId, streamId, start, end)
+            } catch (e: CredentialDecryptionException) {
+                setLastFailureReason(e.message ?: CredentialDecryptionException.MESSAGE)
+                showPlayerNotice(
+                    message = e.message ?: CredentialDecryptionException.MESSAGE,
+                    recoveryType = PlayerRecoveryType.SOURCE,
+                    actions = buildRecoveryActions(PlayerRecoveryType.SOURCE)
+                )
+                return@launch
+            }
             if (catchUpUrl != null) {
                 // Update metadata for player
                 currentTitle = "${_currentChannel.value?.name ?: ""}: ${program.title}"
@@ -1600,11 +1705,18 @@ class PlayerViewModel @Inject constructor(
         providerId: Long,
         contentType: ContentType
     ): String? {
-        xtreamStreamUrlResolver.resolve(
-            url = logicalUrl,
-            fallbackProviderId = providerId.takeIf { it > 0 },
-            fallbackContentType = contentType
-        )?.let { return it }
+        try {
+            xtreamStreamUrlResolver.resolve(
+                url = logicalUrl,
+                fallbackProviderId = providerId.takeIf { it > 0 },
+                fallbackContentType = contentType
+            )?.let { return it }
+        } catch (e: CredentialDecryptionException) {
+            val message = e.message ?: CredentialDecryptionException.MESSAGE
+            setLastFailureReason(message)
+            showPlayerNotice(message = message, recoveryType = PlayerRecoveryType.SOURCE)
+            return null
+        }
 
         if (providerId <= 0L || internalContentId <= 0L) {
             return logicalUrl.takeIf { it.isNotBlank() }
@@ -1612,12 +1724,96 @@ class PlayerViewModel @Inject constructor(
 
         return when (contentType) {
             ContentType.LIVE -> channelRepository.getChannel(internalContentId)?.let { channel ->
-                channelRepository.getStreamUrl(channel).getOrNull()
+                channelRepository.getStreamInfo(channel).getOrNull()?.url
             }
             ContentType.MOVIE -> movieRepository.getMovie(internalContentId)?.let { movie ->
-                movieRepository.getStreamUrl(movie).getOrNull()
+                movieRepository.getStreamInfo(movie).getOrNull()?.url
             }
             ContentType.SERIES, ContentType.SERIES_EPISODE -> logicalUrl.takeIf { it.isNotBlank() }
+        }
+    }
+
+    private suspend fun buildCastRequest(): CastMediaRequest? {
+        return when (currentContentType) {
+            ContentType.LIVE -> {
+                val channel = _currentChannel.value ?: return null
+                val streamInfo = channelRepository.getStreamInfo(channel).getOrNull() ?: return null
+                streamInfo.toCastRequest(
+                    title = mediaTitle.value ?: channel.name,
+                    subtitle = _currentProgram.value?.title,
+                    artworkUrl = channel.logoUrl ?: currentArtworkUrl,
+                    isLive = true,
+                    startPositionMs = 0L
+                )
+            }
+
+            ContentType.MOVIE -> {
+                val movie = movieRepository.getMovie(currentContentId)
+                val streamInfo = movie?.let { movieRepository.getStreamInfo(it).getOrNull() }
+                    ?: return directCastRequest()
+                streamInfo.toCastRequest(
+                    title = currentTitle.ifBlank { movie.name },
+                    subtitle = movie.genre,
+                    artworkUrl = currentArtworkUrl ?: movie.posterUrl ?: movie.backdropUrl,
+                    isLive = false,
+                    startPositionMs = playerEngine.currentPosition.value
+                )
+            }
+
+            ContentType.SERIES,
+            ContentType.SERIES_EPISODE -> directCastRequest()
+        }
+    }
+
+    private fun directCastRequest(): CastMediaRequest? {
+        val url = currentStreamUrl.takeIf { it.isNotBlank() } ?: return null
+        return com.streamvault.domain.model.StreamInfo(url = url).toCastRequest(
+            title = currentTitle,
+            subtitle = null,
+            artworkUrl = currentArtworkUrl,
+            isLive = false,
+            startPositionMs = playerEngine.currentPosition.value
+        )
+    }
+
+    private fun com.streamvault.domain.model.StreamInfo.toCastRequest(
+        title: String,
+        subtitle: String?,
+        artworkUrl: String?,
+        isLive: Boolean,
+        startPositionMs: Long
+    ): CastMediaRequest? {
+        val resolvedUrl = url.takeIf { it.isNotBlank() } ?: return null
+        val mimeType = when (inferCastStreamType(this)) {
+            com.streamvault.domain.model.StreamType.HLS -> "application/x-mpegURL"
+            com.streamvault.domain.model.StreamType.DASH -> "application/dash+xml"
+            com.streamvault.domain.model.StreamType.MPEG_TS -> "video/mp2t"
+            com.streamvault.domain.model.StreamType.RTSP -> return null
+            com.streamvault.domain.model.StreamType.PROGRESSIVE,
+            com.streamvault.domain.model.StreamType.UNKNOWN -> "video/*"
+        }
+        return CastMediaRequest(
+            url = resolvedUrl,
+            title = title.ifBlank { this.title ?: "StreamVault" },
+            subtitle = subtitle,
+            artworkUrl = artworkUrl,
+            mimeType = mimeType,
+            isLive = isLive,
+            startPositionMs = if (isLive) 0L else startPositionMs
+        )
+    }
+
+    private fun inferCastStreamType(streamInfo: com.streamvault.domain.model.StreamInfo): com.streamvault.domain.model.StreamType {
+        if (streamInfo.streamType != com.streamvault.domain.model.StreamType.UNKNOWN) {
+            return streamInfo.streamType
+        }
+        val url = streamInfo.url.lowercase()
+        return when {
+            url.endsWith(".m3u8") -> com.streamvault.domain.model.StreamType.HLS
+            url.endsWith(".mpd") -> com.streamvault.domain.model.StreamType.DASH
+            url.endsWith(".ts") -> com.streamvault.domain.model.StreamType.MPEG_TS
+            url.startsWith("rtsp") -> com.streamvault.domain.model.StreamType.RTSP
+            else -> com.streamvault.domain.model.StreamType.PROGRESSIVE
         }
     }
 

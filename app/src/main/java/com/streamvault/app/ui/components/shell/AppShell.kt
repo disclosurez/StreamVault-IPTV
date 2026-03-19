@@ -50,6 +50,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -242,7 +246,7 @@ private fun TopNavigationBar(
     
     Surface(
         modifier = modifier.focusProperties {
-            enter = {
+            onEnter = {
                 val activeItem = items.firstOrNull { it.route == currentRoute }
                 focusRequesters[activeItem?.route] ?: FocusRequester.Default
             }
@@ -419,7 +423,8 @@ fun AppSectionHeader(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = AppColors.TextPrimary
+                color = AppColors.TextPrimary,
+                modifier = Modifier.semantics { heading() }
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
@@ -492,7 +497,7 @@ fun AppMessageState(
 ) {
     val resolvedShape = shape ?: LocalAppShapes.current.large
     Surface(
-        modifier = modifier,
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
         shape = resolvedShape,
         border = Border(
             border = BorderStroke(
@@ -626,7 +631,7 @@ private fun DestinationRail(
                 )
             )
             .focusProperties {
-                enter = {
+                onEnter = {
                     val activeItem = items.firstOrNull { it.route == currentRoute }
                     focusRequesters[activeItem?.route] ?: FocusRequester.Default
                 }

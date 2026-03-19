@@ -64,6 +64,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import com.streamvault.app.R
 import com.streamvault.app.MainActivity
+import com.streamvault.app.cast.CastConnectionState
+import com.streamvault.app.ui.design.requestFocusSafely
 import com.streamvault.app.ui.screens.player.overlay.ChannelInfoOverlay
 import com.streamvault.app.ui.screens.player.overlay.CategoryListOverlay
 import com.streamvault.app.ui.screens.player.overlay.ChannelListOverlay
@@ -89,6 +91,7 @@ import com.streamvault.app.navigation.Routes
 fun PlayerScreen(
     streamUrl: String,
     title: String,
+    artworkUrl: String? = null,
     epgChannelId: String? = null,
     internalChannelId: Long = -1L,
     categoryId: Long? = null,
@@ -146,6 +149,7 @@ fun PlayerScreen(
     val currentChannelRecording by viewModel.currentChannelRecording.collectAsStateWithLifecycle()
     val isMuted by viewModel.isMuted.collectAsStateWithLifecycle()
     val mediaTitle by viewModel.mediaTitle.collectAsStateWithLifecycle()
+    val castConnectionState by viewModel.castConnectionState.collectAsStateWithLifecycle()
 
     var showTrackSelection by remember { mutableStateOf<TrackType?>(null) }
     var showProgramHistory by remember { mutableStateOf(false) }
@@ -219,17 +223,15 @@ fun PlayerScreen(
         if (anyOverlayVisible) {
             // Give overlays a moment to animate in before requesting focus
             delay(150)
-            try {
-                when {
-                    showCategoryListOverlay -> categoryListFocusRequester.requestFocus()
-                    showChannelListOverlay -> channelListFocusRequester.requestFocus()
-                    showEpgOverlay -> epgFocusRequester.requestFocus()
-                    showChannelInfoOverlay -> channelInfoFocusRequester.requestFocus()
-                }
-            } catch (_: Exception) {}
+            when {
+                showCategoryListOverlay -> categoryListFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Category list overlay")
+                showChannelListOverlay -> channelListFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Channel list overlay")
+                showEpgOverlay -> epgFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "EPG overlay")
+                showChannelInfoOverlay -> channelInfoFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Channel info overlay")
+            }
         } else {
             // Restore focus to main player when all overlays are gone
-            try { focusRequester.requestFocus() } catch (_: Exception) {}
+            focusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Player root")
         }
     }
     
@@ -262,13 +264,14 @@ fun PlayerScreen(
             onDismiss = { showSplitDialog = false },
             onLaunch = {
                 showSplitDialog = false
+                viewModel.handOffPlaybackToMultiView()
                 onNavigate?.invoke(Routes.MULTI_VIEW)
             },
             viewModel = multiViewViewModel
         )
     }
 
-    LaunchedEffect(streamUrl, epgChannelId, title, internalChannelId, categoryId, providerId, isVirtual, contentType, archiveStartMs, archiveEndMs, archiveTitle) {
+    LaunchedEffect(streamUrl, epgChannelId, title, artworkUrl, internalChannelId, categoryId, providerId, isVirtual, contentType, archiveStartMs, archiveEndMs, archiveTitle) {
         viewModel.prepare(
             streamUrl = streamUrl,
             epgChannelId = epgChannelId,
@@ -278,6 +281,7 @@ fun PlayerScreen(
             isVirtual = isVirtual,
             contentType = contentType,
             title = title,
+            artworkUrl = artworkUrl,
             archiveStartMs = archiveStartMs,
             archiveEndMs = archiveEndMs,
             archiveTitle = archiveTitle
@@ -287,16 +291,14 @@ fun PlayerScreen(
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(100)
-            try {
-                if (contentType == "LIVE") {
-                    quickActionsFocusRequester.requestFocus()
-                } else {
-                    playButtonFocusRequester.requestFocus()
-                }
-            } catch (_: Exception) {}
+            if (contentType == "LIVE") {
+                quickActionsFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Player quick actions")
+            } else {
+                playButtonFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Player transport")
+            }
             viewModel.hideControlsAfterDelay()
         } else {
-            try { focusRequester.requestFocus() } catch (_: Exception) {}
+            focusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Player root")
         }
     }
 
@@ -324,6 +326,22 @@ fun PlayerScreen(
             .onKeyEvent { event ->
                 // Only handle KeyDown to avoid double actions
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                    if (showTrackSelection != null) {
+                        return@onKeyEvent when (event.nativeKeyEvent.keyCode) {
+                            KeyEvent.KEYCODE_BACK -> {
+                                showTrackSelection = null
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_UP,
+                            KeyEvent.KEYCODE_DPAD_DOWN,
+                            KeyEvent.KEYCODE_DPAD_LEFT,
+                            KeyEvent.KEYCODE_DPAD_RIGHT,
+                            KeyEvent.KEYCODE_DPAD_CENTER,
+                            KeyEvent.KEYCODE_ENTER,
+                            KeyEvent.KEYCODE_NUMPAD_ENTER -> false
+                            else -> true
+                        }
+                    }
                     when (event.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                             if (showChannelListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
@@ -331,18 +349,23 @@ fun PlayerScreen(
                             }
                             if (contentType == "LIVE" && viewModel.hasPendingNumericChannelInput()) {
                                 viewModel.commitNumericChannelInput()
+                                   true
                             } else if (contentType == "LIVE") {
-                                if (showChannelInfoOverlay) viewModel.closeChannelInfoOverlay()
-                                else viewModel.openChannelInfoOverlay()
+                                    if (showChannelInfoOverlay) viewModel.closeChannelInfoOverlay()
+                                    else viewModel.openChannelInfoOverlay()
+                                   true
+                            } else if (showControls) {
+                                false
                             } else {
                                 viewModel.toggleControls()
+                                true
                             }
-                            true
                         }
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
                                 viewModel.onLiveOverlayInteraction()
                             }
+                            if (showControls && contentType != "LIVE") return@onKeyEvent false
                             if (showChannelListOverlay && contentType == "LIVE") {
                                 // Second left press while channel list is open → open category list
                                 viewModel.openCategoryListOverlay()
@@ -361,6 +384,7 @@ fun PlayerScreen(
                             if (showChannelListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
                                 viewModel.onLiveOverlayInteraction()
                             }
+                            if (showControls && contentType != "LIVE") return@onKeyEvent false
                             if (contentType == "LIVE" && !showChannelListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
                                 if (isRtl) viewModel.openChannelListOverlay() else viewModel.openEpgOverlay()
                                 true
@@ -376,6 +400,7 @@ fun PlayerScreen(
                                 viewModel.onLiveOverlayInteraction()
                             }
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay) return@onKeyEvent false
+                            if (showControls && contentType != "LIVE") return@onKeyEvent false
 
                             if (contentType == "LIVE") {
                                 viewModel.playNext()
@@ -389,6 +414,7 @@ fun PlayerScreen(
                                 viewModel.onLiveOverlayInteraction()
                             }
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay) return@onKeyEvent false
+                            if (showControls && contentType != "LIVE") return@onKeyEvent false
 
                             if (contentType == "LIVE") {
                                 viewModel.playPrevious()
@@ -619,6 +645,9 @@ fun PlayerScreen(
             onOpenSplitScreen = { showSplitDialog = true },
             onEnterPictureInPicture = enterPictureInPicture,
             onToggleMute = viewModel::toggleMute,
+            isCastConnected = castConnectionState == CastConnectionState.CONNECTED,
+            onCast = { viewModel.castCurrentMedia { mainActivity?.openCastRouteChooser() } },
+            onStopCasting = viewModel::stopCasting,
             onSeekToPosition = viewModel::seekTo,
             onSetScrubbingMode = viewModel::setScrubbingMode
         )
@@ -793,7 +822,19 @@ fun PlayerScreen(
                     isPlaying = isPlaying,
                     currentAspectRatio = aspectRatio.modeName,
                     isDiagnosticsEnabled = showDiagnostics,
-                    onOpenSplitScreen = { showSplitDialog = true }
+                    onOpenSplitScreen = { showSplitDialog = true },
+                    subtitleTrackCount = availableSubtitleTracks.size,
+                    audioTrackCount = availableAudioTracks.size,
+                    videoQualityCount = availableVideoQualities.size,
+                    isMuted = isMuted,
+                    onToggleMute = viewModel::toggleMute,
+                    onOpenSubtitleTracks = { showTrackSelection = TrackType.TEXT },
+                    onOpenAudioTracks = { showTrackSelection = TrackType.AUDIO },
+                    onOpenVideoTracks = { showTrackSelection = TrackType.VIDEO },
+                    onEnterPictureInPicture = enterPictureInPicture,
+                    isCastConnected = castConnectionState == CastConnectionState.CONNECTED,
+                    onCast = { viewModel.castCurrentMedia { mainActivity?.openCastRouteChooser() } },
+                    onStopCasting = viewModel::stopCasting
                 )
             }
         }

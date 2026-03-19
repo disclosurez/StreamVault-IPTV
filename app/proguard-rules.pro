@@ -31,6 +31,8 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+-keepnames class okhttp3.internal.platform.**
+-keepnames class okhttp3.internal.tls.**
 
 # ── GSON ────────────────────────────────────────────────────
 -keepattributes Signature
@@ -51,6 +53,13 @@
 -keep class com.streamvault.domain.model.** { *; }
 -keep class com.streamvault.data.local.entity.** { *; }
 -keep class com.streamvault.data.remote.xtream.model.** { *; }
+
+# ── Security / TLS ──────────────────────────────────────────
+-keepnames class com.streamvault.data.security.CredentialCrypto
+-keepclassmembers class com.streamvault.data.security.CredentialCrypto {
+    <fields>;
+    <methods>;
+}
 
 # ── Media3 / ExoPlayer ─────────────────────────────────────
 # SEC-H01: Media3 ships its own consumer-proguard-rules.pro inside the AAR — no need

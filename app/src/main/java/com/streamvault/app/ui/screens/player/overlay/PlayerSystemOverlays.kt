@@ -1,5 +1,6 @@
 package com.streamvault.app.ui.screens.player.overlay
 
+import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,18 +17,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.streamvault.app.R
+import com.streamvault.app.ui.design.requestFocusSafely
 import com.streamvault.app.ui.screens.player.PlayerNoticeAction
 import com.streamvault.app.ui.screens.player.PlayerNoticeState
 import com.streamvault.app.ui.theme.ErrorColor
@@ -179,6 +188,8 @@ fun PlayerTrackSelectionDialog(
 ) {
     if (trackType == null) return
 
+    val firstItemFocusRequester = remember(trackType) { FocusRequester() }
+
     val tracks = when (trackType) {
         TrackType.AUDIO -> audioTracks
         TrackType.VIDEO -> videoTracks
@@ -190,53 +201,85 @@ fun PlayerTrackSelectionDialog(
         TrackType.TEXT -> stringResource(R.string.player_track_subs)
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.8f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(min = 300.dp, max = 400.dp)
-                .background(SurfaceElevated, RoundedCornerShape(12.dp))
-                .padding(24.dp)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+    LaunchedEffect(trackType, tracks.firstOrNull()?.id) {
+        firstItemFocusRequester.requestFocusSafely(
+            tag = "PlayerTrackSelectionDialog",
+            target = "First track option"
+        )
+    }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (trackType == TrackType.TEXT) {
-                    item {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.8f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 300.dp, max = 400.dp)
+                    .background(SurfaceElevated, RoundedCornerShape(12.dp))
+                    .padding(24.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                        when (event.nativeKeyEvent.keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP,
+                            KeyEvent.KEYCODE_DPAD_DOWN,
+                            KeyEvent.KEYCODE_DPAD_LEFT,
+                            KeyEvent.KEYCODE_DPAD_RIGHT,
+                            KeyEvent.KEYCODE_DPAD_CENTER,
+                            KeyEvent.KEYCODE_ENTER,
+                            KeyEvent.KEYCODE_NUMPAD_ENTER,
+                            KeyEvent.KEYCODE_BACK -> false
+                            else -> true
+                        }
+                    }
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (trackType == TrackType.TEXT) {
+                        item {
+                            TrackSelectionItem(
+                                name = stringResource(R.string.player_track_off),
+                                isSelected = tracks.none { it.isSelected },
+                                onClick = {
+                                    onSelectSubtitle(null)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.focusRequester(firstItemFocusRequester)
+                            )
+                        }
+                    }
+
+                    items(tracks, key = { it.id }) { track ->
                         TrackSelectionItem(
-                            name = stringResource(R.string.player_track_off),
-                            isSelected = tracks.none { it.isSelected },
+                            name = track.name,
+                            isSelected = track.isSelected,
                             onClick = {
-                                onSelectSubtitle(null)
+                                when (trackType) {
+                                    TrackType.AUDIO -> onSelectAudio(track.id)
+                                    TrackType.VIDEO -> onSelectVideo(track.id)
+                                    TrackType.TEXT -> onSelectSubtitle(track.id)
+                                }
                                 onDismiss()
+                            },
+                            modifier = if (trackType != TrackType.TEXT && track == tracks.firstOrNull()) {
+                                Modifier.focusRequester(firstItemFocusRequester)
+                            } else {
+                                Modifier
                             }
                         )
                     }
-                }
-
-                items(tracks, key = { it.id }) { track ->
-                    TrackSelectionItem(
-                        name = track.name,
-                        isSelected = track.isSelected,
-                        onClick = {
-                            when (trackType) {
-                                TrackType.AUDIO -> onSelectAudio(track.id)
-                                TrackType.VIDEO -> onSelectVideo(track.id)
-                                TrackType.TEXT -> onSelectSubtitle(track.id)
-                            }
-                            onDismiss()
-                        }
-                    )
                 }
             }
         }
@@ -247,7 +290,8 @@ fun PlayerTrackSelectionDialog(
 private fun TrackSelectionItem(
     name: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         onClick = onClick,
@@ -256,7 +300,7 @@ private fun TrackSelectionItem(
             containerColor = if (isSelected) Primary.copy(alpha = 0.2f) else Color.Transparent,
             focusedContainerColor = SurfaceHighlight
         ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),

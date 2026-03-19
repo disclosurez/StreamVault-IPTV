@@ -59,6 +59,7 @@ data class MultiViewSlot(
     val playerEngine: PlayerEngine? = null,
     val isLoading: Boolean = false,
     val hasError: Boolean = false,
+    val errorMessage: String? = null,
     val isAudioPinned: Boolean = false,
     val performanceBlockedReason: String? = null
 ) {
