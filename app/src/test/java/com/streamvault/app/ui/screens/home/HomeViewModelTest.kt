@@ -2,6 +2,7 @@ package com.streamvault.app.ui.screens.home
 
 import android.app.Application
 import com.streamvault.app.tvinput.TvInputChannelSyncManager
+import com.streamvault.app.ui.screens.multiview.MultiViewManager
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.data.sync.SyncManager
 import com.streamvault.domain.manager.ParentalControlManager
@@ -45,6 +46,7 @@ class HomeViewModelTest {
     private val parentalControlManager: ParentalControlManager = mock()
     private val syncManager: SyncManager = mock()
     private val tvInputChannelSyncManager: TvInputChannelSyncManager = mock()
+    private val multiViewManager = MultiViewManager()
     private val playerEngine: PlayerEngine = mock()
     private val playerEngineProvider: InjectProvider<PlayerEngine> = mock()
     private val application: Application = mock()
@@ -65,10 +67,13 @@ class HomeViewModelTest {
         whenever(preferencesRepository.defaultCategoryId).thenReturn(flowOf(null))
         whenever(preferencesRepository.getLastLiveCategoryId(any())).thenReturn(flowOf(null))
         whenever(preferencesRepository.liveTvChannelMode).thenReturn(flowOf("COMPACT"))
+        whenever(preferencesRepository.liveTvCategoryFilters).thenReturn(flowOf(emptyList()))
+        whenever(preferencesRepository.liveTvQuickFilterVisibility).thenReturn(flowOf(null))
         whenever(preferencesRepository.liveChannelNumberingMode).thenReturn(flowOf(ChannelNumberingMode.PROVIDER))
         whenever(preferencesRepository.isIncognitoMode).thenReturn(flowOf(false))
         whenever(preferencesRepository.getHiddenCategoryIds(any(), any())).thenReturn(flowOf(emptySet()))
         whenever(preferencesRepository.getCategorySortMode(any(), any())).thenReturn(flowOf(CategorySortMode.DEFAULT))
+        whenever(preferencesRepository.getPinnedCategoryIds(any(), any())).thenReturn(flowOf(emptySet()))
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(any(), any())).thenReturn(flowOf(emptyList()))
         whenever(getCustomCategories()).thenReturn(flowOf(emptyList()))
         whenever(favoriteRepository.getFavoritesByGroup(any())).thenReturn(flowOf(emptyList()))
@@ -100,6 +105,7 @@ class HomeViewModelTest {
             parentalControlManager = parentalControlManager,
             syncManager = syncManager,
             tvInputChannelSyncManager = tvInputChannelSyncManager,
+            multiViewManager = multiViewManager,
             playerEngineProvider = playerEngineProvider
         )
 

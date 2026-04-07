@@ -96,6 +96,7 @@ class EpgViewModelTest {
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideScheduledOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideAnchorTime).thenReturn(flowOf(null))
+        whenever(epgRepository.getResolvedProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(emptyMap())
         whenever(epgRepository.getProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(
             flowOf(
                 mapOf(
@@ -127,6 +128,7 @@ class EpgViewModelTest {
         waitForUiState { viewModel.uiState.value.programsByChannel.keys.containsAll(listOf("one", "two")) }
 
         assertThat(viewModel.uiState.value.programsByChannel.keys).containsExactly("one", "two")
+    verify(epgRepository).getResolvedProgramsForChannels(eq(provider.id), eq(listOf(1L, 2L)), any(), any())
         verify(epgRepository).getProgramsForChannels(eq(provider.id), eq(listOf("one", "two")), any(), any())
         verify(epgRepository, never()).getProgramsForChannel(any(), any(), any(), any())
     }
@@ -160,6 +162,7 @@ class EpgViewModelTest {
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideScheduledOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideAnchorTime).thenReturn(flowOf(null))
+        whenever(epgRepository.getResolvedProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(emptyMap())
         whenever(epgRepository.getProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(
             flowOf(
                 mapOf(
@@ -262,6 +265,7 @@ class EpgViewModelTest {
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideScheduledOnly).thenReturn(flowOf(false))
         whenever(preferencesRepository.guideAnchorTime).thenReturn(flowOf(null))
+        whenever(epgRepository.getResolvedProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(emptyMap())
         whenever(epgRepository.getProgramsForChannels(eq(provider.id), any(), any(), any())).thenReturn(flowOf(emptyMap()))
 
         val viewModel = EpgViewModel(

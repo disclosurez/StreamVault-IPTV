@@ -30,6 +30,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -39,6 +40,7 @@ import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.reset
 import org.mockito.kotlin.verify
 import java.util.zip.GZIPOutputStream
 
@@ -98,6 +100,10 @@ class SyncManagerTest {
         override suspend fun clearMetadata(providerId: Long) {
             values.remove(providerId)
         }
+
+        fun reset() {
+            values.clear()
+        }
     }
 
     private class FakeXtreamBackend {
@@ -115,6 +121,11 @@ class SyncManagerTest {
         }
 
         fun requestCount(): Int = requestedActions.size
+
+        fun reset() {
+            stubs.clear()
+            requestedActions.clear()
+        }
 
         fun okHttpClient(): OkHttpClient {
             return OkHttpClient.Builder()
@@ -158,6 +169,24 @@ class SyncManagerTest {
         override suspend fun <T> inTransaction(block: suspend () -> T): T = block()
     }
     private val syncMetadataRepo = FakeSyncMetadataRepository()
+
+    @Before
+    fun setup() {
+        xtreamBackend.reset()
+        syncMetadataRepo.reset()
+        reset(
+            channelDao,
+            movieDao,
+            seriesDao,
+            programDao,
+            categoryDao,
+            catalogSyncDao,
+            epgRepo,
+            epgSourceRepo,
+            preferencesRepo
+        )
+        org.mockito.kotlin.whenever(preferencesRepo.useXtreamTextClassification).thenReturn(flowOf(false))
+    }
 
     private fun buildManager(
         providerType: ProviderType = ProviderType.XTREAM_CODES,

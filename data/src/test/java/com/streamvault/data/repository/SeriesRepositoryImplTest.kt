@@ -7,6 +7,7 @@ import com.streamvault.data.local.dao.FavoriteDao
 import com.streamvault.data.local.dao.PlaybackHistoryDao
 import com.streamvault.data.local.dao.ProviderDao
 import com.streamvault.data.local.dao.SeriesDao
+import com.streamvault.data.local.dao.SeriesCategoryHydrationDao
 import com.streamvault.data.local.entity.SeriesEntity
 import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.preferences.PreferencesRepository
@@ -38,6 +39,7 @@ class SeriesRepositoryImplTest {
     private val xtreamApiService: XtreamApiService = mock()
     private val preferencesRepository: PreferencesRepository = mock()
     private val xtreamStreamUrlResolver: XtreamStreamUrlResolver = mock()
+    private val seriesCategoryHydrationDao: SeriesCategoryHydrationDao = mock()
 
     @Test
     fun `getSeriesByCategory lazily hydrates xtream category when local cache is empty`() = runTest {
@@ -68,6 +70,7 @@ class SeriesRepositoryImplTest {
                 )
             )
         )
+        whenever(seriesCategoryHydrationDao.get(7L, 77L)).thenReturn(null)
         whenever(episodeDao.deleteOrphans()).thenReturn(0)
 
         val repository = createRepository()
@@ -157,6 +160,7 @@ class SeriesRepositoryImplTest {
         providerDao = providerDao,
         xtreamApiService = xtreamApiService,
         preferencesRepository = preferencesRepository,
-        xtreamStreamUrlResolver = xtreamStreamUrlResolver
+        xtreamStreamUrlResolver = xtreamStreamUrlResolver,
+        seriesCategoryHydrationDao = seriesCategoryHydrationDao
     )
 }
