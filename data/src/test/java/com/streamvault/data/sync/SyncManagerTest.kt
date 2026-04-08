@@ -186,6 +186,7 @@ class SyncManagerTest {
             preferencesRepo
         )
         org.mockito.kotlin.whenever(preferencesRepo.useXtreamTextClassification).thenReturn(flowOf(false))
+        org.mockito.kotlin.whenever(preferencesRepo.getHiddenCategoryIds(any(), any())).thenReturn(flowOf(emptySet()))
     }
 
     private fun buildManager(
