@@ -34,7 +34,7 @@ class ProgramTest {
     }
 
     @Test
-    fun `progressPercent - not now playing returns 0`() {
+    fun `progressPercent - ignores isNowPlaying and uses timestamps`() {
         val program = Program(
             channelId = "ch1",
             title = "Test",
@@ -42,7 +42,7 @@ class ProgramTest {
             startTime = 0L,
             endTime = 100000L
         )
-        assertThat(program.progressPercent(50000L)).isEqualTo(0f)
+        assertThat(program.progressPercent(50000L)).isEqualTo(0.5f)
     }
 
     @Test

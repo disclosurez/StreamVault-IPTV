@@ -63,6 +63,7 @@ class GetCustomCategoriesTest {
                 }
             )
 
+        @Deprecated("Use getFavorites(providerId, contentType) instead")
         override fun getAllFavorites(providerId: Long, contentType: ContentType): Flow<List<Favorite>> =
             getFavorites(providerId, contentType)
 
