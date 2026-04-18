@@ -533,6 +533,7 @@ class ProviderRepositoryImpl @Inject constructor(
         val now = System.currentTimeMillis()
         val metadata = (syncMetadataRepository.getMetadata(providerId) ?: SyncMetadata(providerId)).copy(
             lastEpgSync = now,
+            lastEpgSuccess = now,
             epgCount = programDao.countByProvider(providerId)
         )
         syncMetadataRepository.updateMetadata(metadata)

@@ -11,7 +11,22 @@
             android:exported="false" />
 
         <receiver
+            android:name="com.streamvault.data.manager.reminder.ProgramReminderAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name="com.streamvault.data.manager.recording.RecordingRestoreReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.streamvault.data.manager.reminder.ProgramReminderRestoreReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>

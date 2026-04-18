@@ -1,5 +1,6 @@
 package com.streamvault.data.sync
 
+import android.content.Context
 import android.util.Log
 import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CatalogSyncDao
@@ -9,6 +10,7 @@ import com.streamvault.data.local.dao.MovieDao
 import com.streamvault.data.local.dao.ProgramDao
 import com.streamvault.data.local.dao.ProviderDao
 import com.streamvault.data.local.dao.SeriesDao
+import com.streamvault.data.local.dao.TmdbIdentityDao
 import com.streamvault.data.local.entity.CategoryEntity
 import com.streamvault.data.local.entity.ChannelEntity
 import com.streamvault.data.local.entity.MovieEntity
@@ -44,11 +46,9 @@ import com.streamvault.domain.model.VodSyncMode
 import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.EpgSourceRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -56,7 +56,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -104,6 +103,7 @@ enum class SyncRepairSection {
 
 @Singleton
 class SyncManager @Inject constructor(
+    @ApplicationContext private val applicationContext: Context,
     private val providerDao: ProviderDao,
     private val channelDao: ChannelDao,
     private val movieDao: MovieDao,
@@ -111,6 +111,7 @@ class SyncManager @Inject constructor(
     private val programDao: ProgramDao,
     private val categoryDao: CategoryDao,
     private val catalogSyncDao: CatalogSyncDao,
+    private val tmdbIdentityDao: TmdbIdentityDao,
     private val xtreamJson: Json,
     private val m3uParser: M3uParser,
     private val epgRepository: EpgRepository,
@@ -125,8 +126,12 @@ class SyncManager @Inject constructor(
     private val syncErrorSanitizer = SyncErrorSanitizer()
     private val xtreamAdaptiveSyncPolicy = XtreamAdaptiveSyncPolicy()
     private val syncCatalogStore = SyncCatalogStore(
+        channelDao = channelDao,
         movieDao = movieDao,
+        seriesDao = seriesDao,
+        categoryDao = categoryDao,
         catalogSyncDao = catalogSyncDao,
+        tmdbIdentityDao = tmdbIdentityDao,
         transactionRunner = transactionRunner
     )
     private val m3uImporter = SyncManagerM3uImporter(
@@ -148,8 +153,7 @@ class SyncManager @Inject constructor(
     val syncState: StateFlow<SyncState> = syncStateTracker.aggregateState
     val syncStatesByProvider: StateFlow<Map<Long, SyncState>> = syncStateTracker.statesByProvider
     private val providerSyncMutexes = ConcurrentHashMap<Long, Mutex>()
-    private val backgroundEpgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val backgroundEpgJobs = ConcurrentHashMap<Long, Job>()
+    private val syncAdmissionMutex = Mutex()
     private val xtreamCatalogHttpService: OkHttpXtreamApiService by lazy {
         OkHttpXtreamApiService(
             client = okHttpClient,
@@ -243,73 +247,86 @@ class SyncManager @Inject constructor(
     /** Returns true if any provider sync mutex is currently held (used by DatabaseMaintenanceManager). */
     fun isAnySyncActive(): Boolean = providerSyncMutexes.values.any { it.isLocked }
     private suspend fun <T> withProviderLock(providerId: Long, block: suspend () -> T): T {
-        val mutex = providerSyncMutexes.computeIfAbsent(providerId) { Mutex() }
-        return mutex.withLock { block() }
+        val mutex = syncAdmissionMutex.withLock {
+            providerSyncMutexes.computeIfAbsent(providerId) { Mutex() }.also { providerMutex ->
+                providerMutex.lock()
+            }
+        }
+        try {
+            return block()
+        } finally {
+            mutex.unlock()
+        }
     }
 
-    suspend fun onProviderDeleted(providerId: Long) {
-        val cancelledEpgJob = backgroundEpgJobs.remove(providerId)
-        if (cancelledEpgJob?.isActive == true) {
-            Log.w(TAG, "onProviderDeleted($providerId): cancelled an active background EPG job; mid-sync delete detected")
+    suspend fun runWhenNoSyncActive(block: suspend () -> Boolean): Boolean =
+        syncAdmissionMutex.withLock {
+            if (providerSyncMutexes.values.any { it.isLocked }) {
+                false
+            } else {
+                block()
+            }
         }
-        cancelledEpgJob?.cancel()
+
+    suspend fun onProviderDeleted(providerId: Long) {
+        BackgroundEpgSyncWorker.cancel(applicationContext, providerId)
         withProviderLock(providerId) {
             syncStateTracker.reset(providerId)
             xtreamAdaptiveSyncPolicy.forgetProvider(providerId)
             syncCatalogStore.clearProviderStaging(providerId)
+            epgRepository.onProviderDeleted(providerId)
+            providerSyncMutexes.remove(providerId)
         }
-        providerSyncMutexes.remove(providerId)
     }
 
     fun scheduleBackgroundEpgSync(providerId: Long) {
-        backgroundEpgJobs.remove(providerId)?.cancel()
-        val job = backgroundEpgScope.launch {
-            withProviderLock(providerId) {
-                val providerEntity = providerDao.getById(providerId) ?: return@withProviderLock
-                val provider = providerEntity
-                    .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
-                    .toDomain()
-                try {
-                    publishSyncState(providerId, SyncState.Syncing("Downloading EPG..."))
-                    val warnings = syncProviderEpg(
-                        provider = provider,
-                        metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id),
-                        now = System.currentTimeMillis(),
-                        force = true,
-                        onProgress = null
-                    )
-                    publishSyncState(
-                        providerId,
-                        if (warnings.isEmpty()) {
-                            SyncState.Success()
-                        } else {
-                            SyncState.Partial("Background EPG sync completed with warnings", warnings)
-                        }
-                    )
-                    updateSyncStatusMetadata(
-                        providerId = providerId,
-                        status = if (warnings.isEmpty()) "SUCCESS" else "PARTIAL"
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "Background EPG sync failed for provider $providerId: ${syncErrorSanitizer.throwableMessage(e)}")
-                    publishSyncState(
-                        providerId,
-                        SyncState.Partial(
-                            message = "Background EPG sync completed with warnings",
-                            warnings = listOf(syncErrorSanitizer.userMessage(e, "EPG sync failed"))
-                        )
-                    )
-                    updateSyncStatusMetadata(providerId = providerId, status = "PARTIAL")
+        BackgroundEpgSyncWorker.enqueue(applicationContext, providerId)
+    }
+
+    suspend fun syncEpg(
+        providerId: Long,
+        force: Boolean = true,
+        onProgress: ((String) -> Unit)? = null
+    ): com.streamvault.domain.model.Result<Unit> = withProviderLock(providerId) lock@{
+        val providerEntity = providerDao.getById(providerId)
+            ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+
+        val provider = providerEntity
+            .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+            .toDomain()
+
+        publishSyncState(providerId, SyncState.Syncing("Downloading EPG..."))
+
+        try {
+            val warnings = syncProviderEpg(
+                provider = provider,
+                metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id),
+                now = System.currentTimeMillis(),
+                force = force,
+                onProgress = onProgress
+            )
+            updateSyncStatusMetadata(
+                providerId = providerId,
+                status = if (warnings.isEmpty()) "SUCCESS" else "PARTIAL"
+            )
+            publishSyncState(
+                providerId,
+                if (warnings.isEmpty()) {
+                    SyncState.Success()
+                } else {
+                    SyncState.Partial("EPG sync completed with warnings", warnings)
                 }
-            }
-        }
-        // Store the launched job before registering completion cleanup so fast-completing
-        // coroutines cannot finish and race past map registration.
-        backgroundEpgJobs[providerId] = job
-        job.invokeOnCompletion {
-            backgroundEpgJobs.remove(providerId, job)
+            )
+            com.streamvault.domain.model.Result.success(Unit)
+        } catch (e: CancellationException) {
+            resetState(providerId)
+            throw e
+        } catch (e: Exception) {
+            val safeMessage = syncErrorSanitizer.userMessage(e, "EPG sync failed")
+            Log.e(TAG, "EPG sync failed for provider $providerId: ${syncErrorSanitizer.throwableMessage(e)}")
+            updateSyncStatusMetadata(providerId = providerId, status = "ERROR")
+            publishSyncState(providerId, SyncState.Error(safeMessage, e))
+            com.streamvault.domain.model.Result.error(safeMessage, e)
         }
     }
 
@@ -431,7 +448,7 @@ class SyncManager @Inject constructor(
         var metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)
         val now = System.currentTimeMillis()
 
-        if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
+        if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(provider.id, onProgress, "Downloading Live TV...")
             val liveSyncResult = syncXtreamLiveCatalog(
                 provider = provider,
@@ -467,6 +484,7 @@ class SyncManager @Inject constructor(
                     )
                     metadata = metadata.copy(
                         lastLiveSync = now,
+                        lastLiveSuccess = now,
                         liveCount = acceptedCount,
                         liveAvoidFullUntil = liveAvoidFullUntil,
                         liveSequentialFailuresRemembered = liveProviderAdaptation.rememberSequential,
@@ -503,14 +521,9 @@ class SyncManager @Inject constructor(
                         liveSequentialFailuresRemembered = metadata.liveSequentialFailuresRemembered || liveSequentialStress,
                         liveHealthySyncStreak = 0
                     )
-                    warnings += liveSyncResult.warnings + liveResult.warnings +
-                        if (existingChannelCount > 0) {
+                    if (existingChannelCount > 0) {
+                        warnings += liveSyncResult.warnings + liveResult.warnings +
                             listOf("Live TV refresh returned an empty valid catalog; keeping previous channel library.")
-                        } else {
-                            listOf("Live TV refresh returned an empty valid catalog with no previous channel library.")
-                        }
-                    if (existingChannelCount == 0) {
-                        throw IllegalStateException("Live TV catalog was empty.")
                     }
                 }
                 is CatalogStrategyResult.Failure -> {
@@ -537,7 +550,7 @@ class SyncManager @Inject constructor(
             syncMetadataRepository.updateMetadata(metadata)
         }
 
-        if (force || ContentCachePolicy.shouldRefresh(metadata.lastMovieSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
+        if (force || ContentCachePolicy.shouldRefresh(metadata.lastMovieSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(
                 provider.id,
                 onProgress,
@@ -648,18 +661,21 @@ class SyncManager @Inject constructor(
                         movieParallelFailuresRemembered = metadata.movieParallelFailuresRemembered || sawSequentialStress || shouldRememberSequentialPreference(catalogResult.error),
                         movieHealthySyncStreak = 0
                     )
-                    warnings += movieSyncResult.warnings + catalogResult.warnings +
-                        if (existingMovieCount > 0) {
-                            listOf("Movies sync degraded; keeping previous movie library.")
-                        } else {
-                            listOf("Movies sync failed; continuing with the rest of the provider sync.")
-                        }
+                    val isFastSyncIntentional = enteringLazyMode || catalogResult.strategyName == "fast_sync_no_categories"
+                    if (!isFastSyncIntentional) {
+                        warnings += movieSyncResult.warnings + catalogResult.warnings +
+                            if (existingMovieCount > 0) {
+                                listOf("Movies sync degraded; keeping previous movie library.")
+                            } else {
+                                listOf("Movies sync failed; continuing with the rest of the provider sync.")
+                            }
+                    }
                 }
             }
             syncMetadataRepository.updateMetadata(metadata)
         }
 
-        if (force || ContentCachePolicy.shouldRefresh(metadata.lastSeriesSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
+        if (force || ContentCachePolicy.shouldRefresh(metadata.lastSeriesSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(provider.id, onProgress, "Downloading Series...")
             val seriesSyncResult = syncXtreamSeriesCatalog(
                 provider = provider,
@@ -691,6 +707,7 @@ class SyncManager @Inject constructor(
                     )
                     metadata = metadata.copy(
                         lastSeriesSync = now,
+                        lastSeriesSuccess = now,
                         seriesCount = acceptedCount,
                         seriesAvoidFullUntil = seriesAvoidFullUntil,
                         seriesSequentialFailuresRemembered = seriesProviderAdaptation.rememberSequential,
@@ -747,18 +764,14 @@ class SyncManager @Inject constructor(
                         seriesSequentialFailuresRemembered = metadata.seriesSequentialFailuresRemembered || seriesSequentialStress || shouldRememberSequentialPreference(seriesResult.error),
                         seriesHealthySyncStreak = 0
                     )
-                    warnings += seriesSyncResult.warnings + seriesResult.warnings +
-                        if (enteringLazyMode) {
-                            listOf("Series entered lazy category-only mode.")
-                        } else if (existingSeriesCount > 0) {
-                            listOf("Series sync degraded; keeping previous series library.")
-                        } else {
-                            listOf("Series sync failed before any usable series catalog was available.")
-                        }
-                    if (existingSeriesCount == 0 && !enteringLazyMode) {
-                        throw IllegalStateException(
-                            "Failed to fetch series catalog: ${syncErrorSanitizer.throwableMessage(seriesResult.error)}"
-                        )
+                    val isSeriesFastSyncIntentional = enteringLazyMode || seriesResult.strategyName == "fast_sync_no_categories"
+                    if (!isSeriesFastSyncIntentional) {
+                        warnings += seriesSyncResult.warnings + seriesResult.warnings +
+                            if (existingSeriesCount > 0) {
+                                listOf("Series sync degraded; keeping previous series library.")
+                            } else {
+                                listOf("Series sync failed; continuing with the rest of the provider sync.")
+                            }
                     }
                 }
             }
@@ -787,7 +800,7 @@ class SyncManager @Inject constructor(
         var metadata = syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)
         val now = System.currentTimeMillis()
 
-        if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSync, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
+        if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             val stats = withContext(Dispatchers.IO) { m3uImporter.importPlaylist(provider, onProgress) }
             if (stats.liveCount == 0 && stats.movieCount == 0) {
                 throw IllegalStateException("Playlist is empty or contains no supported entries")
@@ -798,8 +811,10 @@ class SyncManager @Inject constructor(
             }
             metadata = metadata.copy(
                 lastLiveSync = now,
+                lastLiveSuccess = now,
                 lastMovieSync = now,
                 lastSeriesSync = now,
+                lastSeriesSuccess = now,
                 lastMovieAttempt = now,
                 lastMovieSuccess = now,
                 liveCount = stats.liveCount,
@@ -838,7 +853,7 @@ class SyncManager @Inject constructor(
 
         when (provider.type) {
             ProviderType.XTREAM_CODES -> {
-                if (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSync, ContentCachePolicy.EPG_TTL_MILLIS, now)) {
+                if (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSuccess, ContentCachePolicy.EPG_TTL_MILLIS, now)) {
                     try {
                         progress(provider.id, onProgress, "Downloading EPG...")
                         val base = provider.serverUrl.trimEnd('/')
@@ -852,6 +867,7 @@ class SyncManager @Inject constructor(
                         val epgCount = programDao.countByProvider(provider.id)
                         updatedMetadata = updatedMetadata.copy(
                             lastEpgSync = now,
+                            lastEpgSuccess = now,
                             epgCount = epgCount
                         )
                         syncMetadataRepository.updateMetadata(updatedMetadata)
@@ -869,7 +885,7 @@ class SyncManager @Inject constructor(
 
             ProviderType.M3U -> {
                 val currentEpgUrl = providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
-                if (!currentEpgUrl.isNullOrBlank() && (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSync, ContentCachePolicy.EPG_TTL_MILLIS, now))) {
+                if (!currentEpgUrl.isNullOrBlank() && (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSuccess, ContentCachePolicy.EPG_TTL_MILLIS, now))) {
                     val epgValidationError = UrlSecurityPolicy.validateOptionalEpgUrl(currentEpgUrl)
                     if (epgValidationError != null) {
                         warnings.add(epgValidationError)
@@ -879,6 +895,7 @@ class SyncManager @Inject constructor(
                             retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
                             updatedMetadata = updatedMetadata.copy(
                                 lastEpgSync = now,
+                                lastEpgSuccess = now,
                                 epgCount = programDao.countByProvider(provider.id)
                             )
                             syncMetadataRepository.updateMetadata(updatedMetadata)
@@ -938,6 +955,7 @@ class SyncManager @Inject constructor(
         val metadata = (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id))
             .copy(
                 lastEpgSync = now,
+                lastEpgSuccess = now,
                 epgCount = programDao.countByProvider(provider.id)
             )
         syncMetadataRepository.updateMetadata(metadata)
@@ -997,6 +1015,7 @@ class SyncManager @Inject constructor(
                         syncMetadataRepository.updateMetadata(
                             currentMetadata.copy(
                                 lastLiveSync = now,
+                                lastLiveSuccess = now,
                                 liveCount = acceptedCount,
                                 liveAvoidFullUntil = liveAvoidFullUntil,
                                 liveSequentialFailuresRemembered = liveProviderAdaptation.rememberSequential,
@@ -1069,6 +1088,7 @@ class SyncManager @Inject constructor(
                 val metadata = (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id))
                     .copy(
                         lastLiveSync = now,
+                        lastLiveSuccess = now,
                         liveCount = stats.liveCount
                     )
                 syncMetadataRepository.updateMetadata(metadata)
@@ -1279,6 +1299,7 @@ class SyncManager @Inject constructor(
                 syncMetadataRepository.updateMetadata(
                     currentMetadata.copy(
                         lastSeriesSync = now,
+                        lastSeriesSuccess = now,
                         seriesCount = acceptedCount,
                         seriesAvoidFullUntil = seriesAvoidFullUntil,
                         seriesSequentialFailuresRemembered = seriesProviderAdaptation.rememberSequential,

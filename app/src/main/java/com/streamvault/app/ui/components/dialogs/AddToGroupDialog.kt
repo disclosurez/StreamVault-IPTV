@@ -46,7 +46,8 @@ fun AddToGroupDialog(
     onRemoveFromGroup: (Category) -> Unit,
     onCreateGroup: (String) -> Unit,
     isQueuedForSplitScreen: Boolean = false,
-    onOpenSplitScreenPlanner: (() -> Unit)? = null
+    onOpenSplitScreenPlanner: (() -> Unit)? = null,
+    onRemoveFromRecent: (() -> Unit)? = null
 ) {
     var showCreateGroup by remember { mutableStateOf(false) }
     val isTelevisionDevice = rememberIsTelevisionDevice()
@@ -75,6 +76,7 @@ fun AddToGroupDialog(
     val safeDismiss = { if (canInteract) onDismiss() }
     val safeToggleFavorite = { if (canInteract) onToggleFavorite() }
     val safeOpenSplitScreenPlanner = { if (canInteract) onOpenSplitScreenPlanner?.invoke() }
+    val safeRemoveFromRecent = { if (canInteract) onRemoveFromRecent?.invoke() }
     val safeCreateGroup = { if (canInteract) showCreateGroup = true }
     val safeAddToGroup: (Category) -> Unit = { group -> if (canInteract) onAddToGroup(group) }
     val safeRemoveFromGroup: (Category) -> Unit = { group -> if (canInteract) onRemoveFromGroup(group) }
@@ -213,6 +215,47 @@ fun AddToGroupDialog(
                                         text = if (isQueuedForSplitScreen) stringResource(R.string.multiview_queued)
                                         else stringResource(R.string.multiview_add_to_split),
                                         color = if (isFocused) Color.Black else Color.White
+                                    )
+                                }
+                            }
+                        }
+
+                        // ── Remove from Recent ───────────────────────
+                        if (onRemoveFromRecent != null) {
+                            item {
+                                var isFocused by remember { mutableStateOf(false) }
+                                Button(
+                                    onClick = safeRemoveFromRecent,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onFocusChanged { isFocused = it.isFocused }
+                                        .background(
+                                            color = if (isFocused) AppColors.Focus else Color.Transparent,
+                                            shape = CircleShape
+                                        )
+                                        .border(
+                                            if (isFocused) 3.dp else 0.dp,
+                                            if (isFocused) AppColors.Focus else Color.Transparent,
+                                            CircleShape
+                                        )
+                                        .mouseClickable(onClick = safeRemoveFromRecent),
+                                    colors = ButtonDefaults.colors(
+                                        containerColor = when {
+                                            isFocused -> AppColors.Focus
+                                            else -> MaterialTheme.colorScheme.errorContainer
+                                        },
+                                        contentColor = if (isFocused) Color.Black else MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = stringResource(R.string.channel_options_remove_from_recent),
+                                        tint = if (isFocused) Color.Black else MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.channel_options_remove_from_recent),
+                                        color = if (isFocused) Color.Black else MaterialTheme.colorScheme.onErrorContainer
                                     )
                                 }
                             }

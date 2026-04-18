@@ -46,6 +46,8 @@ fun CategoryOptionsDialog(
     onTogglePinned: (() -> Unit)? = null,
     onRename: (() -> Unit)? = null,
     onHide: (() -> Unit)? = null,
+    onHideFromLiveTV: (() -> Unit)? = null,
+    onClearAll: (() -> Unit)? = null,
     onToggleLock: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     onReorderChannels: (() -> Unit)? = null
@@ -143,6 +145,21 @@ fun CategoryOptionsDialog(
                                 onDismissRequest()
                             }
                         }
+                    )
+                }
+
+                if (onHideFromLiveTV != null) {
+                    PremiumDialogAction(
+                        label = stringResource(R.string.category_options_hide_from_live_tv),
+                        onClick = { if (canInteract) onHideFromLiveTV() }
+                    )
+                }
+
+                if (onClearAll != null) {
+                    PremiumDialogAction(
+                        label = stringResource(R.string.category_options_clear_recent),
+                        onClick = { if (canInteract) onClearAll() },
+                        destructive = true
                     )
                 }
 

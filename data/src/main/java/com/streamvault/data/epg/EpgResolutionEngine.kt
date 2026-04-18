@@ -42,6 +42,8 @@ class EpgResolutionEngine @Inject constructor(
 ) {
     companion object {
         private const val TAG = "EpgResolutionEngine"
+        private const val LOW_CONFIDENCE_THRESHOLD = 0.7f
+        private const val MAX_REMATCH_ATTEMPTS = 6
     }
 
     /**
@@ -103,6 +105,7 @@ class EpgResolutionEngine @Inject constructor(
 
         // Preserve existing manual overrides
         val existingMappings = channelEpgMappingDao.getForProvider(providerId)
+        val existingMappingsByChannel = existingMappings.associateBy { it.providerChannelId }
         val manualOverrides = existingMappings.filter { it.isManualOverride }
             .associateBy { it.providerChannelId }
 
@@ -110,13 +113,21 @@ class EpgResolutionEngine @Inject constructor(
         var exactIdMatches = 0
         var normalizedNameMatches = 0
         var providerNativeMatches = 0
+        var manualMatches = 0
         var unresolvedCount = 0
 
         val mappings = channels.map { channel ->
+            val existing = existingMappingsByChannel[channel.id]
             // 1. Check for manual override
             val manual = manualOverrides[channel.id]
             if (manual != null) {
-                return@map manual.copy(updatedAt = now)
+                manualMatches++
+                return@map manual.copy(
+                    matchedAt = manual.matchedAt.takeIf { it > 0L } ?: now,
+                    failedAttempts = 0,
+                    source = "override",
+                    updatedAt = now
+                )
             }
 
             val channelEpgId = channel.epgChannelId?.trim()?.takeIf(String::isNotEmpty)
@@ -135,6 +146,9 @@ class EpgResolutionEngine @Inject constructor(
                         xmltvChannelId = channelEpgId,
                         matchType = EpgMatchType.EXACT_ID.name,
                         confidence = 1.0f,
+                        matchedAt = now,
+                        failedAttempts = 0,
+                        source = "tvg_id",
                         updatedAt = now
                     )
                 }
@@ -157,6 +171,9 @@ class EpgResolutionEngine @Inject constructor(
                             xmltvChannelId = matchedXmltvId,
                             matchType = EpgMatchType.NORMALIZED_NAME.name,
                             confidence = 0.7f,
+                            matchedAt = now,
+                            failedAttempts = 0,
+                            source = "name_match",
                             updatedAt = now
                         )
                     }
@@ -174,6 +191,9 @@ class EpgResolutionEngine @Inject constructor(
                     xmltvChannelId = channelEpgId,
                     matchType = EpgMatchType.PROVIDER_NATIVE.name,
                     confidence = 0.5f,
+                    matchedAt = now,
+                    failedAttempts = 0,
+                    source = "provider_native",
                     updatedAt = now
                 )
             }
@@ -188,6 +208,9 @@ class EpgResolutionEngine @Inject constructor(
                 xmltvChannelId = null,
                 matchType = null,
                 confidence = 0f,
+                matchedAt = existing?.matchedAt ?: 0L,
+                failedAttempts = (existing?.failedAttempts ?: 0).coerceAtMost(MAX_REMATCH_ATTEMPTS - 1) + 1,
+                source = "unmatched",
                 updatedAt = now
             )
         }
@@ -199,7 +222,13 @@ class EpgResolutionEngine @Inject constructor(
             exactIdMatches = exactIdMatches,
             normalizedNameMatches = normalizedNameMatches,
             providerNativeMatches = providerNativeMatches,
-            unresolvedChannels = unresolvedCount
+            manualMatches = manualMatches,
+            unresolvedChannels = unresolvedCount,
+            lowConfidenceChannels = mappings.count { it.confidence > 0f && it.confidence < LOW_CONFIDENCE_THRESHOLD },
+            rematchCandidateChannels = mappings.count {
+                it.failedAttempts < MAX_REMATCH_ATTEMPTS &&
+                    (it.sourceType == EpgSourceType.NONE.name || (it.confidence > 0f && it.confidence < LOW_CONFIDENCE_THRESHOLD))
+            }
         )
         Log.d(TAG, "Resolution for provider $providerId: $summary")
         summary
@@ -313,6 +342,7 @@ class EpgResolutionEngine @Inject constructor(
         var exactId = 0
         var normalizedName = 0
         var providerNative = 0
+        var manual = 0
         var unresolved = 0
 
         for (row in stats) {
@@ -322,7 +352,7 @@ class EpgResolutionEngine @Inject constructor(
                 row.matchType == EpgMatchType.EXACT_ID.name -> exactId += row.cnt
                 row.matchType == EpgMatchType.NORMALIZED_NAME.name -> normalizedName += row.cnt
                 row.matchType == EpgMatchType.PROVIDER_NATIVE.name -> providerNative += row.cnt
-                row.matchType == EpgMatchType.MANUAL.name -> exactId += row.cnt // count manual as exact
+                row.matchType == EpgMatchType.MANUAL.name -> manual += row.cnt
             }
         }
 
@@ -331,7 +361,14 @@ class EpgResolutionEngine @Inject constructor(
             exactIdMatches = exactId,
             normalizedNameMatches = normalizedName,
             providerNativeMatches = providerNative,
-            unresolvedChannels = unresolved
+            manualMatches = manual,
+            unresolvedChannels = unresolved,
+            lowConfidenceChannels = channelEpgMappingDao.countLowConfidence(providerId, LOW_CONFIDENCE_THRESHOLD),
+            rematchCandidateChannels = channelEpgMappingDao.countRematchCandidates(
+                providerId = providerId,
+                minConfidence = LOW_CONFIDENCE_THRESHOLD,
+                maxAttempts = MAX_REMATCH_ATTEMPTS
+            )
         )
     }
 }

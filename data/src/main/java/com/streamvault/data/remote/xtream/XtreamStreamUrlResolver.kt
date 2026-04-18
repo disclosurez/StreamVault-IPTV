@@ -11,7 +11,8 @@ import javax.inject.Singleton
 
 data class ResolvedStreamUrl(
     val url: String,
-    val expirationTime: Long? = null
+    val expirationTime: Long? = null,
+    val containerExtension: String? = null
 )
 
 @Singleton
@@ -26,21 +27,29 @@ class XtreamStreamUrlResolver @Inject constructor(
         fallbackProviderId: Long? = null,
         fallbackStreamId: Long? = null,
         fallbackContentType: ContentType? = null,
-        fallbackContainerExtension: String? = null
+        fallbackContainerExtension: String? = null,
+        preferStableUrl: Boolean = false
     ): String? = resolveWithMetadata(
         url = url,
         fallbackProviderId = fallbackProviderId,
         fallbackStreamId = fallbackStreamId,
         fallbackContentType = fallbackContentType,
-        fallbackContainerExtension = fallbackContainerExtension
+        fallbackContainerExtension = fallbackContainerExtension,
+        preferStableUrl = preferStableUrl
     )?.url
 
+    /**
+     * @param preferStableUrl when true, skip the tokenized direct-source URL and return
+     *   the credential-based portal URL instead. Use this for long-lived sessions (e.g.
+     *   Chromecast) where the token may expire before the session ends.
+     */
     suspend fun resolveWithMetadata(
         url: String,
         fallbackProviderId: Long? = null,
         fallbackStreamId: Long? = null,
         fallbackContentType: ContentType? = null,
-        fallbackContainerExtension: String? = null
+        fallbackContainerExtension: String? = null,
+        preferStableUrl: Boolean = false
     ): ResolvedStreamUrl? {
         if (url.isNotBlank() && !XtreamUrlFactory.isInternalStreamUrl(url)) {
             return ResolvedStreamUrl(
@@ -75,11 +84,14 @@ class XtreamStreamUrlResolver @Inject constructor(
             streamId = streamId,
             containerExtension = ext
         )
-        val resolvedUrl = directSource ?: fallbackResolvedUrl
+        // When preferStableUrl is set, skip the tokenized CDN URL (directSource)
+        // and use the credential-based portal URL that does not expire.
+        val resolvedUrl = if (preferStableUrl) fallbackResolvedUrl else (directSource ?: fallbackResolvedUrl)
 
         return ResolvedStreamUrl(
             url = resolvedUrl,
-            expirationTime = extractStreamExpirationTime(resolvedUrl)
+            expirationTime = extractStreamExpirationTime(resolvedUrl),
+            containerExtension = ext
         )
     }
 }

@@ -3,6 +3,7 @@ package com.streamvault.player
 import android.content.Context
 import android.os.Handler
 import android.util.Log
+import androidx.annotation.MainThread
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes as Media3AudioAttributes
 import androidx.media3.common.C
@@ -57,6 +58,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.Flow
@@ -85,6 +87,7 @@ class Media3PlayerEngine @Inject constructor(
             field = value
             audioFocusController.bypassAudioFocus = value
         }
+    var mediaSessionId: String = "streamvault-main"
     var enableMediaSession: Boolean = true
         set(value) {
             if (field == value) return
@@ -92,7 +95,9 @@ class Media3PlayerEngine @Inject constructor(
             if (value) {
                 exoPlayer?.let { player ->
                     if (mediaSession == null) {
-                        mediaSession = MediaSession.Builder(context, player).build()
+                        mediaSession = MediaSession.Builder(context, player)
+                            .setId(mediaSessionId)
+                            .build()
                     }
                 }
             } else {
@@ -101,7 +106,14 @@ class Media3PlayerEngine @Inject constructor(
             }
         }
 
-    private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    // All mutable engine state below is read/written on Dispatchers.Main.immediate
+    // (the engine scope dispatcher). No @Volatile or synchronisation is needed as long
+    // as the scope is not replaced with a different dispatcher in tests.
+    //
+    // scope is a var because release() cancels it to tear down dangling coroutines,
+    // then creates a fresh one so the singleton engine remains usable on re-entry.
+    private var scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+        private set
     private var exoPlayer: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
     private var requestedDecoderMode: DecoderMode = DecoderMode.AUTO
@@ -113,9 +125,11 @@ class Media3PlayerEngine @Inject constructor(
     private var currentRetryPolicy: PlayerRetryPolicy? = null
     private var currentRetryContext: PlaybackRetryContext? = null
     private var playbackStarted = false
+    private var prepareStartMs = 0L
     private var retryAttempt = 0
     private var retryJob: Job? = null
     private var retryGeneration = 0L
+    private var currentBufferIsLive: Boolean? = null
 
     private val _playbackState = MutableStateFlow(PlaybackState.IDLE)
     override val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
@@ -158,10 +172,14 @@ class Media3PlayerEngine @Inject constructor(
     override val availableSubtitleTracks: StateFlow<List<PlayerTrack>> = trackController.availableSubtitleTracks
     override val availableVideoTracks: StateFlow<List<PlayerTrack>> = trackController.availableVideoTracks
 
+    private val _audioFocusDenied = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    override val audioFocusDenied: Flow<Unit> = _audioFocusDenied.asSharedFlow()
+
     private val audioFocusController = PlayerAudioFocusController(
         context = context,
         applyVolume = { volume -> exoPlayer?.volume = volume },
-        setPlayWhenReady = { playWhenReady -> exoPlayer?.playWhenReady = playWhenReady }
+        setPlayWhenReady = { playWhenReady -> exoPlayer?.playWhenReady = playWhenReady },
+        onAudioFocusDenied = { _audioFocusDenied.tryEmit(Unit) }
     ).also {
         it.bypassAudioFocus = bypassAudioFocus
     }
@@ -172,7 +190,8 @@ class Media3PlayerEngine @Inject constructor(
         currentPosition = _currentPosition,
         duration = _duration,
         videoFormat = _videoFormat,
-        playerStats = _playerStats
+        playerStats = _playerStats,
+        playbackState = _playbackState
     ).also {
         it.bind { exoPlayer }
     }
@@ -181,9 +200,10 @@ class Media3PlayerEngine @Inject constructor(
     private val preloadCoordinator = PreloadCoordinator()
     private val compatibilityProfile: PlaybackCompatibilityProfile = DefaultPlaybackCompatibilityProfile
     private val decoderPreferencePolicy = DefaultDecoderPreferencePolicy()
-    private var activeLiveTimeshiftStreamInfo: StreamInfo? = null
-    private var activeLiveTimeshiftChannelKey: String? = null
-    private var isPlayingTimeshiftSnapshot: Boolean = false
+    // All reads/writes on Dispatchers.Main.immediate (engine scope).
+    @get:MainThread private var activeLiveTimeshiftStreamInfo: StreamInfo? = null
+    @get:MainThread private var activeLiveTimeshiftChannelKey: String? = null
+    @get:MainThread private var isPlayingTimeshiftSnapshot: Boolean = false
     private var pendingTimeshiftSeekMs: Long? = null
     private var pendingTimeshiftSeekToEnd: Boolean = false
     private var pendingTimeshiftAutoPlay: Boolean = false
@@ -199,6 +219,29 @@ class Media3PlayerEngine @Inject constructor(
 
     override fun prepare(streamInfo: StreamInfo) {
         prepareInternal(streamInfo = streamInfo, preserveRetryState = false, seekPositionMs = null, autoPlay = true)
+    }
+
+    override fun renewStreamUrl(streamInfo: StreamInfo) {
+        val player = exoPlayer ?: return
+        val retryPolicy = currentRetryPolicy ?: return
+
+        lastStreamInfo = streamInfo
+        lastMediaId = mediaSourceFactory.mediaIdFor(streamInfo)
+
+        val mediaSource = mediaSourceFactory.create(
+            streamInfo = streamInfo,
+            resolvedStreamType = currentResolvedStreamType,
+            retryPolicy = retryPolicy,
+            preload = false
+        ).second
+
+        player.setMediaSource(mediaSource, /* resetPosition= */ false)
+        player.prepare()
+
+        Log.i(
+            TAG,
+            "renew-url resolvedStreamType=$currentResolvedStreamType target=${PlaybackLogSanitizer.sanitizeUrl(streamInfo.url)}"
+        )
     }
 
     override fun play() {
@@ -233,6 +276,10 @@ class Media3PlayerEngine @Inject constructor(
         if (isPlayingTimeshiftSnapshot) {
             exoPlayer?.let { player ->
                 val duration = player.duration
+                if (duration != C.TIME_UNSET && player.currentPosition + ms >= duration) {
+                    seekToLiveEdge()
+                    return
+                }
                 val newPosition = if (duration != C.TIME_UNSET) {
                     (player.currentPosition + ms).coerceAtMost(duration)
                 } else {
@@ -293,6 +340,7 @@ class Media3PlayerEngine @Inject constructor(
         exoPlayer?.playbackParameters = PlaybackParameters(clamped)
     }
 
+    @MainThread
     override fun startLiveTimeshift(streamInfo: StreamInfo, channelKey: String, config: TimeshiftConfig) {
         activeLiveTimeshiftStreamInfo = streamInfo
         activeLiveTimeshiftChannelKey = channelKey
@@ -302,6 +350,7 @@ class Media3PlayerEngine @Inject constructor(
         }
     }
 
+    @MainThread
     override fun stopLiveTimeshift() {
         val wasSnapshot = isPlayingTimeshiftSnapshot
         val liveInfo = activeLiveTimeshiftStreamInfo
@@ -311,6 +360,10 @@ class Media3PlayerEngine @Inject constructor(
         pendingTimeshiftSeekMs = null
         pendingTimeshiftSeekToEnd = false
         pendingTimeshiftAutoPlay = false
+        if (wasSnapshot) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+        }
         scope.launch {
             liveTimeshiftManager.stopSession()
             if (wasSnapshot && liveInfo != null) {
@@ -320,14 +373,23 @@ class Media3PlayerEngine @Inject constructor(
         }
     }
 
+    @MainThread
     override fun seekToLiveEdge() {
         val liveInfo = activeLiveTimeshiftStreamInfo ?: return
+        val wasSnapshot = isPlayingTimeshiftSnapshot
         isPlayingTimeshiftSnapshot = false
         pendingTimeshiftSeekMs = null
         pendingTimeshiftSeekToEnd = false
         pendingTimeshiftAutoPlay = false
+        if (wasSnapshot) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+        }
         prepareInternal(liveInfo, preserveRetryState = false, seekPositionMs = null, autoPlay = true)
         syncTimeshiftState()
+        if (wasSnapshot) {
+            scope.launch { liveTimeshiftManager.releaseRetiredSnapshots() }
+        }
     }
 
     override fun pauseTimeshift() {
@@ -423,9 +485,6 @@ class Media3PlayerEngine @Inject constructor(
     }
 
     override fun release() {
-        scope.launch {
-            liveTimeshiftManager.stopSession()
-        }
         retryJob?.cancel()
         retryJob = null
         preloadCoordinator.release()
@@ -452,6 +511,17 @@ class Media3PlayerEngine @Inject constructor(
         activeLiveTimeshiftChannelKey = null
         isPlayingTimeshiftSnapshot = false
         _timeshiftState.value = LiveTimeshiftState()
+        scope.cancel()
+        // Replace with a fresh scope so the singleton engine remains functional on re-entry.
+        scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+        // Re-launch the timeshift state collector on the new scope.
+        scope.launch {
+            liveTimeshiftManager.state.collectLatest {
+                syncTimeshiftState()
+            }
+        }
+        // File cleanup runs outside the engine scope — orphans are also cleaned on next app start
+        CoroutineScope(Dispatchers.IO).launch { liveTimeshiftManager.stopSession() }
     }
 
     private fun prepareInternal(
@@ -474,6 +544,7 @@ class Media3PlayerEngine @Inject constructor(
         }
         lastMediaId = mediaId
         playbackStarted = false
+        prepareStartMs = System.currentTimeMillis()
         _error.tryEmit(null)
         _mediaTitle.value = null
         trackController.resetSelections()
@@ -485,8 +556,13 @@ class Media3PlayerEngine @Inject constructor(
         currentRetryPolicy = PlayerRetryPolicy(currentRetryContext!!) { playbackStarted }
 
         val preferredDecoderMode = decoderPreferencePolicy.preferredMode(requestedDecoderMode, mediaId)
-        if (activeDecoderMode != preferredDecoderMode) {
-            activeDecoderMode = preferredDecoderMode
+        val isLiveBuffer = currentResolvedStreamType in setOf(
+            ResolvedStreamType.HLS, ResolvedStreamType.MPEG_TS_LIVE, ResolvedStreamType.RTSP
+        )
+        val needsRecreate = activeDecoderMode != preferredDecoderMode || isLiveBuffer != currentBufferIsLive
+        activeDecoderMode = preferredDecoderMode
+        currentBufferIsLive = isLiveBuffer
+        if (needsRecreate) {
             recreatePlayer()
         }
 
@@ -510,7 +586,28 @@ class Media3PlayerEngine @Inject constructor(
         player.setMediaSource(mediaSource)
         player.prepare()
         seekPositionMs?.takeIf { it > 0L }?.let(player::seekTo)
-        player.playWhenReady = autoPlay && audioFocusController.requestAudioFocusIfNeeded()
+
+        val isLive = currentResolvedStreamType in setOf(
+            ResolvedStreamType.HLS, ResolvedStreamType.MPEG_TS_LIVE, ResolvedStreamType.RTSP
+        )
+        val osContentType = if (isLive) {
+            android.media.AudioAttributes.CONTENT_TYPE_MUSIC
+        } else {
+            android.media.AudioAttributes.CONTENT_TYPE_MOVIE
+        }
+        val media3ContentType = if (isLive) C.AUDIO_CONTENT_TYPE_MUSIC else C.AUDIO_CONTENT_TYPE_MOVIE
+        player.setAudioAttributes(
+            Media3AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(media3ContentType)
+                .build(),
+            false
+        )
+        val focusGranted = audioFocusController.requestAudioFocusIfNeeded(osContentType)
+        player.playWhenReady = autoPlay && focusGranted
+        if (autoPlay && !focusGranted) {
+            _audioFocusDenied.tryEmit(Unit)
+        }
         viewBinder.attachPlayer(player)
     }
 
@@ -534,17 +631,20 @@ class Media3PlayerEngine @Inject constructor(
             statsCollector.bind { exoPlayer }
             audioFocusController.reapplyVolume()
             if (enableMediaSession) {
-                mediaSession = MediaSession.Builder(context, player).build()
+                mediaSession = MediaSession.Builder(context, player)
+                    .setId(mediaSessionId)
+                    .build()
             }
         }
     }
 
     private fun createPlayer(): ExoPlayer {
         val renderersFactory = buildRenderersFactory()
+        val maxBufferMs = if (currentBufferIsLive == true) 30_000 else 120_000
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 30_000,
-                90_000,
+                maxBufferMs,
                 2_500,
                 10_000
             )
@@ -695,6 +795,10 @@ class Media3PlayerEngine @Inject constructor(
                 output: Any,
                 renderTimeMs: Long
             ) {
+                if (prepareStartMs > 0L) {
+                    val ttff = System.currentTimeMillis() - prepareStartMs
+                    _playerStats.value = _playerStats.value.copy(ttffMs = ttff)
+                }
                 markPlaybackStarted("first-frame-success")
             }
         }
@@ -719,7 +823,7 @@ class Media3PlayerEngine @Inject constructor(
                     if (isPlayingTimeshiftSnapshot && pendingTimeshiftSeekToEnd) {
                         pendingTimeshiftSeekToEnd = false
                         playerOrNull()?.duration?.takeIf { it > 0L && it != C.TIME_UNSET }?.let { duration ->
-                            playerOrNull()?.seekTo(duration)
+                            playerOrNull()?.seekTo((duration - 200L).coerceAtLeast(0L))
                         }
                     } else if (isPlayingTimeshiftSnapshot) {
                         pendingTimeshiftSeekMs?.let { target ->
@@ -784,12 +888,14 @@ class Media3PlayerEngine @Inject constructor(
                 syncTimeshiftState(messageOverride = "Local live rewind is still buffering.")
                 return@launch
             }
+            if (activeLiveTimeshiftStreamInfo !== liveInfo) return@launch
             isPlayingTimeshiftSnapshot = true
             pendingTimeshiftSeekMs = positionMs
             pendingTimeshiftSeekToEnd = seekToEnd
             pendingTimeshiftAutoPlay = autoPlay
             val snapshotInfo = liveInfo.copy(url = snapshot.url, streamType = inferSnapshotStreamType(snapshot.url))
             prepareInternal(snapshotInfo, preserveRetryState = false, seekPositionMs = null, autoPlay = autoPlay)
+            liveTimeshiftManager.releaseRetiredSnapshots()
             syncTimeshiftState()
         }
     }
@@ -822,7 +928,7 @@ class Media3PlayerEngine @Inject constructor(
             else -> LiveTimeshiftStatus.LIVE
         }
         _timeshiftState.value = managerState.copy(
-            backend = if (managerState.backend == LiveTimeshiftBackend.NONE) managerState.backend else managerState.backend,
+            backend = managerState.backend,
             status = status,
             liveEdgePositionMs = managerState.liveEdgePositionMs,
             currentOffsetFromLiveMs = offsetFromLive,
@@ -913,6 +1019,9 @@ class Media3PlayerEngine @Inject constructor(
         val nextAttempt = retryAttempt + 1
         if (retryPolicy.shouldRetry(error, retryContext, playbackStarted, nextAttempt)) {
             val delayMs = retryPolicy.retryDelayMs(error, nextAttempt)
+            // retryGeneration captured and checked on Main — safe with
+            // Dispatchers.Main.immediate. If the scope dispatcher is ever changed
+            // (e.g. in tests), convert retryGeneration to AtomicLong.
             val scheduledRetryGeneration = retryGeneration
             retryAttempt = nextAttempt
             _retryStatus.value = PlayerRetryStatus(
@@ -934,10 +1043,12 @@ class Media3PlayerEngine @Inject constructor(
                     return@launch
                 }
                 retryJob = null
-                if (category == PlaybackErrorCategory.LIVE_WINDOW) {
+                if (category == PlaybackErrorCategory.LIVE_WINDOW &&
+                    currentResolvedStreamType != ResolvedStreamType.MPEG_TS_LIVE
+                ) {
                     exoPlayer?.seekToDefaultPosition()
                 }
-                prepareInternal(streamInfo, preserveRetryState = true, seekPositionMs = null, autoPlay = true)
+                prepareInternal(streamInfo, preserveRetryState = category != PlaybackErrorCategory.LIVE_WINDOW, seekPositionMs = null, autoPlay = true)
             }
             return
         }

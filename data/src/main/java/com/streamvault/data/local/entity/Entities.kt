@@ -155,10 +155,12 @@ data class MovieEntity(
     @ColumnInfo(name = "youtube_trailer") val youtubeTrailer: String? = null,
     @ColumnInfo(name = "provider_id") val providerId: Long = 0,
     @ColumnInfo(name = "watch_progress") val watchProgress: Long = 0L,
+    @ColumnInfo(name = "watch_count") val watchCount: Int = 0,
     @ColumnInfo(name = "last_watched_at") val lastWatchedAt: Long = 0L,
     @ColumnInfo(name = "is_adult") val isAdult: Boolean = false,
     @ColumnInfo(name = "is_user_protected") val isUserProtected: Boolean = false,
-    @ColumnInfo(name = "sync_fingerprint") val syncFingerprint: String = ""
+    @ColumnInfo(name = "sync_fingerprint") val syncFingerprint: String = "",
+    @ColumnInfo(name = "added_at") val addedAt: Long = 0L
 )
 
 data class MovieBrowseEntity(
@@ -179,7 +181,8 @@ data class MovieBrowseEntity(
     @ColumnInfo(name = "watch_progress") val watchProgress: Long = 0L,
     @ColumnInfo(name = "last_watched_at") val lastWatchedAt: Long = 0L,
     @ColumnInfo(name = "is_adult") val isAdult: Boolean = false,
-    @ColumnInfo(name = "is_user_protected") val isUserProtected: Boolean = false
+    @ColumnInfo(name = "is_user_protected") val isUserProtected: Boolean = false,
+    @ColumnInfo(name = "added_at") val addedAt: Long = 0L
 )
 
 @Entity(
@@ -421,7 +424,8 @@ data class MovieImportStageEntity(
     @ColumnInfo(name = "tmdb_id") val tmdbId: Long? = null,
     @ColumnInfo(name = "youtube_trailer") val youtubeTrailer: String? = null,
     @ColumnInfo(name = "is_adult") val isAdult: Boolean = false,
-    @ColumnInfo(name = "sync_fingerprint") val syncFingerprint: String = ""
+    @ColumnInfo(name = "sync_fingerprint") val syncFingerprint: String = "",
+    @ColumnInfo(name = "added_at") val addedAt: Long = 0L
 )
 
 @Entity(
@@ -492,6 +496,7 @@ data class CategoryImportStageEntity(
     indices = [
         Index(value = ["provider_id"]),
         Index(value = ["provider_id", "channel_id"]),
+        Index(value = ["provider_id", "end_time", "channel_id"]),
         Index(value = ["provider_id", "start_time", "end_time"]),
         Index(value = ["start_time"]),
         Index(value = ["provider_id", "channel_id", "start_time"]),
@@ -533,21 +538,30 @@ data class ProgramBrowseEntity(
 
 @Entity(
     tableName = "favorites",
-    foreignKeys = [ForeignKey(
-        entity = VirtualGroupEntity::class,
-        parentColumns = ["id"],
-        childColumns = ["group_id"],
-        onDelete = ForeignKey.SET_NULL
-    )],
+    foreignKeys = [
+        ForeignKey(
+            entity = ProviderEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["provider_id"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = VirtualGroupEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["group_id"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ],
     indices = [
-        Index(value = ["content_id", "content_type", "group_id"], unique = true),
-        Index(value = ["content_type", "group_id"]),
+        Index(value = ["provider_id", "content_id", "content_type", "group_id"], unique = true),
+        Index(value = ["provider_id", "content_type", "group_id"]),
         Index(value = ["group_id", "position"])
     ]
 )
 data class FavoriteEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    @ColumnInfo(name = "provider_id") val providerId: Long,
     @ColumnInfo(name = "content_id") val contentId: Long,
     @ColumnInfo(name = "content_type") val contentType: ContentType,
     val position: Int = 0,
@@ -557,7 +571,14 @@ data class FavoriteEntity(
 
 @Entity(
     tableName = "virtual_groups",
+    foreignKeys = [ForeignKey(
+        entity = ProviderEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["provider_id"],
+        onDelete = ForeignKey.CASCADE
+    )],
     indices = [
+        Index(value = ["provider_id", "content_type"]),
         Index(value = ["position"]),
         Index(value = ["content_type"])
     ]
@@ -565,6 +586,7 @@ data class FavoriteEntity(
 data class VirtualGroupEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    @ColumnInfo(name = "provider_id") val providerId: Long,
     val name: String,
     @ColumnInfo(name = "icon_emoji") val iconEmoji: String? = null,
     val position: Int = 0,
@@ -610,6 +632,27 @@ data class PlaybackHistoryEntity(
     @ColumnInfo(name = "episode_number") val episodeNumber: Int? = null
 )
 
+@Entity(
+    tableName = "tmdb_identity",
+    primaryKeys = ["tmdb_id", "content_type"],
+    foreignKeys = [ForeignKey(
+        entity = ProviderEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["canonical_provider_id"],
+        onDelete = ForeignKey.CASCADE
+    )],
+    indices = [
+        Index(value = ["content_type"]),
+        Index(value = ["canonical_provider_id"])
+    ]
+)
+data class TmdbIdentityEntity(
+    @ColumnInfo(name = "tmdb_id") val tmdbId: Long,
+    @ColumnInfo(name = "content_type") val contentType: ContentType,
+    @ColumnInfo(name = "canonical_provider_id") val canonicalProviderId: Long,
+    @ColumnInfo(name = "first_seen_at") val firstSeenAt: Long
+)
+
 data class PlaybackHistoryLiteEntity(
     val id: Long = 0,
     @ColumnInfo(name = "content_id") val contentId: Long,
@@ -629,6 +672,25 @@ data class PlaybackHistoryLiteEntity(
 )
 
 @Entity(
+    tableName = "search_history",
+    indices = [
+        Index(value = ["content_scope", "provider_id", "used_at"]),
+        Index(value = ["used_at"]),
+        Index(value = ["provider_id"]),
+        Index(value = ["query", "content_scope", "provider_id"], unique = true)
+    ]
+)
+data class SearchHistoryEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val query: String,
+    @ColumnInfo(name = "content_scope") val contentScope: String,
+    @ColumnInfo(name = "provider_id") val providerId: Long = 0,
+    @ColumnInfo(name = "used_at") val usedAt: Long,
+    @ColumnInfo(name = "use_count") val useCount: Int = 1
+)
+
+@Entity(
     tableName = "sync_metadata",
     foreignKeys = [ForeignKey(
         entity = ProviderEntity::class,
@@ -641,9 +703,12 @@ data class SyncMetadataEntity(
     @PrimaryKey
     @ColumnInfo(name = "provider_id") val providerId: Long,
     @ColumnInfo(name = "last_live_sync") val lastLiveSync: Long = 0,
+    @ColumnInfo(name = "last_live_success") val lastLiveSuccess: Long = 0,
     @ColumnInfo(name = "last_movie_sync") val lastMovieSync: Long = 0,
     @ColumnInfo(name = "last_series_sync") val lastSeriesSync: Long = 0,
+    @ColumnInfo(name = "last_series_success") val lastSeriesSuccess: Long = 0,
     @ColumnInfo(name = "last_epg_sync") val lastEpgSync: Long = 0,
+    @ColumnInfo(name = "last_epg_success") val lastEpgSuccess: Long = 0,
     @ColumnInfo(name = "last_movie_attempt") val lastMovieAttempt: Long = 0,
     @ColumnInfo(name = "last_movie_success") val lastMovieSuccess: Long = 0,
     @ColumnInfo(name = "last_movie_partial") val lastMoviePartial: Long = 0,
@@ -843,6 +908,9 @@ data class ChannelEpgMappingEntity(
     @ColumnInfo(name = "xmltv_channel_id") val xmltvChannelId: String? = null,
     @ColumnInfo(name = "match_type") val matchType: String? = null,
     val confidence: Float = 0f,
+    @ColumnInfo(name = "matched_at") val matchedAt: Long = 0L,
+    @ColumnInfo(name = "failed_attempts") val failedAttempts: Int = 0,
+    val source: String? = null,
     @ColumnInfo(name = "is_manual_override") val isManualOverride: Boolean = false,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

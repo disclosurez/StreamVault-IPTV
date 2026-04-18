@@ -3,6 +3,7 @@ package com.streamvault.player.stats
 import androidx.media3.common.Format
 import androidx.media3.exoplayer.ExoPlayer
 import com.streamvault.domain.model.VideoFormat
+import com.streamvault.player.PlaybackState
 import com.streamvault.player.PlayerStats
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +38,8 @@ class PlayerStatsCollector(
     private val currentPosition: MutableStateFlow<Long>,
     private val duration: MutableStateFlow<Long>,
     private val videoFormat: MutableStateFlow<VideoFormat>,
-    private val playerStats: MutableStateFlow<PlayerStats>
+    private val playerStats: MutableStateFlow<PlayerStats>,
+    private val playbackState: MutableStateFlow<PlaybackState>
 ) {
     // All fields are Main-thread-only. No @Volatile or AtomicInteger required.
     private var pollingJob: Job? = null
@@ -116,9 +118,14 @@ class PlayerStatsCollector(
                 val player = playerProvider?.invoke()
 
                 if (player != null) {
-                    // --- Tier 1: Position + duration (every tick) ------------------
-                    currentPosition.value = player.currentPosition
-                    duration.value = player.duration.coerceAtLeast(0L)
+                    // --- Tier 1: Position + duration (every tick, READY only) -----
+                    // During BUFFERING the position is stalled and live duration is
+                    // C.TIME_UNSET (-1), making every emit a no-op equality check.
+                    // Skipping avoids wasted CPU on the main thread.
+                    if (playbackState.value == PlaybackState.READY) {
+                        currentPosition.value = player.currentPosition
+                        duration.value = player.duration.coerceAtLeast(0L)
+                    }
 
                     // --- Tier 2: Buffered duration (every 500 ms) ------------------
                     if (ticksSinceBufferedUpdate >= BUFFERED_UPDATE_TICKS) {
@@ -140,7 +147,8 @@ class PlayerStatsCollector(
                             frameRate = lastFrameRate,
                             bitrate   = video?.bitrate?.takeIf { it > 0 } ?: 0,
                             codecV = video?.sampleMimeType ?: video?.codecs,
-                            codecA = audio?.sampleMimeType ?: audio?.codecs
+                            codecA = audio?.sampleMimeType ?: audio?.codecs,
+                            pixelWidthHeightRatio = video?.pixelWidthHeightRatio?.takeIf { it > 0f } ?: 1f
                         )
                         playerStats.value = playerStats.value.copy(
                             videoCodec        = video?.sampleMimeType ?: video?.codecs

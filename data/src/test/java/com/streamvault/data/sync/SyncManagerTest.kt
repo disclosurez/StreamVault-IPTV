@@ -1,6 +1,7 @@
 package com.streamvault.data.sync
 
 import com.google.common.truth.Truth.assertThat
+import android.content.Context
 import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CatalogSyncDao
 import com.streamvault.data.local.dao.CategoryDao
@@ -9,6 +10,7 @@ import com.streamvault.data.local.dao.MovieDao
 import com.streamvault.data.local.dao.ProgramDao
 import com.streamvault.data.local.dao.ProviderDao
 import com.streamvault.data.local.dao.SeriesDao
+import com.streamvault.data.local.dao.TmdbIdentityDao
 import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.parser.M3uParser
 import com.streamvault.data.security.CredentialCrypto
@@ -19,7 +21,10 @@ import com.streamvault.domain.model.SyncMetadata
 import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.EpgSourceRepository
 import com.streamvault.data.preferences.PreferencesRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -70,6 +75,7 @@ class SyncManagerTest {
             listOfNotNull(provider).filter { it.id in ids }
         override suspend fun updateSyncTime(id: Long, timestamp: Long) = Unit
         override fun getAll() = kotlinx.coroutines.flow.flowOf(listOfNotNull(provider))
+        override suspend fun getAllSync(): List<ProviderEntity> = listOfNotNull(provider)
         override fun getActive() = kotlinx.coroutines.flow.flowOf(provider)
         override suspend fun insert(entity: ProviderEntity) = provider?.id ?: 0L
         override suspend fun update(entity: ProviderEntity) = Unit
@@ -160,6 +166,7 @@ class SyncManagerTest {
     private val programDao: ProgramDao = mock()
     private val categoryDao: CategoryDao = mock()
     private val catalogSyncDao: CatalogSyncDao = mock()
+    private val tmdbIdentityDao: TmdbIdentityDao = mock()
     private val epgRepo: EpgRepository = mock()
     private val epgSourceRepo: EpgSourceRepository = mock()
     private val preferencesRepo: PreferencesRepository = mock()
@@ -188,6 +195,7 @@ class SyncManagerTest {
             programDao,
             categoryDao,
             catalogSyncDao,
+            tmdbIdentityDao,
             epgRepo,
             epgSourceRepo,
             preferencesRepo
@@ -195,6 +203,16 @@ class SyncManagerTest {
         org.mockito.kotlin.whenever(preferencesRepo.useXtreamTextClassification).thenReturn(flowOf(false))
         org.mockito.kotlin.whenever(preferencesRepo.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
         org.mockito.kotlin.whenever(preferencesRepo.getHiddenCategoryIds(any(), any())).thenReturn(flowOf(emptySet()))
+        runBlocking {
+            org.mockito.kotlin.whenever(categoryDao.getByProviderAndTypeSync(any(), any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(channelDao.getByProviderSync(any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(movieDao.getByProviderSync(any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(seriesDao.getByProviderSync(any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(catalogSyncDao.getCategoryStages(any(), any(), any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(catalogSyncDao.getChannelStages(any(), any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(catalogSyncDao.getMovieStages(any(), any())).thenReturn(emptyList())
+            org.mockito.kotlin.whenever(catalogSyncDao.getSeriesStages(any(), any())).thenReturn(emptyList())
+        }
     }
 
     private fun buildManager(
@@ -202,6 +220,7 @@ class SyncManagerTest {
         providerPresent: Boolean = true,
         providerEntity: ProviderEntity? = null
     ): SyncManager = SyncManager(
+        applicationContext = mock<Context>(),
         providerDao = FakeProviderDao(
             if (providerPresent) {
                 providerEntity ?: sampleProvider(providerType)
@@ -215,6 +234,7 @@ class SyncManagerTest {
         programDao = programDao,
         categoryDao = categoryDao,
         catalogSyncDao = catalogSyncDao,
+        tmdbIdentityDao = tmdbIdentityDao,
         xtreamJson = xtreamJson,
         m3uParser = M3uParser(),
         epgRepository = epgRepo,
@@ -294,9 +314,13 @@ class SyncManagerTest {
             SyncMetadata(
                 providerId = 1L,
                 lastLiveSync = now,
+                lastLiveSuccess = now,
                 lastMovieSync = now,
+                lastMovieSuccess = now,
                 lastSeriesSync = now,
-                lastEpgSync = now
+                lastSeriesSuccess = now,
+                lastEpgSync = now,
+                lastEpgSuccess = now
             )
         )
 
@@ -308,6 +332,49 @@ class SyncManagerTest {
     }
 
     @Test
+    fun `sync_xtream_partial_live_timestamp_does_not_suppress_retry`() = runTest {
+        val mgr = buildManager(providerType = ProviderType.XTREAM_CODES)
+        val now = System.currentTimeMillis()
+        syncMetadataRepo.updateMetadata(
+            SyncMetadata(
+                providerId = 1L,
+                lastLiveSync = now,
+                lastLiveSuccess = 0L,
+                lastMovieSync = now,
+                lastMovieSuccess = now,
+                lastSeriesSync = now,
+                lastSeriesSuccess = now,
+                lastEpgSync = now,
+                lastEpgSuccess = now
+            )
+        )
+        xtreamBackend.respond(action = "get_live_categories", body = """[{"category_id":"1","category_name":"News"}]""")
+        xtreamBackend.respond(
+            action = "get_live_streams",
+            body = """
+                [
+                  {
+                    "name": "Channel One",
+                    "stream_id": 1001,
+                    "category_id": "1",
+                    "stream_icon": "https://example.com/ch1.png",
+                    "tv_archive": 0,
+                    "num": 1
+                  }
+                ]
+            """.trimIndent()
+        )
+
+        val result = mgr.sync(1L, force = false)
+        advanceUntilIdle()
+
+        assertThat(result.isSuccess).isTrue()
+        assertThat(xtreamBackend.requestedActions).contains("get_live_categories")
+        val updated = syncMetadataRepo.getMetadata(1L)
+        assertThat(updated?.lastLiveSuccess ?: 0L).isGreaterThan(0L)
+    }
+
+    @Test
     fun `sync_xtream_falls_back_to_movie_categories_from_streams`() = runTest {
         val mgr = buildManager(providerType = ProviderType.XTREAM_CODES)
         val now = System.currentTimeMillis()
@@ -315,8 +382,11 @@ class SyncManagerTest {
             SyncMetadata(
                 providerId = 1L,
                 lastLiveSync = now,
+                lastLiveSuccess = now,
                 lastSeriesSync = now,
-                lastEpgSync = now
+                lastSeriesSuccess = now,
+                lastEpgSync = now,
+                lastEpgSuccess = now
             )
         )
         xtreamBackend.respond(action = "get_vod_categories", body = """{"error":"categories unavailable"}""", code = 500)
@@ -355,8 +425,11 @@ class SyncManagerTest {
             SyncMetadata(
                 providerId = 1L,
                 lastLiveSync = now,
+                lastLiveSuccess = now,
                 lastSeriesSync = now,
-                lastEpgSync = now
+                lastSeriesSuccess = now,
+                lastEpgSync = now,
+                lastEpgSuccess = now
             )
         )
         xtreamBackend.respond(
@@ -414,7 +487,9 @@ class SyncManagerTest {
             SyncMetadata(
                 providerId = 1L,
                 lastLiveSync = now,
-                lastEpgSync = now
+                lastLiveSuccess = now,
+                lastEpgSync = now,
+                lastEpgSuccess = now
             )
         )
         org.mockito.kotlin.whenever(movieDao.getCount(1L)).thenReturn(flowOf(0))
@@ -528,6 +603,44 @@ class SyncManagerTest {
         advanceUntilIdle()
 
         assertThat(mgr.currentSyncState(1L)).isInstanceOf(SyncState.Error::class.java)
+    }
+
+    @Test
+    fun `onProviderDeleted resets state and notifies epg repository`() = runTest {
+        val mgr = buildManager()
+        mgr.sync(1L)
+        advanceUntilIdle()
+
+        assertThat(mgr.currentSyncState(1L)).isNotEqualTo(SyncState.Idle)
+
+        mgr.onProviderDeleted(1L)
+
+        assertThat(mgr.currentSyncState(1L)).isEqualTo(SyncState.Idle)
+        verify(epgRepo).onProviderDeleted(1L)
+    }
+
+    @Test
+    fun `runWhenNoSyncActive returns false while a sync is in flight`() = runTest {
+        val provider = sampleProvider(ProviderType.M3U).copy(epgUrl = "https://epg.example.com/guide.xml")
+        val mgr = buildManager(providerType = ProviderType.M3U, providerEntity = provider)
+        val syncEntered = CompletableDeferred<Unit>()
+        val releaseSync = CompletableDeferred<Unit>()
+        org.mockito.kotlin.whenever(epgRepo.refreshEpg(1L, "https://epg.example.com/guide.xml")).thenAnswer {
+            syncEntered.complete(Unit)
+            runBlocking { releaseSync.await() }
+            Result.success(Unit)
+        }
+
+        val syncJob = async {
+            mgr.retrySection(providerId = 1L, section = SyncRepairSection.EPG)
+        }
+        syncEntered.await()
+
+        val vacuumAllowed = mgr.runWhenNoSyncActive { true }
+        releaseSync.complete(Unit)
+
+        assertThat(vacuumAllowed).isFalse()
+        syncJob.await()
     }
 
     // ── Reset state ─────────────────────────────────────────────────

@@ -181,12 +181,13 @@ class MainActivity : ComponentActivity() {
         enabled: Boolean,
         isPlaying: Boolean,
         videoWidth: Int,
-        videoHeight: Int
+        videoHeight: Int,
+        pixelWidthHeightRatio: Float = 1f
     ) {
         playerPictureInPictureState = PlayerPictureInPictureState(
             enabled = enabled,
             isPlaying = isPlaying,
-            aspectRatio = videoAspectRatioOrNull(videoWidth, videoHeight)
+            aspectRatio = videoAspectRatioOrNull(videoWidth, videoHeight, pixelWidthHeightRatio)
         )
         applyPlayerPictureInPictureParams()
     }
@@ -241,9 +242,10 @@ class MainActivity : ComponentActivity() {
         return builder.build()
     }
 
-    private fun videoAspectRatioOrNull(videoWidth: Int, videoHeight: Int): Rational? {
+    private fun videoAspectRatioOrNull(videoWidth: Int, videoHeight: Int, pixelWidthHeightRatio: Float = 1f): Rational? {
         if (videoWidth <= 0 || videoHeight <= 0) return null
-        return Rational(videoWidth, videoHeight)
+        val displayWidth = (videoWidth * pixelWidthHeightRatio).toInt().coerceAtLeast(1)
+        return Rational(displayWidth, videoHeight)
     }
 
     private fun handleExternalIntent(intent: Intent?) {

@@ -152,7 +152,8 @@ fun MovieEntity.toDomain() = Movie(
     lastWatchedAt = lastWatchedAt,
     isAdult = isAdult,
     isUserProtected = isUserProtected,
-    streamId = streamId
+    streamId = streamId,
+    addedAt = addedAt
 )
 
 fun MovieBrowseEntity.toDomain() = Movie(
@@ -180,7 +181,8 @@ fun MovieBrowseEntity.toDomain() = Movie(
     lastWatchedAt = lastWatchedAt,
     isAdult = isAdult,
     isUserProtected = isUserProtected,
-    streamId = streamId
+    streamId = streamId,
+    addedAt = addedAt
 )
 
 fun Movie.toEntity() = MovieEntity(
@@ -208,7 +210,8 @@ fun Movie.toEntity() = MovieEntity(
     watchProgress = watchProgress,
     lastWatchedAt = lastWatchedAt,
     isAdult = isAdult,
-    isUserProtected = isUserProtected
+    isUserProtected = isUserProtected,
+    addedAt = addedAt
 )
 
 // ── Series ─────────────────────────────────────────────────────────
@@ -426,6 +429,7 @@ fun Program.toEntity() = ProgramEntity(
 
 fun FavoriteEntity.toDomain() = Favorite(
     id = id,
+    providerId = providerId,
     contentId = contentId,
     contentType = contentType,
     position = position,
@@ -435,6 +439,7 @@ fun FavoriteEntity.toDomain() = Favorite(
 
 fun Favorite.toEntity() = FavoriteEntity(
     id = id,
+    providerId = providerId,
     contentId = contentId,
     contentType = contentType,
     position = position,
@@ -446,6 +451,7 @@ fun Favorite.toEntity() = FavoriteEntity(
 
 fun VirtualGroupEntity.toDomain() = VirtualGroup(
     id = id,
+    providerId = providerId,
     name = name,
     iconEmoji = iconEmoji,
     position = position,
@@ -455,6 +461,7 @@ fun VirtualGroupEntity.toDomain() = VirtualGroup(
 
 fun VirtualGroup.toEntity() = VirtualGroupEntity(
     id = id,
+    providerId = providerId,
     name = name,
     iconEmoji = iconEmoji,
     position = position,
@@ -523,9 +530,12 @@ fun PlaybackHistory.toEntity() = PlaybackHistoryEntity(
 fun SyncMetadataEntity.toDomain() = SyncMetadata(
     providerId = providerId,
     lastLiveSync = lastLiveSync,
+    lastLiveSuccess = lastLiveSuccess,
     lastMovieSync = lastMovieSync,
     lastSeriesSync = lastSeriesSync,
+    lastSeriesSuccess = lastSeriesSuccess,
     lastEpgSync = lastEpgSync,
+    lastEpgSuccess = lastEpgSuccess,
     lastMovieAttempt = lastMovieAttempt,
     lastMovieSuccess = lastMovieSuccess,
     lastMoviePartial = lastMoviePartial,
@@ -552,9 +562,12 @@ fun SyncMetadataEntity.toDomain() = SyncMetadata(
 fun SyncMetadata.toEntity() = SyncMetadataEntity(
     providerId = providerId,
     lastLiveSync = lastLiveSync,
+    lastLiveSuccess = lastLiveSuccess,
     lastMovieSync = lastMovieSync,
     lastSeriesSync = lastSeriesSync,
+    lastSeriesSuccess = lastSeriesSuccess,
     lastEpgSync = lastEpgSync,
+    lastEpgSuccess = lastEpgSuccess,
     lastMovieAttempt = lastMovieAttempt,
     lastMovieSuccess = lastMovieSuccess,
     lastMoviePartial = lastMoviePartial,
@@ -710,6 +723,9 @@ fun ChannelEpgMappingEntity.toDomain() = com.streamvault.domain.model.ChannelEpg
         runCatching { com.streamvault.domain.model.EpgMatchType.valueOf(it) }.getOrNull()
     },
     confidence = confidence,
+    matchedAt = matchedAt,
+    failedAttempts = failedAttempts,
+    source = source,
     isManualOverride = isManualOverride,
     updatedAt = updatedAt
 )
@@ -723,6 +739,9 @@ fun com.streamvault.domain.model.ChannelEpgMapping.toEntity() = ChannelEpgMappin
     xmltvChannelId = xmltvChannelId,
     matchType = matchType?.name,
     confidence = confidence,
+    matchedAt = matchedAt,
+    failedAttempts = failedAttempts,
+    source = source,
     isManualOverride = isManualOverride,
     updatedAt = updatedAt
 )

@@ -71,12 +71,15 @@ class HomeViewModelTest {
         whenever(combinedM3uRepository.getActiveLiveSource()).thenReturn(flowOf(null))
         whenever(combinedM3uRepository.getActiveLiveSourceOptions()).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
-        whenever(favoriteRepository.getFavorites(any())).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(any<Long>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(any<List<Long>>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.defaultCategoryId).thenReturn(flowOf(null))
         whenever(preferencesRepository.getLastLiveCategoryId(any())).thenReturn(flowOf(null))
         whenever(preferencesRepository.liveTvChannelMode).thenReturn(flowOf("COMPACT"))
         whenever(preferencesRepository.liveTvCategoryFilters).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.liveTvQuickFilterVisibility).thenReturn(flowOf(null))
+        whenever(preferencesRepository.showRecentChannelsCategory).thenReturn(flowOf(true))
+        whenever(preferencesRepository.showAllChannelsCategory).thenReturn(flowOf(true))
         whenever(preferencesRepository.showLiveSourceSwitcher).thenReturn(flowOf(false))
         whenever(preferencesRepository.liveChannelNumberingMode).thenReturn(flowOf(ChannelNumberingMode.PROVIDER))
         whenever(preferencesRepository.isIncognitoMode).thenReturn(flowOf(false))
@@ -84,7 +87,8 @@ class HomeViewModelTest {
         whenever(preferencesRepository.getCategorySortMode(any(), any())).thenReturn(flowOf(CategorySortMode.DEFAULT))
         whenever(preferencesRepository.getPinnedCategoryIds(any(), any())).thenReturn(flowOf(emptySet()))
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(any(), any())).thenReturn(flowOf(emptyList()))
-        whenever(getCustomCategories()).thenReturn(flowOf(emptyList()))
+        whenever(getCustomCategories.invoke(any<Long>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(getCustomCategories.invoke(any<List<Long>>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
         whenever(favoriteRepository.getFavoritesByGroup(any())).thenReturn(flowOf(emptyList()))
         whenever(parentalControlManager.unlockedCategoriesForProvider(any())).thenReturn(flowOf(emptySet()))
         whenever(syncManager.syncStateForProvider(any())).thenReturn(flowOf(SyncState.Idle))
@@ -166,7 +170,7 @@ class HomeViewModelTest {
         val category = Category(id = 1L, name = "Sports", parentId = null)
         
         // Mock the repositories needed for loading channels
-        whenever(channelRepository.getChannelsByCategory(any(), any())).thenReturn(flowOf(emptyList()))
+        whenever(channelRepository.getChannelsByCategoryPage(any(), any(), any())).thenReturn(flowOf(emptyList()))
         val provider = Provider(id = 1L, name = "Provider", type = com.streamvault.domain.model.ProviderType.M3U, serverUrl = "http://test")
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         viewModel = createViewModel()
@@ -190,7 +194,7 @@ class HomeViewModelTest {
         )
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(emptyList()))
-        whenever(getCustomCategories()).thenReturn(
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(
             flowOf(
                 listOf(
                     Category(
@@ -226,7 +230,7 @@ class HomeViewModelTest {
                 )
             )
         )
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
 
@@ -246,7 +250,7 @@ class HomeViewModelTest {
         )
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(emptyList()))
-        whenever(getCustomCategories()).thenReturn(
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(
             flowOf(
                 listOf(
                     Category(
@@ -258,7 +262,7 @@ class HomeViewModelTest {
             )
         )
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
 
@@ -284,7 +288,7 @@ class HomeViewModelTest {
         val sportsCategory = Category(id = 5L, name = "Sports")
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(listOf(sportsCategory)))
-        whenever(getCustomCategories()).thenReturn(
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(
             flowOf(
                 listOf(
                     Category(
@@ -297,7 +301,7 @@ class HomeViewModelTest {
         )
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.getLastLiveCategoryId(provider.id)).thenReturn(flowOf(sportsCategory.id))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
 
@@ -318,10 +322,10 @@ class HomeViewModelTest {
         val category = Category(id = 7L, name = "Kids")
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(listOf(category)))
-        whenever(channelRepository.getChannelsByCategory(provider.id, category.id)).thenReturn(flowOf(emptyList()))
-        whenever(getCustomCategories()).thenReturn(flowOf(emptyList()))
+        whenever(channelRepository.getChannelsByCategoryPage(eq(provider.id), eq(category.id), any())).thenReturn(flowOf(emptyList()))
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
 
@@ -348,9 +352,9 @@ class HomeViewModelTest {
         )
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(emptyList()))
-        whenever(getCustomCategories()).thenReturn(flowOf(emptyList()))
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
 
@@ -372,15 +376,15 @@ class HomeViewModelTest {
         val category = Category(id = 11L, name = "News")
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(listOf(category)))
-        whenever(channelRepository.getChannelsByCategory(provider.id, category.id)).thenReturn(
+        whenever(channelRepository.getChannelsByCategoryPage(eq(provider.id), eq(category.id), any())).thenReturn(
             flowOf(listOf(Channel(id = 1L, name = "BBC News", providerId = provider.id, streamUrl = "https://stream")))
         )
-        whenever(channelRepository.searchChannelsByCategory(provider.id, category.id, "bbc")).thenReturn(
+        whenever(channelRepository.searchChannelsByCategoryPaged(eq(provider.id), eq(category.id), eq("bbc"), any())).thenReturn(
             flowOf(listOf(Channel(id = 1L, name = "BBC News", providerId = provider.id, streamUrl = "https://stream")))
         )
-        whenever(getCustomCategories()).thenReturn(flowOf(emptyList()))
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
         whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
 
         viewModel = createViewModel()
         advanceUntilIdle()
@@ -390,6 +394,39 @@ class HomeViewModelTest {
         viewModel.updateChannelSearchQuery("bbc")
         advanceUntilIdle()
 
-        verify(channelRepository).searchChannelsByCategory(provider.id, category.id, "bbc")
+        verify(channelRepository).searchChannelsByCategoryPaged(eq(provider.id), eq(category.id), eq("bbc"), any())
+    }
+
+    @Test
+    fun `hidden numbering mode keeps displayed channel numbers non-negative`() = runTest {
+        val provider = Provider(
+            id = 31L,
+            name = "Provider",
+            type = ProviderType.M3U,
+            serverUrl = "https://test"
+        )
+        val category = Category(id = 12L, name = "News")
+        val channel = Channel(
+            id = 1L,
+            name = "BBC News",
+            providerId = provider.id,
+            streamUrl = "https://stream",
+            number = 23
+        )
+        whenever(preferencesRepository.liveChannelNumberingMode).thenReturn(flowOf(ChannelNumberingMode.HIDDEN))
+        whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(provider))
+        whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(listOf(category)))
+        whenever(channelRepository.getChannelsByCategoryPage(eq(provider.id), eq(category.id), any())).thenReturn(flowOf(listOf(channel)))
+        whenever(getCustomCategories.invoke(eq(provider.id), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(playbackHistoryRepository.getRecentlyWatchedByProvider(eq(provider.id), any())).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+
+        viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.selectCategory(category)
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.filteredChannels.map(Channel::number)).containsExactly(0)
     }
 }

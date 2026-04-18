@@ -7,6 +7,7 @@ import com.streamvault.domain.repository.FavoriteRepository
 import kotlinx.coroutines.flow.first
 
 suspend fun <Item> loadVodReorderItems(
+    providerId: Long,
     category: Category,
     contentType: ContentType,
     favoriteRepository: FavoriteRepository,
@@ -17,7 +18,7 @@ suspend fun <Item> loadVodReorderItems(
 
     val groupId = category.reorderGroupId()
     val favorites = if (groupId == null) {
-        favoriteRepository.getFavorites(contentType).first()
+        favoriteRepository.getFavorites(providerId, contentType).first()
     } else {
         favoriteRepository.getFavoritesByGroup(groupId).first()
     }
@@ -51,6 +52,7 @@ fun <Item> moveVodItemDown(items: List<Item>, item: Item): List<Item> {
 }
 
 suspend fun <Item> saveVodReorder(
+    providerId: Long,
     category: Category,
     currentItems: List<Item>,
     contentType: ContentType,
@@ -59,7 +61,7 @@ suspend fun <Item> saveVodReorder(
 ) {
     val groupId = category.reorderGroupId()
     val favorites = if (groupId == null) {
-        favoriteRepository.getFavorites(contentType).first()
+        favoriteRepository.getFavorites(providerId, contentType).first()
     } else {
         favoriteRepository.getFavoritesByGroup(groupId).first()
     }
@@ -67,8 +69,6 @@ suspend fun <Item> saveVodReorder(
     val favoriteMap = favorites.associateBy(Favorite::contentId)
     val reorderedFavorites = currentItems.mapNotNull { item ->
         favoriteMap[itemId(item)]
-    }.mapIndexed { index, favorite ->
-        favorite.copy(position = index)
     }
 
     favoriteRepository.reorderFavorites(reorderedFavorites)

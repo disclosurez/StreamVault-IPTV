@@ -303,7 +303,9 @@ internal fun CompactGuideProgramDialog(
     onDismiss: () -> Unit,
     onWatchLive: () -> Unit,
     onWatchArchive: (() -> Unit)?,
-    onManageEpgMatch: (() -> Unit)?
+    onManageEpgMatch: (() -> Unit)?,
+    reminderButtonLabel: String?,
+    onToggleReminder: (() -> Unit)?
 ) {
     var showDetails by rememberSaveable(program.startTime, program.endTime, program.title) { mutableStateOf(false) }
     val format = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -327,7 +329,14 @@ internal fun CompactGuideProgramDialog(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${channel.number}. ${channel.name}  |  ${format.format(Date(program.startTime))} - ${format.format(Date(program.endTime))}",
+                    text = buildString {
+                        if (channel.number > 0) { append(channel.number); append(". ") }
+                        append(channel.name)
+                        append("  |  ")
+                        append(format.format(Date(program.startTime)))
+                        append(" - ")
+                        append(format.format(Date(program.endTime)))
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = OnSurfaceDim,
                     maxLines = 2,
@@ -388,6 +397,18 @@ internal fun CompactGuideProgramDialog(
                             )
                         ) {
                             Text(stringResource(R.string.epg_override_manage))
+                        }
+                    }
+                    if (reminderButtonLabel != null && onToggleReminder != null) {
+                        TvButton(
+                            onClick = onToggleReminder,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.colors(
+                                containerColor = SurfaceHighlight,
+                                contentColor = OnSurface
+                            )
+                        ) {
+                            Text(reminderButtonLabel)
                         }
                     }
                     TvButton(
@@ -460,7 +481,7 @@ internal fun EpgOverrideDialog(
                     color = OnSurface
                 )
                 Text(
-                    text = "${channel.number}. ${channel.name}",
+                    text = if (channel.number > 0) "${channel.number}. ${channel.name}" else channel.name,
                     style = MaterialTheme.typography.bodyMedium,
                     color = OnSurfaceDim
                 )

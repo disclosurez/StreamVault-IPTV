@@ -27,7 +27,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.FilterInputStream
+import java.io.InputStream
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
+import com.streamvault.data.remote.NetworkTimeoutConfig
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -43,6 +47,12 @@ class EpgRepositoryImpl @Inject constructor(
 ) : EpgRepository {
 
     private val providerRefreshMutexes = ConcurrentHashMap<Long, Mutex>()
+
+    private val epgHttpClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder()
+            .readTimeout(NetworkTimeoutConfig.EPG_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
 
     companion object {
         private const val MAX_EPG_SIZE_BYTES = 200L * 1_048_576 // 200 MB
@@ -72,11 +82,30 @@ class EpgRepositoryImpl @Inject constructor(
             return programDao.getForChannels(providerId, channelIds, startTime, endTime)
                 .map { entities -> entities.map { it.toDomain() }.groupBy { it.channelId } }
         }
-        return combine(chunks.map { chunk ->
-            programDao.getForChannels(providerId, chunk, startTime, endTime)
-        }) { arrays ->
-            arrays.flatMap { it.toList() }.map { it.toDomain() }.groupBy { it.channelId }
+        return flow {
+            emit(getProgramsForChannelsSnapshot(providerId, channelIds, startTime, endTime))
         }
+    }
+
+    override suspend fun getProgramsForChannelsSnapshot(
+        providerId: Long,
+        channelIds: List<String>,
+        startTime: Long,
+        endTime: Long
+    ): Map<String, List<Program>> {
+        if (channelIds.isEmpty()) return emptyMap()
+
+        val entities = if (channelIds.size <= 500) {
+            programDao.getForChannelsSync(providerId, channelIds, startTime, endTime)
+        } else {
+            channelIds.chunked(500).flatMap { chunk ->
+                programDao.getForChannelsSync(providerId, chunk, startTime, endTime)
+            }
+        }
+
+        return entities
+            .map { it.toDomain() }
+            .groupBy { it.channelId }
     }
 
     override fun getProgramsByCategory(
@@ -112,8 +141,10 @@ class EpgRepositoryImpl @Inject constructor(
     }
 
     override fun getNowPlaying(providerId: Long, channelId: String): Flow<Program?> =
-        programDao.getNowPlaying(providerId, channelId, System.currentTimeMillis())
-            .map { it?.toDomain() }
+        nowTicker().flatMapLatest { now ->
+            programDao.getNowPlaying(providerId, channelId, now)
+                .map { it?.toDomain() }
+        }
 
     override fun getNowPlayingForChannels(providerId: Long, channelIds: List<String>): Flow<Map<String, Program?>> {
         if (channelIds.isEmpty()) return flowOf(emptyMap())
@@ -174,10 +205,11 @@ class EpgRepositoryImpl @Inject constructor(
                 val stagingProviderId = -providerId
                 val batch = ArrayList<ProgramEntity>(500)
                 try {
-                    programDao.deleteByProvider(stagingProviderId)
-
-                    val request = Request.Builder().url(epgUrl).build()
-                    val response = okHttpClient.newCall(request).execute()
+                    val request = Request.Builder()
+                        .url(epgUrl)
+                        .header("Accept-Encoding", "identity")
+                        .build()
+                    val response = epgHttpClient.newCall(request).execute()
 
                     if (!response.isSuccessful) {
                         return@withLock Result.error("Failed to download EPG: HTTP ${response.code}")
@@ -190,34 +222,52 @@ class EpgRepositoryImpl @Inject constructor(
                     }
 
                     val body = response.body ?: return@withLock Result.error("Empty EPG response")
+                    val contentEncoding = response.header("Content-Encoding")
 
-                    body.byteStream().use { inputStream ->
-                        // Cap total bytes read even when Content-Length is absent (chunked transfer)
-                        val limitedStream = object : FilterInputStream(inputStream) {
-                            private var bytesRead = 0L
-                            override fun read(): Int {
-                                if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
-                                return super.read().also { if (it >= 0) bytesRead++ }
+                    transactionRunner.inTransaction {
+                        programDao.deleteByProvider(stagingProviderId)
+
+                        body.byteStream().use { rawStream ->
+                            val alreadyDecompressed = contentEncoding?.contains("gzip", ignoreCase = true) == true
+                            // Decompress Content-Encoding: gzip manually since we requested
+                            // Accept-Encoding: identity to disable OkHttp's transparent decompression.
+                            val httpStream: InputStream = if (alreadyDecompressed) {
+                                GZIPInputStream(rawStream)
+                            } else {
+                                rawStream
                             }
-                            override fun read(b: ByteArray, off: Int, len: Int): Int {
-                                if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
-                                return super.read(b, off, len).also { if (it > 0) bytesRead += it }
+                            // Cap total bytes read even when Content-Length is absent (chunked transfer)
+                            val limitedStream = object : FilterInputStream(httpStream) {
+                                private var bytesRead = 0L
+                                override fun read(): Int {
+                                    if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
+                                    return super.read().also { if (it >= 0) bytesRead++ }
+                                }
+                                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                                    if (bytesRead >= MAX_EPG_SIZE_BYTES) throw IOException("EPG response too large (>200 MB)")
+                                    return super.read(b, off, len).also { if (it > 0) bytesRead += it }
+                                }
                             }
-                        }
-                        xmltvParser.maybeDecompressGzip(epgUrl, limitedStream).use { xmlInput ->
-                            xmltvParser.parseStreaming(xmlInput) { program ->
-                                batch.add(program.copy(providerId = stagingProviderId).toEntity())
-                                if (batch.size >= 500) {
-                                    programDao.insertAll(batch.toList())
-                                    batch.clear()
+                            val xmlInput: InputStream = if (alreadyDecompressed) {
+                                limitedStream
+                            } else {
+                                xmltvParser.maybeDecompressGzip(epgUrl, limitedStream)
+                            }
+                            xmlInput.use {
+                                xmltvParser.parseStreaming(xmlInput) { program ->
+                                    batch.add(program.copy(providerId = stagingProviderId).toEntity())
+                                    if (batch.size >= 500) {
+                                        programDao.insertAll(batch.toList())
+                                        batch.clear()
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (batch.isNotEmpty()) {
-                        programDao.insertAll(batch.toList())
-                        batch.clear()
+                        if (batch.isNotEmpty()) {
+                            programDao.insertAll(batch.toList())
+                            batch.clear()
+                        }
                     }
 
                     transactionRunner.inTransaction {
@@ -228,13 +278,21 @@ class EpgRepositoryImpl @Inject constructor(
                     Result.success(Unit)
                 } catch (e: Exception) {
                     programDao.deleteByProvider(stagingProviderId)
-                    Result.error("Failed to refresh EPG: ${e.message}", e)
+                    if (e is IOException && e.message?.contains("too large", ignoreCase = true) == true) {
+                        Result.error("EPG response exceeded 200 MB limit", e)
+                    } else {
+                        Result.error("Failed to refresh EPG: ${e.message}", e)
+                    }
                 }
             }
         }
 
     override suspend fun clearOldPrograms(beforeTime: Long) {
         programDao.deleteOld(beforeTime)
+    }
+
+    override fun onProviderDeleted(providerId: Long) {
+        providerRefreshMutexes.remove(providerId)
     }
 
     override suspend fun getResolvedProgramsForChannels(

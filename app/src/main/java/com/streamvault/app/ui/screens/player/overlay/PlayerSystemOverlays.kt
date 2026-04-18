@@ -150,14 +150,17 @@ fun PlayerErrorOverlay(
     onAction: (PlayerNoticeAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val errorMessage = when (playerError) {
+    val fallbackMessage = when (playerError) {
         is PlayerError.NetworkError -> stringResource(R.string.player_error_network)
         is PlayerError.SourceError -> stringResource(R.string.player_error_source)
         is PlayerError.DecoderError -> stringResource(R.string.player_error_decoder)
         is PlayerError.DrmError -> stringResource(R.string.player_error_drm)
-        is PlayerError.UnknownError -> playerError.message ?: stringResource(R.string.player_error_unknown)
+        is PlayerError.UnknownError -> stringResource(R.string.player_error_unknown)
         null -> stringResource(R.string.player_error_unknown)
     }
+    // Prefer the detailed engine message (e.g. "No decoder available for codec H.265/HEVC")
+    // and fall back to the generic localised string when the message is absent or unhelpful.
+    val errorMessage = playerError?.message?.takeIf { it.isNotBlank() } ?: fallbackMessage
     val recoveryActions = buildList {
         add(PlayerNoticeAction.RETRY)
         if (contentType == "LIVE" && hasAlternateStream) add(PlayerNoticeAction.ALTERNATE_STREAM)

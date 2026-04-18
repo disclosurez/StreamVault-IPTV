@@ -111,6 +111,8 @@ fun PlayerScreen(
     categoryId: Long? = null,
     providerId: Long? = null,
     isVirtual: Boolean = false,
+    combinedProfileId: Long? = null,
+    combinedSourceFilterProviderId: Long? = null,
     contentType: String = "LIVE",
     archiveStartMs: Long? = null,
     archiveEndMs: Long? = null,
@@ -164,6 +166,7 @@ fun PlayerScreen(
     val canOpenEpisodePicker = contentType == "SERIES_EPISODE" &&
         currentSeriesSeasons?.any { it.episodes.isNotEmpty() } == true
     
+    val isCatchUpPlayback by viewModel.isCatchUpPlayback.collectAsStateWithLifecycle()
     val showChannelListOverlay by viewModel.showChannelListOverlay.collectAsStateWithLifecycle()
     val showCategoryListOverlay by viewModel.showCategoryListOverlay.collectAsStateWithLifecycle()
     val availableCategories by viewModel.availableCategories.collectAsStateWithLifecycle()
@@ -203,11 +206,9 @@ fun PlayerScreen(
     val focusRequester = remember { FocusRequester() }
     val channelListFocusRequester = remember { FocusRequester() }
     val categoryListFocusRequester = remember { FocusRequester() }
-    val epgFocusRequester = remember { FocusRequester() }
     val playButtonFocusRequester = remember { FocusRequester() }
     val quickActionsFocusRequester = remember { FocusRequester() }
-    val channelInfoFocusRequester = remember { FocusRequester() } // NEW
-    var lastFocusedEpgProgramToken by rememberSaveable { mutableStateOf<Long?>(null) }
+    val channelInfoFocusRequester = remember { FocusRequester() }
     val layoutDirection = LocalLayoutDirection.current
     val isRtl = layoutDirection == LayoutDirection.Rtl
     val currentPictureInPictureMode by rememberUpdatedState(isInPictureInPictureMode)
@@ -222,12 +223,15 @@ fun PlayerScreen(
         focusRequester.requestFocus()
     }
 
-    LaunchedEffect(mainActivity, streamUrl, playbackState, isPlaying, videoFormat.width, videoFormat.height) {
+    LaunchedEffect(mainActivity, streamUrl, playbackState, isPlaying, videoFormat.width, videoFormat.height, videoFormat.pixelWidthHeightRatio) {
         mainActivity?.updatePlayerPictureInPictureState(
-            enabled = streamUrl.isNotBlank() && playbackState != PlaybackState.ERROR,
+            enabled = streamUrl.isNotBlank()
+                && playbackState != PlaybackState.ERROR
+                && (isPlaying || playbackState == PlaybackState.READY || playbackState == PlaybackState.BUFFERING),
             isPlaying = isPlaying,
             videoWidth = videoFormat.width,
-            videoHeight = videoFormat.height
+            videoHeight = videoFormat.height,
+            pixelWidthHeightRatio = videoFormat.pixelWidthHeightRatio
         )
     }
 
@@ -286,7 +290,6 @@ fun PlayerScreen(
             when {
                 showCategoryListOverlay -> categoryListFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Category list overlay")
                 showChannelListOverlay -> channelListFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Channel list overlay")
-                showEpgOverlay -> epgFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "EPG overlay")
                 showChannelInfoOverlay -> channelInfoFocusRequester.requestFocusSafely(tag = "PlayerScreen", target = "Channel info overlay")
             }
         }
@@ -350,7 +353,7 @@ fun PlayerScreen(
         )
     }
 
-    LaunchedEffect(streamUrl, epgChannelId, title, artworkUrl, internalChannelId, categoryId, providerId, isVirtual, contentType, archiveStartMs, archiveEndMs, archiveTitle, seriesId, seasonNumber, episodeNumber) {
+    LaunchedEffect(streamUrl, epgChannelId, internalChannelId, categoryId, providerId, isVirtual, combinedProfileId, combinedSourceFilterProviderId, contentType, archiveStartMs, archiveEndMs, archiveTitle, seriesId, seasonNumber, episodeNumber) {
         viewModel.prepare(
             streamUrl = streamUrl,
             epgChannelId = epgChannelId,
@@ -358,6 +361,8 @@ fun PlayerScreen(
             categoryId = categoryId ?: -1,
             providerId = providerId ?: -1,
             isVirtual = isVirtual,
+            combinedProfileId = combinedProfileId,
+            combinedSourceFilterProviderId = combinedSourceFilterProviderId,
             contentType = contentType,
             title = title,
             artworkUrl = artworkUrl,
@@ -457,11 +462,23 @@ fun PlayerScreen(
                     when {
                         anyOverlayVisible -> return@detectTapGestures
                         showControls -> viewModel.toggleControls()
-                        contentType == "LIVE" -> viewModel.openChannelInfoOverlay()
+                        contentType == "LIVE" && !isCatchUpPlayback -> viewModel.openChannelInfoOverlay()
                         else -> viewModel.toggleControls()
                     }
                 }
             }
+            // --- Key handler ownership ---
+            // onPreviewKeyEvent (top-down): DPAD_UP, DPAD_DOWN, CHANNEL_UP, CHANNEL_DOWN
+            //   for live-TV channel zapping when no overlay/dialog is open. Fires BEFORE
+            //   child composables see the event, so overlays that consume DPAD_UP/DOWN
+            //   internally get priority (early returns above).
+            // onKeyEvent (bottom-up): all other keys — DPAD_CENTER, BACK, MEDIA_*,
+            //   numeric digits, MUTE, GUIDE, INFO, MENU, and the CHANNEL_UP/DOWN
+            //   fallback for non-LIVE content types or when channelInfoSubPanelOpen.
+            // CHANNEL_UP/DOWN appear in BOTH handlers. onPreviewKeyEvent intercepts them
+            // first for live content with no sub-panel; onKeyEvent handles the remaining
+            // cases (non-LIVE content, sub-panel open). This is intentional — the preview
+            // handler returns false for those remaining cases, letting onKeyEvent run.
             .onPreviewKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) {
                     return@onPreviewKeyEvent false
@@ -541,10 +558,10 @@ fun PlayerScreen(
                             if (showChannelListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
                                 viewModel.onLiveOverlayInteraction()
                             }
-                            if (contentType == "LIVE" && viewModel.hasPendingNumericChannelInput()) {
+                            if (contentType == "LIVE" && !isCatchUpPlayback && viewModel.hasPendingNumericChannelInput()) {
                                 viewModel.commitNumericChannelInput()
                                    true
-                            } else if (contentType == "LIVE") {
+                            } else if (contentType == "LIVE" && !isCatchUpPlayback) {
                                     if (showChannelInfoOverlay) viewModel.closeChannelInfoOverlay()
                                     else viewModel.openChannelInfoOverlay()
                                    true
@@ -559,12 +576,12 @@ fun PlayerScreen(
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
                                 viewModel.onLiveOverlayInteraction()
                             }
-                            if (showControls && contentType != "LIVE") return@onKeyEvent false
-                            if (showChannelListOverlay && contentType == "LIVE") {
+                            if (showControls && (contentType != "LIVE" || isCatchUpPlayback)) return@onKeyEvent false
+                            if (showChannelListOverlay && contentType == "LIVE" && !isCatchUpPlayback) {
                                 // Second left press while channel list is open → open category list
                                 viewModel.openCategoryListOverlay()
                                 true
-                            } else if (contentType == "LIVE" && !showChannelListOverlay && !showCategoryListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
+                            } else if (contentType == "LIVE" && !isCatchUpPlayback && !showChannelListOverlay && !showCategoryListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
                                 if (isRtl) viewModel.openEpgOverlay() else viewModel.openChannelListOverlay()
                                 true
                             } else if (!showChannelListOverlay && !showCategoryListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
@@ -578,8 +595,8 @@ fun PlayerScreen(
                             if (showChannelListOverlay || showEpgOverlay || showChannelInfoOverlay || showDiagnostics) {
                                 viewModel.onLiveOverlayInteraction()
                             }
-                            if (showControls && contentType != "LIVE") return@onKeyEvent false
-                            if (contentType == "LIVE" && !showChannelListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
+                            if (showControls && (contentType != "LIVE" || isCatchUpPlayback)) return@onKeyEvent false
+                            if (contentType == "LIVE" && !isCatchUpPlayback && !showChannelListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
                                 if (isRtl) viewModel.openChannelListOverlay() else viewModel.openEpgOverlay()
                                 true
                             } else if (!showChannelListOverlay && !showEpgOverlay && !showChannelInfoOverlay) {
@@ -595,9 +612,9 @@ fun PlayerScreen(
                             }
                             if (showChannelInfoOverlay && channelInfoSubPanelOpen) return@onKeyEvent false
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay || showChannelInfoOverlay) return@onKeyEvent false
-                            if (showControls && contentType != "LIVE") return@onKeyEvent false
+                            if (showControls && (contentType != "LIVE" || isCatchUpPlayback)) return@onKeyEvent false
 
-                            if (contentType == "LIVE") {
+                            if (contentType == "LIVE" && !isCatchUpPlayback) {
                                 viewModel.playNext()
                             } else if (canOpenEpisodePicker) {
                                 showEpisodePicker = true
@@ -612,9 +629,9 @@ fun PlayerScreen(
                             }
                             if (showChannelInfoOverlay && channelInfoSubPanelOpen) return@onKeyEvent false
                             if (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay) return@onKeyEvent false
-                            if (showControls && contentType != "LIVE") return@onKeyEvent false
+                            if (showControls && (contentType != "LIVE" || isCatchUpPlayback)) return@onKeyEvent false
 
-                            if (contentType == "LIVE") {
+                            if (contentType == "LIVE" && !isCatchUpPlayback) {
                                 viewModel.playPrevious()
                             } else {
                                 viewModel.toggleControls()
@@ -835,6 +852,7 @@ fun PlayerScreen(
             visible = showControls,
             title = playbackTitle.ifBlank { title },
             contentType = contentType,
+            isCatchUpPlayback = isCatchUpPlayback,
             isPlaying = isPlaying,
             currentProgram = currentProgram,
             currentChannelName = currentChannel?.name,
@@ -1021,16 +1039,9 @@ fun PlayerScreen(
                     currentProgram = currentProgram,
                     nextProgram = nextProgram,
                     upcomingPrograms = upcomingPrograms,
-                    overlayFocusRequester = epgFocusRequester,
-                    preferredFocusedProgramToken = lastFocusedEpgProgramToken,
-                    onFocusedProgramChange = { token -> lastFocusedEpgProgramToken = token },
                     onDismiss = { viewModel.closeOverlays() },
                     onOpenArchiveBrowser = {
                         showProgramHistory = true
-                        viewModel.closeOverlays()
-                    },
-                    onPlayCatchUp = { program -> 
-                        viewModel.playCatchUp(program)
                         viewModel.closeOverlays()
                     },
                     onOverlayInteracted = viewModel::onLiveOverlayInteraction
@@ -1127,6 +1138,7 @@ private fun PlayerControlsOverlayHost(
     visible: Boolean,
     title: String,
     contentType: String,
+    isCatchUpPlayback: Boolean = false,
     isPlaying: Boolean,
     currentProgram: Program?,
     currentChannelName: String?,
@@ -1181,6 +1193,7 @@ private fun PlayerControlsOverlayHost(
         visible = visible,
         title = title,
         contentType = contentType,
+        isCatchUpPlayback = isCatchUpPlayback,
         isPlaying = isPlaying,
         currentProgram = currentProgram,
         currentChannelName = currentChannelName,

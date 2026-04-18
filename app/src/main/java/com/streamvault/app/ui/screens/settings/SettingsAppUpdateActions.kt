@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.streamvault.app.R
+import com.streamvault.app.update.AppUpdateDownloadStatus
 import com.streamvault.app.update.AppUpdateInstaller
 import com.streamvault.app.update.GitHubReleaseChecker
 import com.streamvault.data.preferences.PreferencesRepository
@@ -29,7 +30,8 @@ internal class SettingsAppUpdateActions(
     fun checkForAppUpdates(
         scope: CoroutineScope,
         manual: Boolean,
-        isRemoteVersionNewer: (Int?, String) -> Boolean
+        isRemoteVersionNewer: (Int?, String) -> Boolean,
+        autoDownload: Boolean = false
     ) {
         if (updateCheckInFlight) return
         updateCheckInFlight = true
@@ -95,6 +97,14 @@ internal class SettingsAppUpdateActions(
                         )
                     }
                     appUpdateInstaller.refreshState()
+                    if (autoDownload && updateAvailable) {
+                        val currentDownloadStatus = appUpdateInstaller.downloadState.value.status
+                        if (currentDownloadStatus != AppUpdateDownloadStatus.Downloading &&
+                            currentDownloadStatus != AppUpdateDownloadStatus.Downloaded
+                        ) {
+                            downloadLatestUpdate(scope)
+                        }
+                    }
                 }
                 Result.Loading -> {
                     uiState.update { it.copy(isCheckingForUpdates = false) }

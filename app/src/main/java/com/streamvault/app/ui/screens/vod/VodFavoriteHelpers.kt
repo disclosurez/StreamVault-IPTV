@@ -23,14 +23,15 @@ fun matchesVodGroupMembership(storedGroupId: Long?, categoryId: Long): Boolean {
 
 suspend fun <T> loadVodDialogSelection(
     item: T,
+    providerId: Long,
     itemId: Long,
     contentType: ContentType,
     favoriteRepository: FavoriteRepository,
     copyWithFavorite: (T, Boolean) -> T
 ): VodDialogSelection<T> {
-    val memberships = favoriteRepository.getGroupMemberships(itemId, contentType)
+    val memberships = favoriteRepository.getGroupMemberships(providerId, itemId, contentType)
         .map(::toVirtualVodGroupId)
-    val isFavorite = favoriteRepository.isFavorite(itemId, contentType)
+    val isFavorite = favoriteRepository.isFavorite(providerId, itemId, contentType)
     return VodDialogSelection(
         selectedItem = copyWithFavorite(item, isFavorite),
         groupMemberships = memberships
@@ -38,19 +39,21 @@ suspend fun <T> loadVodDialogSelection(
 }
 
 suspend fun setVodFavorite(
+    providerId: Long,
     itemId: Long,
     contentType: ContentType,
     isFavorite: Boolean,
     favoriteRepository: FavoriteRepository
 ) {
     if (isFavorite) {
-        favoriteRepository.addFavorite(itemId, contentType)
+        favoriteRepository.addFavorite(providerId, itemId, contentType)
     } else {
-        favoriteRepository.removeFavorite(itemId, contentType)
+        favoriteRepository.removeFavorite(providerId, itemId, contentType)
     }
 }
 
 suspend fun updateVodGroupMembership(
+    providerId: Long,
     itemId: Long,
     groupId: Long,
     contentType: ContentType,
@@ -59,17 +62,18 @@ suspend fun updateVodGroupMembership(
 ): List<Long> {
     val encodedGroupId = toStoredVodGroupId(groupId)
     if (shouldBeMember) {
-        favoriteRepository.addFavorite(itemId, contentType, groupId = encodedGroupId)
+        favoriteRepository.addFavorite(providerId, itemId, contentType, groupId = encodedGroupId)
     } else {
-        favoriteRepository.removeFavorite(itemId, contentType, groupId = encodedGroupId)
+        favoriteRepository.removeFavorite(providerId, itemId, contentType, groupId = encodedGroupId)
     }
-    return favoriteRepository.getGroupMemberships(itemId, contentType)
+    return favoriteRepository.getGroupMemberships(providerId, itemId, contentType)
         .map(::toVirtualVodGroupId)
 }
 
 suspend fun createVodGroup(
+    providerId: Long,
     name: String,
     contentType: ContentType,
     favoriteRepository: FavoriteRepository
 ): Result<VirtualGroup> =
-    favoriteRepository.createGroup(name, contentType = contentType)
+    favoriteRepository.createGroup(providerId, name, contentType = contentType)

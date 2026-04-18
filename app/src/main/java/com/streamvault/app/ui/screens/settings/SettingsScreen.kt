@@ -3,9 +3,6 @@ package com.streamvault.app.ui.screens.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -23,7 +19,6 @@ import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -246,6 +241,8 @@ fun SettingsScreen(
     var showRecordingPatternDialog by rememberSaveable { mutableStateOf(false) }
     var showRecordingRetentionDialog by rememberSaveable { mutableStateOf(false) }
     var showRecordingConcurrencyDialog by rememberSaveable { mutableStateOf(false) }
+    var showRecordingBrowserDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedRecordingId by rememberSaveable { mutableStateOf<String?>(null) }
     var categorySortDialogType by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedCategory by rememberSaveable { mutableStateOf(0) }
     var pinError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -286,6 +283,15 @@ fun SettingsScreen(
         uiState.userMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
             viewModel.userMessageShown()
+        }
+    }
+
+    LaunchedEffect(uiState.recordingItems) {
+        selectedRecordingId = when {
+            uiState.recordingItems.isEmpty() -> null
+            selectedRecordingId == null -> uiState.recordingItems.first().id
+            uiState.recordingItems.any { item -> item.id == selectedRecordingId } -> selectedRecordingId
+            else -> uiState.recordingItems.first().id
         }
     }
 
@@ -400,7 +406,8 @@ fun SettingsScreen(
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
+                        .imePadding(),
                     contentPadding = PaddingValues(start = 20.dp, top = 76.dp, end = 20.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     userScrollEnabled = !uiState.isSyncing
@@ -511,6 +518,29 @@ fun SettingsScreen(
                                 color = OnBackground.copy(alpha = 0.6f),
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.07f), modifier = Modifier.padding(vertical = 4.dp))
+                            TvClickableSurface(
+                                onClick = { viewModel.setZapAutoRevert(!uiState.zapAutoRevert) },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                colors = ClickableSurfaceDefaults.colors(
+                                    containerColor = Color.Transparent,
+                                    focusedContainerColor = Primary.copy(alpha = 0.15f)
+                                ),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = stringResource(R.string.settings_zap_auto_revert), style = MaterialTheme.typography.bodyMedium, color = OnSurface)
+                                        Text(text = stringResource(R.string.settings_zap_auto_revert_subtitle), style = MaterialTheme.typography.bodySmall, color = OnBackground.copy(alpha = 0.6f))
+                                    }
+                                    Switch(checked = uiState.zapAutoRevert, onCheckedChange = { viewModel.setZapAutoRevert(it) })
+                                }
+                            }
                             ClickableSettingsRow(
                                 label = stringResource(R.string.settings_decoder_mode),
                                 value = decoderModeLabel,
@@ -616,6 +646,50 @@ fun SettingsScreen(
                                         Text(text = stringResource(R.string.settings_show_live_source_switcher_subtitle), style = MaterialTheme.typography.bodySmall, color = OnBackground.copy(alpha = 0.6f))
                                     }
                                     Switch(checked = uiState.showLiveSourceSwitcher, onCheckedChange = { viewModel.setShowLiveSourceSwitcher(it) })
+                                }
+                            }
+                            TvClickableSurface(
+                                onClick = { viewModel.setShowAllChannelsCategory(!uiState.showAllChannelsCategory) },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                colors = ClickableSurfaceDefaults.colors(
+                                    containerColor = Color.Transparent,
+                                    focusedContainerColor = Primary.copy(alpha = 0.15f)
+                                ),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = stringResource(R.string.settings_show_all_channels_category), style = MaterialTheme.typography.bodyMedium, color = OnSurface)
+                                        Text(text = stringResource(R.string.settings_show_all_channels_category_subtitle), style = MaterialTheme.typography.bodySmall, color = OnBackground.copy(alpha = 0.6f))
+                                    }
+                                    Switch(checked = uiState.showAllChannelsCategory, onCheckedChange = { viewModel.setShowAllChannelsCategory(it) })
+                                }
+                            }
+                            TvClickableSurface(
+                                onClick = { viewModel.setShowRecentChannelsCategory(!uiState.showRecentChannelsCategory) },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                colors = ClickableSurfaceDefaults.colors(
+                                    containerColor = Color.Transparent,
+                                    focusedContainerColor = Primary.copy(alpha = 0.15f)
+                                ),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = stringResource(R.string.settings_show_recent_channels_category), style = MaterialTheme.typography.bodyMedium, color = OnSurface)
+                                        Text(text = stringResource(R.string.settings_show_recent_channels_category_subtitle), style = MaterialTheme.typography.bodySmall, color = OnBackground.copy(alpha = 0.6f))
+                                    }
+                                    Switch(checked = uiState.showRecentChannelsCategory, onCheckedChange = { viewModel.setShowRecentChannelsCategory(it) })
                                 }
                             }
                             ClickableSettingsRow(
@@ -807,7 +881,7 @@ fun SettingsScreen(
                     // ג”€ג”€ 3: Recordings ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
                     else if (selectedCategory == 4) {
                         item {
-                            RecordingOverviewCard(
+                            RecordingDashboardSection(
                                 treeLabel = uiState.recordingStorageState.displayName,
                                 outputDirectory = uiState.recordingStorageState.outputDirectory,
                                 availableBytes = uiState.recordingStorageState.availableBytes,
@@ -822,52 +896,9 @@ fun SettingsScreen(
                                 onChangePattern = { showRecordingPatternDialog = true },
                                 onChangeRetention = { showRecordingRetentionDialog = true },
                                 onChangeConcurrency = { showRecordingConcurrencyDialog = true },
-                                onRepairSchedule = { viewModel.reconcileRecordings() }
+                                onRepairSchedule = { viewModel.reconcileRecordings() },
+                                onOpenBrowser = { showRecordingBrowserDialog = true }
                             )
-                        }
-                        if (uiState.recordingItems.isEmpty()) {
-                            item {
-                                TvClickableSurface(
-                                    onClick = {},
-                                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                                    colors = ClickableSurfaceDefaults.colors(
-                                        containerColor = Color.Transparent,
-                                        focusedContainerColor = Primary.copy(alpha = 0.1f)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)
-                                ) {
-                                    TvEmptyState(
-                                        title = stringResource(R.string.settings_recording_empty_title),
-                                        subtitle = stringResource(R.string.settings_recording_empty_subtitle)
-                                    )
-                                }
-                            }
-                        } else {
-                            items(uiState.recordingItems, key = { it.id }) { item ->
-                                RecordingItemCard(
-                                    item = item,
-                                    onPlay = {
-                                        val playbackUrl = item.playbackUrl()
-                                        if (!playbackUrl.isNullOrBlank()) {
-                                            mainActivity?.openPlayer(
-                                                Routes.player(
-                                                    streamUrl = playbackUrl,
-                                                    title = item.programTitle ?: item.channelName,
-                                                    internalId = -1L,
-                                                    providerId = null,
-                                                    contentType = "MOVIE",
-                                                    returnRoute = currentRoute
-                                                )
-                                            )
-                                        }
-                                    },
-                                    onStop = { viewModel.stopRecording(item.id) },
-                                    onCancel = { viewModel.cancelRecording(item.id) },
-                                    onDelete = { viewModel.deleteRecording(item.id) },
-                                    onRetry = { viewModel.retryRecording(item.id) },
-                                    onToggleSchedule = { enabled -> viewModel.setRecordingScheduleEnabled(item.id, enabled) }
-                                )
-                            }
                         }
                     }
 
@@ -933,6 +964,15 @@ fun SettingsScreen(
                     // ג”€ג”€ 6: About ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
                     else if (selectedCategory == 7) {
                         item {
+                            val downloadStatus = uiState.appUpdate.downloadStatus
+                            LaunchedEffect(downloadStatus) {
+                                if (downloadStatus == com.streamvault.app.update.AppUpdateDownloadStatus.Downloading) {
+                                    while (true) {
+                                        delay(2000L)
+                                        viewModel.refreshDownloadState()
+                                    }
+                                }
+                            }
                             SettingsSectionHeader(
                                 title = stringResource(R.string.settings_updates_title),
                                 subtitle = stringResource(R.string.settings_updates_subtitle)
@@ -946,6 +986,16 @@ fun SettingsScreen(
                                 checked = uiState.autoCheckAppUpdates,
                                 onCheckedChange = viewModel::setAutoCheckAppUpdates
                             )
+                            if (uiState.autoCheckAppUpdates) {
+                                SwitchSettingsRow(
+                                    label = stringResource(R.string.settings_update_auto_download),
+                                    value = stringResource(
+                                        if (uiState.autoDownloadAppUpdates) R.string.settings_enabled else R.string.settings_disabled
+                                    ),
+                                    checked = uiState.autoDownloadAppUpdates,
+                                    onCheckedChange = viewModel::setAutoDownloadAppUpdates
+                                )
+                            }
                             SettingsRow(
                                 label = stringResource(R.string.settings_update_latest_release),
                                 value = formatLatestReleaseLabel(uiState.appUpdate, context)
@@ -1023,6 +1073,37 @@ fun SettingsScreen(
             .align(Alignment.BottomCenter)
             .padding(bottom = 16.dp)
     )
+
+    if (showRecordingBrowserDialog) {
+        RecordingBrowserDialog(
+            recordingItems = uiState.recordingItems,
+            selectedRecordingId = selectedRecordingId,
+            onSelectedRecordingChange = { selectedRecordingId = it },
+            onDismiss = { showRecordingBrowserDialog = false },
+            onPlay = { item ->
+                val playbackUrl = item.playbackUrl()
+                if (!playbackUrl.isNullOrBlank()) {
+                    mainActivity?.openPlayer(
+                        Routes.player(
+                            streamUrl = playbackUrl,
+                            title = item.programTitle ?: item.channelName,
+                            internalId = -1L,
+                            providerId = null,
+                            contentType = "MOVIE",
+                            returnRoute = currentRoute
+                        )
+                    )
+                }
+            },
+            onStop = { item -> viewModel.stopRecording(item.id) },
+            onCancel = { item -> viewModel.cancelRecording(item.id) },
+            onDelete = { item -> viewModel.deleteRecording(item.id) },
+            onRetry = { item -> viewModel.retryRecording(item.id) },
+            onToggleSchedule = { item, enabled ->
+                viewModel.setRecordingScheduleEnabled(item.id, enabled)
+            }
+        )
+    }
 
     SettingsScreenDialogs(
         uiState = uiState,

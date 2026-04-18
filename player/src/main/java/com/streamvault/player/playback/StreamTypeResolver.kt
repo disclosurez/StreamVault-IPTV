@@ -10,6 +10,7 @@ enum class ResolvedStreamType {
     DASH,
     PROGRESSIVE,
     MPEG_TS_LIVE,
+    RTSP,
     UNKNOWN
 }
 
@@ -30,6 +31,7 @@ object StreamTypeResolver {
             StreamType.DASH -> ResolvedStreamType.DASH
             StreamType.MPEG_TS -> ResolvedStreamType.MPEG_TS_LIVE
             StreamType.PROGRESSIVE -> ResolvedStreamType.PROGRESSIVE
+            StreamType.RTSP -> ResolvedStreamType.RTSP
             else -> resolve(url = streamInfo.url, mimeType = mimeType, isLive = isLive(streamInfo))
         }
     }
@@ -49,6 +51,7 @@ object StreamTypeResolver {
                 .lowercase(Locale.ROOT)
         val lastSegment = path.substringAfterLast('/').trim()
         return when {
+            scheme in setOf("rtsp", "rtsps") -> ResolvedStreamType.RTSP
             scheme in setOf("file", "content") && path.endsWith(".m3u8") -> ResolvedStreamType.HLS
             scheme in setOf("file", "content") -> ResolvedStreamType.PROGRESSIVE
             normalizedMimeType != null && hlsMimeHints.any(normalizedMimeType::contains) -> ResolvedStreamType.HLS

@@ -139,6 +139,8 @@
     <string name="category_options_cancel">Cancel</string>
     <string name="category_options_reorder">Reorder Items</string>
     <string name="category_options_hide">Hide Category</string>
+    <string name="category_options_hide_from_live_tv">Hide from Live TV</string>
+    <string name="category_options_clear_recent">Clear All Recent</string>
     <string name="category_options_pin">Pin Category</string>
     <string name="category_options_unpin">Unpin Category</string>
     <string name="category_pinned">Pinned %1$s.</string>
@@ -152,6 +154,7 @@
     <string name="add_group_rename">Rename</string>
     <string name="add_group_remove_favorites">Remove from Favorites</string>
     <string name="add_group_add_favorites">Add to Favorites</string>
+    <string name="channel_options_remove_from_recent">Remove from Recent</string>
     <string name="add_group_reorder_title">Reorder</string>
     <string name="add_group_move_up">Move Up</string>
     <string name="add_group_move_down">Move Down</string>
@@ -176,6 +179,10 @@
     <string name="live_source_empty_short">Empty</string>
     <string name="settings_show_live_source_switcher">Show Live Source Browser</string>
     <string name="settings_show_live_source_switcher_subtitle">Display the M3U source switcher inside Live TV browsing.</string>
+    <string name="settings_show_all_channels_category">Show All Channels category</string>
+    <string name="settings_show_all_channels_category_subtitle">Display the virtual All Channels group in Live TV and the EPG guide.</string>
+    <string name="settings_show_recent_channels_category">Show Recent Channels category</string>
+    <string name="settings_show_recent_channels_category_subtitle">Display recently watched channels in Live TV browsing and on the Home screen.</string>
 
     
     <string name="movies_incorrect_pin">Incorrect PIN</string>
@@ -350,6 +357,8 @@
     <string name="settings_live_timeshift_depth_15">15 minutes</string>
     <string name="settings_live_timeshift_depth_30">30 minutes</string>
     <string name="settings_live_timeshift_depth_60">60 minutes</string>
+    <string name="settings_zap_auto_revert">Auto-Return on Bad Channel</string>
+    <string name="settings_zap_auto_revert_subtitle">Automatically return to the previous working channel if a channel stalls or fails to load.</string>
     <string name="settings_player_controls_timeout">VOD Controls Auto-Hide</string>
     <string name="settings_live_overlay_timeout">Live TV Overlays Auto-Hide</string>
     <string name="settings_player_notice_timeout">Playback Notices Auto-Hide</string>
@@ -423,6 +432,8 @@
     <string name="settings_live_channel_numbering_group_desc">Default behavior. Renumber channels based on their position inside the current category or custom group.</string>
     <string name="settings_live_channel_numbering_provider">Provider Number</string>
     <string name="settings_live_channel_numbering_provider_desc">Keep the original channel number supplied by the playlist provider whenever it exists.</string>
+    <string name="settings_live_channel_numbering_hidden">Hidden</string>
+    <string name="settings_live_channel_numbering_hidden_desc">Never show channel numbers anywhere in the app.</string>
     <string name="settings_vod_view_mode">VOD layout</string>
     <string name="settings_vod_view_mode_subtitle">Choose between the modern shelves view and a classic split layout.</string>
     <string name="settings_vod_view_mode_modern">Modern</string>
@@ -463,6 +474,7 @@
     <string name="settings_updates_title">Updates</string>
     <string name="settings_updates_subtitle">Check GitHub Releases for newer StreamVault versions without leaving the app.</string>
     <string name="settings_update_auto_check">Automatically check for updates</string>
+    <string name="settings_update_auto_download">Automatically download updates</string>
     <string name="settings_update_latest_release">Latest release</string>
     <string name="settings_update_status">Update status</string>
     <string name="settings_update_last_checked">Last checked</string>
@@ -594,6 +606,8 @@
     <string name="settings_recording_active_label">Active</string>
     <string name="settings_recording_scheduled_label">Scheduled</string>
     <string name="settings_recording_space_label">Free Space</string>
+    <string name="settings_recording_open_browser">Open Recordings</string>
+    <string name="settings_recording_item_count">%1$d items</string>
     <string name="settings_recording_empty_title">No active recordings</string>
     <string name="settings_recording_empty_subtitle">Start a manual recording from live playback or schedule one from the player.</string>
     <string name="settings_recording_status_scheduled">Scheduled</string>
@@ -745,6 +759,16 @@
     <string name="search_hint">Search...</string>
     <string name="search_recent_title">Recent Searches</string>
     <string name="search_clear_history">Clear</string>
+    <string name="search_actions_title">%1$s</string>
+    <string name="search_actions_add_favorite">Add to Favorites</string>
+    <string name="search_actions_remove_favorite">Remove from Favorites</string>
+    <string name="search_actions_hide_category">Hide Category</string>
+    <string name="search_actions_hide_no_category">Hide (no category)</string>
+    <string name="search_actions_lock">Lock with Parental Control</string>
+    <string name="search_actions_unlock">Unlock Parental Control</string>
+    <string name="search_actions_lock_no_category">Lock (no category)</string>
+    <string name="search_actions_dismiss">Dismiss</string>
+    <string name="search_actions_pin_subtitle">Enter your parental PIN to confirm</string>
     <string name="library_action_hide_search">Hide Search</string>
     <string name="library_action_filters_sort">Filters &amp; Sort</string>
     <string name="a11y_selected">Selected</string>
@@ -961,6 +985,9 @@
     <string name="epg_show_app_navigation">Show App Nav</string>
     <string name="epg_program_details_show">Program Details</string>
     <string name="epg_program_details_hide">Hide Details</string>
+    <string name="epg_program_reminder_set">Remind Me</string>
+    <string name="epg_program_reminder_cancel">Cancel Reminder</string>
+    <string name="epg_program_reminder_loading">Updating Reminder...</string>
     <string name="epg_hero_no_schedule_hint">This channel has no guide entries in the current window.</string>
     <string name="epg_hero_no_program_description">Program details are limited for this entry.</string>
     <string name="epg_filter_label">Guide Filter</string>
@@ -1101,6 +1128,7 @@
     <string name="player_live_timeshift_ready">Timeshift ready.</string>
     <string name="player_live_timeshift_buffering">Local live rewind is still buffering.</string>
     <string name="player_live_timeshift_failed">Local live rewind is unavailable for this stream.</string>
+    <string name="player_live_scrubber_cd">Live rewind timeline. Use left and right to seek.</string>
     <string name="series_loading_details">Loading details...</string>
     <string name="series_not_found">Series not found</string>
     <string name="series_detail_back">Back to library</string>

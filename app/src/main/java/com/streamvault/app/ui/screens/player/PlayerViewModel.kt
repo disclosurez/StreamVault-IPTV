@@ -16,10 +16,13 @@ import com.streamvault.data.security.CredentialDecryptionException
 import com.streamvault.domain.manager.RecordingManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ChannelNumberingMode
+import com.streamvault.domain.model.CombinedCategory
+import com.streamvault.domain.model.CombinedM3uProfileMember
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.DecoderMode
 import com.streamvault.domain.model.Episode
+import com.streamvault.domain.model.Favorite
 import com.streamvault.domain.model.PlaybackHistory
 import com.streamvault.domain.model.RecordingItem
 import com.streamvault.domain.model.RecordingRecurrence
@@ -36,6 +39,7 @@ import com.streamvault.domain.usecase.MarkAsWatched
 import com.streamvault.domain.usecase.ScheduleRecording
 import com.streamvault.domain.usecase.ScheduleRecordingCommand
 import com.streamvault.domain.repository.ChannelRepository
+import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
@@ -52,6 +56,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,6 +78,7 @@ class PlayerViewModel @Inject constructor(
     private val favoriteRepository: com.streamvault.domain.repository.FavoriteRepository,
     internal val playbackHistoryRepository: PlaybackHistoryRepository,
     private val providerRepository: com.streamvault.domain.repository.ProviderRepository,
+    private val combinedM3uRepository: CombinedM3uRepository,
     private val preferencesRepository: com.streamvault.data.preferences.PreferencesRepository,
     private val getCustomCategories: GetCustomCategories,
     private val markAsWatched: MarkAsWatched,
@@ -90,10 +96,18 @@ class PlayerViewModel @Inject constructor(
         private const val MAX_PROGRAM_HISTORY_ITEMS = 18
         private const val MAX_UPCOMING_PROGRAM_ITEMS = 24
         private const val PLAYER_EPG_REFRESH_INTERVAL_MS = 30_000L
+        private const val MIN_WATCHED_FOR_AUTO_PLAY_MS = 5_000L
+        private const val TOKEN_RENEWAL_LEAD_MS = 60_000L
+        private const val TOKEN_RENEWAL_CHECK_INTERVAL_MS = 10_000L
+        private const val LOW_BANDWIDTH_THRESHOLD_BPS = 500_000L
+        private const val LOW_BANDWIDTH_DURATION_SECONDS = 30
     }
 
     internal val showControlsFlow = MutableStateFlow(false)
     val showControls: StateFlow<Boolean> = showControlsFlow.asStateFlow()
+
+    private val _isCatchUpPlayback = MutableStateFlow(false)
+    val isCatchUpPlayback: StateFlow<Boolean> = _isCatchUpPlayback.asStateFlow()
 
     internal val showZapOverlayFlow = MutableStateFlow(false)
     val showZapOverlay: StateFlow<Boolean> = showZapOverlayFlow.asStateFlow()
@@ -193,6 +207,8 @@ class PlayerViewModel @Inject constructor(
     private val failedStreamsThisSession = mutableMapOf<String, Int>()
     private var hasRetriedWithSoftwareDecoder = false
     private var hasRetriedXtreamAuthRefresh = false
+    private val probePassedProviderIds = mutableSetOf<Long>()
+    private val notifiedRecordingFailureIds = mutableSetOf<String>()
     internal var lastRecordedLivePlaybackKey: Pair<Long, Long>? = null
     private var currentStreamClassLabel: String = "Primary"
     private var prepareRequestVersion: Long = 0L
@@ -200,6 +216,10 @@ class PlayerViewModel @Inject constructor(
     private var currentResolvedPlaybackUrl: String = ""
     internal var pendingCatchUpUrls: List<String> = emptyList()
     internal var channelNumberingMode: ChannelNumberingMode = ChannelNumberingMode.GROUP
+        set(value) {
+            field = value
+            rebuildChannelNumberIndex()
+        }
     private var activeEpgRequestKey: EpgRequestKey? = null
     internal var playerControlsTimeoutMs: Long = 5_000L
     internal var liveOverlayTimeoutMs: Long = 4_000L
@@ -209,11 +229,36 @@ class PlayerViewModel @Inject constructor(
     private var timeshiftConfig: TimeshiftConfig = TimeshiftConfig()
 
     // Zapping state
+    //
+    // Invariant: `currentChannelIndex` is always -1 (no channel loaded) or a valid index
+    // into `channelList`. Code that updates either field must maintain this relationship.
+    // `channelList` is replaced asynchronously by the playlist flow collector; after
+    // replacement, `currentChannelIndex` is recomputed in the same collector block,
+    // so the invariant holds at rest. `changeChannel()` verifies the invariant at entry.
+    /**
+     * Ordered list of channels in the current category, set by the playlist [combine]
+     * collector. Linked to [currentChannelIndex] — see invariant comment above.
+     */
     internal var channelList: List<com.streamvault.domain.model.Channel> = emptyList()
+        set(value) {
+            field = value
+            rebuildChannelNumberIndex()
+        }
+    internal var channelNumberIndex: Map<Int, com.streamvault.domain.model.Channel> = emptyMap()
+        private set
+
+    private fun rebuildChannelNumberIndex() {
+        channelNumberIndex = channelList.withIndex().associate { (index, channel) ->
+            resolveChannelNumber(channel, index) to channel
+        }
+    }
+
     internal var currentChannelIndex = -1
     internal var previousChannelIndex = -1
     internal var currentCategoryId: Long = -1
     internal var currentProviderId: Long = -1L
+    internal var currentCombinedProfileId: Long? = null
+    internal var currentCombinedSourceFilterProviderId: Long? = null
     internal var currentContentId: Long = -1L
     internal var currentContentType: ContentType = ContentType.LIVE
     internal var currentTitle: String = ""
@@ -221,6 +266,8 @@ class PlayerViewModel @Inject constructor(
     private var currentSeasonNumber: Int? = null
     private var currentEpisodeNumber: Int? = null
     internal var isVirtualCategory: Boolean = false
+    private var currentCombinedProfileMembers: List<CombinedM3uProfileMember> = emptyList()
+    private var combinedCategoriesById: Map<Long, CombinedCategory> = emptyMap()
     private var lastObservedPlaybackState: PlaybackState = PlaybackState.IDLE
 
     private var epgJob: Job? = null
@@ -229,10 +276,14 @@ class PlayerViewModel @Inject constructor(
     private var lastVisitedCategoryJob: Job? = null
     internal var controlsHideJob: Job? = null
     private var seekPreviewJob: Job? = null
+    private var thumbnailPreloadJob: Job? = null
+    private var lowBandwidthMonitorJob: Job? = null
     private var progressTrackingJob: Job? = null
+    private var tokenRenewalJob: Job? = null
     internal var zapOverlayJob: Job? = null
     private var aspectRatioJob: Job? = null
     internal var zapBufferWatchdogJob: Job? = null
+    internal var zapAutoRevertEnabled: Boolean = true
     private var isAppInForeground: Boolean = true
     private var shouldResumeAfterForeground: Boolean = false
     private var seekPreviewRequestVersion: Long = 0L
@@ -340,6 +391,8 @@ class PlayerViewModel @Inject constructor(
                                 )
                             }
                         }
+                    } else {
+                        startThumbnailPreload()
                     }
                 }
             }
@@ -351,7 +404,16 @@ class PlayerViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            playerEngine.audioFocusDenied.collect {
+                showPlayerNotice(
+                    message = "Waiting for audio \u2014 unmute device and press Play",
+                    durationMs = 8_000L
+                )
+            }
+        }
+        viewModelScope.launch {
             recordingManager.observeRecordingItems().collect { items ->
+                handleRecordingStateChanges(previousItems = _recordingItems.value, newItems = items)
                 _recordingItems.value = items
                 refreshCurrentChannelRecording(items)
             }
@@ -390,6 +452,9 @@ class PlayerViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            preferencesRepository.zapAutoRevert.collect { zapAutoRevertEnabled = it }
+        }
+        viewModelScope.launch {
             preferencesRepository.playerMediaSessionEnabled.collect(playerEngine::setMediaSessionEnabled)
         }
         viewModelScope.launch {
@@ -418,6 +483,32 @@ class PlayerViewModel @Inject constructor(
                 if (!hasRetriedWithSoftwareDecoder) {
                     playerEngine.setDecoderMode(mode)
                     updateDecoderMode(mode)
+                }
+            }
+        }
+        viewModelScope.launch {
+            var consecutiveLowBandwidthSeconds = 0
+            var noticeShown = false
+            playerEngine.playerStats.collect { stats ->
+                if (!playerEngine.isPlaying.value || currentContentType != ContentType.LIVE) {
+                    consecutiveLowBandwidthSeconds = 0
+                    noticeShown = false
+                    return@collect
+                }
+                val bps = stats.bandwidthEstimate
+                if (bps in 1 until LOW_BANDWIDTH_THRESHOLD_BPS) {
+                    consecutiveLowBandwidthSeconds++
+                } else {
+                    consecutiveLowBandwidthSeconds = 0
+                    noticeShown = false
+                }
+                if (consecutiveLowBandwidthSeconds >= LOW_BANDWIDTH_DURATION_SECONDS && !noticeShown) {
+                    noticeShown = true
+                    showPlayerNotice(
+                        message = "Network speed is low \u2014 stream quality reduced",
+                        recoveryType = PlayerRecoveryType.NETWORK,
+                        durationMs = 10_000L
+                    )
                 }
             }
         }
@@ -451,6 +542,17 @@ class PlayerViewModel @Inject constructor(
 
             val recoveryType = classifyPlaybackError(error)
             val channel = currentChannelFlow.value?.sanitizedForPlayer()
+
+            if (recoveryType == PlayerRecoveryType.DRM) {
+                if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
+                showPlayerNotice(
+                    message = "This channel requires DRM support that is not available. " +
+                        "Your subscription may not include this content.",
+                    recoveryType = PlayerRecoveryType.DRM,
+                    actions = buildRecoveryActions(PlayerRecoveryType.DRM)
+                )
+                return@launch
+            }
 
             if (currentContentType != ContentType.LIVE || channel == null) {
                 if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
@@ -546,6 +648,34 @@ class PlayerViewModel @Inject constructor(
             it.providerId == currentProviderId &&
                 it.channelId == channelId &&
                 (it.status == RecordingStatus.RECORDING || it.status == RecordingStatus.SCHEDULED)
+        }
+    }
+
+    private fun handleRecordingStateChanges(
+        previousItems: List<RecordingItem>,
+        newItems: List<RecordingItem>
+    ) {
+        val previousStatuses = previousItems.associateBy(RecordingItem::id)
+        val failedNow = newItems.firstOrNull { item ->
+            previousStatuses[item.id]?.status == RecordingStatus.RECORDING &&
+                item.status == RecordingStatus.FAILED &&
+                notifiedRecordingFailureIds.add(item.id)
+        }
+
+        notifiedRecordingFailureIds.retainAll(
+            newItems.asSequence()
+                .filter { it.status == RecordingStatus.FAILED }
+                .map { it.id }
+                .toSet()
+        )
+
+        failedNow?.let { item ->
+            val title = item.programTitle?.takeIf { it.isNotBlank() } ?: item.channelName
+            val detail = item.failureReason?.takeIf { it.isNotBlank() } ?: "The provider stopped serving the recording stream."
+            showPlayerNotice(
+                message = "Recording failed for $title. $detail",
+                durationMs = maxOf(playerNoticeTimeoutMs, 8_000L)
+            )
         }
     }
 
@@ -665,8 +795,26 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private fun startThumbnailPreload() {
+        thumbnailPreloadJob?.cancel()
+        val url = currentResolvedPlaybackUrl.ifBlank { currentStreamUrl }
+        if (url.isBlank() || !seekThumbnailProvider.supportsFrameExtraction(url)) return
+        val durationMs = playerEngine.duration.value
+        if (durationMs <= 0L) return
+        thumbnailPreloadJob = viewModelScope.launch(Dispatchers.Default) {
+            val bucketMs = 10_000L
+            var pos = 0L
+            while (pos <= durationMs) {
+                ensureActive()
+                seekThumbnailProvider.loadFrame(url, pos)
+                pos += bucketMs
+            }
+        }
+    }
+
     internal fun beginPlaybackSession(): Long {
         recoveryJob?.cancel()
+        thumbnailPreloadJob?.cancel()
         hasRetriedXtreamAuthRefresh = false
         return ++prepareRequestVersion
     }
@@ -791,8 +939,12 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             persistPlaybackCompletion()
             if (currentContentType == ContentType.SERIES_EPISODE) {
-                _nextEpisode.value?.let { episode ->
-                    playEpisode(episode, showResumePrompt = false)
+                val position = playerEngine.currentPosition.value
+                val duration = playerEngine.duration.value
+                if (position > MIN_WATCHED_FOR_AUTO_PLAY_MS || duration > 0L) {
+                    _nextEpisode.value?.let { episode ->
+                        playEpisode(episode, showResumePrompt = false)
+                    }
                 }
             }
         }
@@ -872,6 +1024,7 @@ class PlayerViewModel @Inject constructor(
             )
             return false
         }
+        currentProviderId.takeIf { it > 0L }?.let { probePassedProviderIds.add(it) }
         playerEngine.setMuted(preferencesRepository.playerMuted.first())
         playerEngine.setPlaybackSpeed(
             if (currentContentType == ContentType.LIVE) {
@@ -893,6 +1046,7 @@ class PlayerViewModel @Inject constructor(
         if (!isActivePlaybackSession(requestVersion)) return false
         currentResolvedPlaybackUrl = streamInfo.url
         playerEngine.prepare(streamInfo)
+        startTokenRenewalMonitoring(streamInfo.expirationTime)
         return true
     }
 
@@ -930,6 +1084,7 @@ class PlayerViewModel @Inject constructor(
     private suspend fun shouldProbePlaybackUrl(url: String): Boolean {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return false
         val providerId = currentProviderId.takeIf { it > 0L } ?: return false
+        if (providerId in probePassedProviderIds) return false
         val provider = providerRepository.getProvider(providerId) ?: return false
         return provider.type == com.streamvault.domain.model.ProviderType.XTREAM_CODES &&
             (xtreamStreamUrlResolver.isInternalStreamUrl(currentStreamUrl) || xtreamStreamUrlResolver.isInternalStreamUrl(url))
@@ -942,6 +1097,8 @@ class PlayerViewModel @Inject constructor(
         categoryId: Long = -1, 
         providerId: Long = -1, 
         isVirtual: Boolean = false,
+        combinedProfileId: Long? = null,
+        combinedSourceFilterProviderId: Long? = null,
         contentType: String = "CHANNEL",
         title: String = "",
         artworkUrl: String? = null,
@@ -961,8 +1118,15 @@ class PlayerViewModel @Inject constructor(
         val requestVersion = beginPlaybackSession()
         val previousProviderId = currentProviderId
         val previousCategoryId = currentCategoryId
+        val previousCombinedProfileId = currentCombinedProfileId
+        val previousCombinedSourceFilterProviderId = currentCombinedSourceFilterProviderId
         val shouldReloadPlaylist = categoryId != -1L &&
-            (categoryId != previousCategoryId || providerId != previousProviderId)
+            (
+                categoryId != previousCategoryId ||
+                    providerId != previousProviderId ||
+                    combinedProfileId != previousCombinedProfileId ||
+                    combinedSourceFilterProviderId != previousCombinedSourceFilterProviderId
+                )
         clearSeekPreview()
         currentResolvedPlaybackUrl = ""
         currentStreamUrl = streamUrl
@@ -972,10 +1136,24 @@ class PlayerViewModel @Inject constructor(
         currentArtworkUrl = artworkUrl
         currentContentType = try { ContentType.valueOf(contentType) } catch (e: Exception) { ContentType.LIVE }
         currentProviderId = providerId
+        currentCombinedProfileId = combinedProfileId?.takeIf { it > 0L }
+        currentCombinedSourceFilterProviderId = combinedSourceFilterProviderId?.takeIf { it > 0L }
         currentSeriesId = seriesId?.takeIf { it > 0L }
         currentSeasonNumber = seasonNumber
         currentEpisodeNumber = episodeNumber
         currentStreamClassLabel = if (hasArchiveRequest) "Catch-up" else "Primary"
+        if (currentContentType == ContentType.LIVE && currentCombinedProfileId != null) {
+            val activeCombinedProfileId = currentCombinedProfileId
+            viewModelScope.launch {
+                val members = activeCombinedProfileId?.let { combinedM3uRepository.getProfile(it)?.members }.orEmpty()
+                if (currentCombinedProfileId == activeCombinedProfileId) {
+                    currentCombinedProfileMembers = members
+                }
+            }
+        } else {
+            currentCombinedProfileMembers = emptyList()
+            combinedCategoriesById = emptyMap()
+        }
         if (!hasArchiveRequest) {
             pendingCatchUpUrls = emptyList()
         }
@@ -1207,6 +1385,33 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private fun startTokenRenewalMonitoring(expirationTime: Long?) {
+        tokenRenewalJob?.cancel()
+        tokenRenewalJob = null
+        val expiry = expirationTime?.takeIf { it > 0L } ?: return
+        val requestVersion = prepareRequestVersion
+        tokenRenewalJob = viewModelScope.launch {
+            while (true) {
+                delay(TOKEN_RENEWAL_CHECK_INTERVAL_MS)
+                if (!playerEngine.isPlaying.value) continue
+                val remaining = expiry - System.currentTimeMillis()
+                if (remaining > TOKEN_RENEWAL_LEAD_MS) continue
+                if (!isActivePlaybackSession(requestVersion)) return@launch
+                val refreshed = resolvePlaybackStreamInfo(
+                    logicalUrl = currentStreamUrl,
+                    internalContentId = currentContentId,
+                    providerId = currentProviderId,
+                    contentType = currentContentType
+                ) ?: return@launch
+                if (!isActivePlaybackSession(requestVersion)) return@launch
+                currentResolvedPlaybackUrl = refreshed.url
+                playerEngine.renewStreamUrl(refreshed)
+                startTokenRenewalMonitoring(refreshed.expirationTime)
+                return@launch
+            }
+        }
+    }
+
     fun onAppBackgrounded() {
         if (!isAppInForeground) return
         isAppInForeground = false
@@ -1255,6 +1460,13 @@ class PlayerViewModel @Inject constructor(
             return
         }
 
+        val requestKey = EpgRequestKey(
+            providerId = providerId,
+            internalChannelId = internalChannelId,
+            epgChannelId = epgChannelId,
+            streamId = streamId
+        )
+
         epgJob = viewModelScope.launch {
             while (true) {
                 val now = System.currentTimeMillis()
@@ -1269,10 +1481,13 @@ class PlayerViewModel @Inject constructor(
                     endTime = end
                 )
 
+                if (activeEpgRequestKey != requestKey) return@launch
+
                 if (programs.isNotEmpty()) {
                     applyProgramTimeline(programs, now)
                 } else {
                     applyRemoteProgramFallback(providerId, epgChannelId, streamId, now)
+                    if (activeEpgRequestKey != requestKey) return@launch
                 }
 
                 delay(PLAYER_EPG_REFRESH_INTERVAL_MS)
@@ -1335,7 +1550,9 @@ class PlayerViewModel @Inject constructor(
     internal fun loadPlaylist(categoryId: Long, providerId: Long, isVirtual: Boolean, initialChannelId: Long) {
         playlistJob?.cancel()
         playlistJob = viewModelScope.launch {
-            val flows = if (isVirtual) {
+            val flows = currentCombinedProfileId?.let { profileId ->
+                observeCombinedLivePlaylist(profileId, categoryId)
+            } ?: if (isVirtual) {
                 if (categoryId == VirtualCategoryIds.RECENT) {
                     playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit = 24)
                         .map { history ->
@@ -1355,7 +1572,7 @@ class PlayerViewModel @Inject constructor(
                         }
                 } else if (categoryId == VirtualCategoryIds.FAVORITES) {
                     // Global Favorites — preserve user-defined position order
-                    favoriteRepository.getFavorites(com.streamvault.domain.model.ContentType.LIVE)
+                    favoriteRepository.getFavorites(currentProviderId, com.streamvault.domain.model.ContentType.LIVE)
                         .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
                         .flatMapLatest { ids ->
                             if (ids.isEmpty()) flowOf(emptyList())
@@ -1386,15 +1603,17 @@ class PlayerViewModel @Inject constructor(
                         channel.copy(number = index + 1)
                     }
                     ChannelNumberingMode.PROVIDER -> channels
+                    ChannelNumberingMode.HIDDEN -> channels.map { it.copy(number = 0) }
                 }
                 numberingMode to displayedChannels.sanitizedChannelsForPlayer()
             }.collect { (numberingMode, displayedChannels) ->
                 channelNumberingMode = numberingMode
                 channelList = displayedChannels
                 currentChannelFlowList.value = displayedChannels
-                // Recalculate index based on initial ID or URL
-                if (initialChannelId != -1L) {
-                    currentChannelIndex = channelList.indexOfFirst { it.id == initialChannelId }
+                // Recalculate index based on current content ID (keeps overlay correct after zap/auto-revert)
+                val targetId = if (currentContentId != -1L) currentContentId else initialChannelId
+                if (targetId != -1L) {
+                    currentChannelIndex = channelList.indexOfFirst { it.id == targetId }
                 }
                 if (currentChannelIndex == -1) {
                     currentChannelIndex = channelList.indexOfFirst { it.streamUrl == currentStreamUrl }
@@ -1405,6 +1624,13 @@ class PlayerViewModel @Inject constructor(
                     refreshCurrentChannelRecording()
                     val ch = channelList[currentChannelIndex]
                     displayChannelNumberFlow.value = resolveChannelNumber(ch, currentChannelIndex)
+                } else if (displayedChannels.isNotEmpty() && currentContentId != -1L) {
+                    // Channel was removed from the provider playlist
+                    showPlayerNotice(
+                        message = "Channel not found in current playlist",
+                        recoveryType = PlayerRecoveryType.SOURCE,
+                        actions = listOf(PlayerNoticeAction.OPEN_GUIDE)
+                    )
                 }
             }
         }
@@ -1413,31 +1639,151 @@ class PlayerViewModel @Inject constructor(
     // Store current URL to find index later
     internal var currentStreamUrl: String = ""
 
+    private fun observeCombinedLivePlaylist(profileId: Long, categoryId: Long): Flow<List<com.streamvault.domain.model.Channel>> = when {
+        categoryId == ChannelRepository.ALL_CHANNELS_ID -> {
+            combinedM3uRepository.getCombinedCategories(profileId).flatMapLatest { combinedCategories ->
+                combinedCategoriesById = combinedCategories.associateBy { it.category.id }
+                val flows = combinedCategories.map { combinedM3uRepository.getCombinedChannels(profileId, it) }
+                if (flows.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    combine(flows) { arrays ->
+                        arrays.toList().flatMap { it }
+                    }.map(::applyCombinedSourceProviderFilter)
+                }
+            }
+        }
+
+        categoryId == VirtualCategoryIds.RECENT -> {
+            combinedProviderIdsFlow(profileId)
+                .flatMapLatest { providerIds -> observeRecentLiveIds(effectiveCombinedProviderIds(providerIds), 24) }
+                .flatMapLatest { ids -> loadLiveChannelsByOrderedIds(ids, currentCombinedSourceFilterProviderId) }
+        }
+
+        categoryId == VirtualCategoryIds.FAVORITES -> {
+            combinedProviderIdsFlow(profileId)
+                .flatMapLatest { providerIds -> observeLiveFavorites(effectiveCombinedProviderIds(providerIds)) }
+                .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
+                .flatMapLatest { ids -> loadLiveChannelsByOrderedIds(ids, currentCombinedSourceFilterProviderId) }
+        }
+
+        categoryId < 0L -> {
+            favoriteRepository.getFavoritesByGroup(-categoryId)
+                .map { favorites ->
+                    favorites
+                        .sortedBy { it.position }
+                        .let { groupFavorites ->
+                            currentCombinedSourceFilterProviderId?.let { selectedProviderId ->
+                                groupFavorites.filter { it.providerId == selectedProviderId }
+                            } ?: groupFavorites
+                        }
+                        .map { it.contentId }
+                }
+                .flatMapLatest { ids -> loadLiveChannelsByOrderedIds(ids, currentCombinedSourceFilterProviderId) }
+        }
+
+        else -> {
+            combinedM3uRepository.getCombinedCategories(profileId).flatMapLatest { combinedCategories ->
+                combinedCategoriesById = combinedCategories.associateBy { it.category.id }
+                val combinedCategory = combinedCategoriesById[categoryId]
+                if (combinedCategory == null) {
+                    flowOf(emptyList())
+                } else {
+                    combinedM3uRepository.getCombinedChannels(profileId, combinedCategory)
+                        .map(::applyCombinedSourceProviderFilter)
+                }
+            }
+        }
+    }
+
+    private fun applyCombinedSourceProviderFilter(channels: List<com.streamvault.domain.model.Channel>): List<com.streamvault.domain.model.Channel> {
+        val selectedProviderId = currentCombinedSourceFilterProviderId ?: return channels
+        return channels.filter { it.providerId == selectedProviderId }
+    }
+
+    private fun loadLiveChannelsByOrderedIds(ids: List<Long>, providerId: Long? = null): Flow<List<com.streamvault.domain.model.Channel>> =
+        if (ids.isEmpty()) {
+            flowOf(emptyList())
+        } else {
+            channelRepository.getChannelsByIds(ids).map { unsorted ->
+                val filtered = providerId?.let { requiredProviderId ->
+                    unsorted.filter { it.providerId == requiredProviderId }
+                } ?: unsorted
+                val channelsById = filtered.associateBy { it.id }
+                ids.mapNotNull { channelsById[it] }
+            }
+        }
+
+    private fun combinedProviderIdsFlow(profileId: Long): Flow<List<Long>> = flow {
+        emit(combinedM3uRepository.getProfile(profileId)?.members.orEmpty())
+    }.map { members ->
+        currentCombinedProfileMembers = members
+        members.filter { it.enabled }.map { it.providerId }
+    }
+
+    private fun effectiveCombinedProviderIds(providerIds: List<Long>): List<Long> =
+        currentCombinedSourceFilterProviderId?.let { selectedProviderId ->
+            providerIds.filter { it == selectedProviderId }
+        } ?: providerIds
+
+    private fun observeLiveFavorites(providerIds: List<Long>): Flow<List<Favorite>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> favoriteRepository.getFavorites(providerIds.first(), ContentType.LIVE)
+        else -> favoriteRepository.getFavorites(providerIds, ContentType.LIVE)
+    }
+
+    private fun observeRecentLiveIds(providerIds: List<Long>, limit: Int): Flow<List<Long>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> playbackHistoryRepository.getRecentlyWatchedByProvider(providerIds.first(), limit)
+            .map { history ->
+                history.asSequence()
+                    .filter { it.contentType == ContentType.LIVE }
+                    .sortedByDescending { it.lastWatchedAt }
+                    .distinctBy { it.contentId }
+                    .map { it.contentId }
+                    .take(limit)
+                    .toList()
+            }
+        else -> combine(providerIds.map { providerId ->
+            playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit)
+        }) { histories ->
+            histories.toList()
+                .flatMap { it }
+                .asSequence()
+                .filter { it.contentType == ContentType.LIVE }
+                .sortedByDescending { it.lastWatchedAt }
+                .distinctBy { it.providerId to it.contentId }
+                .map { it.contentId }
+                .take(limit)
+                .toList()
+        }
+    }
+
     private fun observeRecentChannels() {
         recentChannelsJob?.cancel()
-        if (currentContentType != ContentType.LIVE || currentProviderId <= 0) {
+        if (currentContentType != ContentType.LIVE || (currentProviderId <= 0 && currentCombinedProfileId == null)) {
             recentChannelsFlow.value = emptyList()
             return
         }
 
         recentChannelsJob = viewModelScope.launch {
+            val recentFlow = currentCombinedProfileId?.let { profileId ->
+                combinedProviderIdsFlow(profileId)
+                    .flatMapLatest { providerIds -> observeRecentLiveIds(effectiveCombinedProviderIds(providerIds), 12) }
+                    .flatMapLatest { ids -> loadLiveChannelsByOrderedIds(ids, currentCombinedSourceFilterProviderId) }
+            } ?: playbackHistoryRepository.getRecentlyWatchedByProvider(currentProviderId, limit = 12)
+                .map { history ->
+                    history.asSequence()
+                        .filter { it.contentType == ContentType.LIVE }
+                        .sortedByDescending { it.lastWatchedAt }
+                        .distinctBy { it.contentId }
+                        .map { it.contentId }
+                        .toList()
+                }
+                .flatMapLatest { ids -> loadLiveChannelsByOrderedIds(ids) }
+
             combine(
-                playbackHistoryRepository.getRecentlyWatchedByProvider(currentProviderId, limit = 12)
-                    .map { history ->
-                        history.asSequence()
-                            .filter { it.contentType == ContentType.LIVE }
-                            .sortedByDescending { it.lastWatchedAt }
-                            .distinctBy { it.contentId }
-                            .map { it.contentId }
-                            .toList()
-                    }
-                    .flatMapLatest { ids ->
-                        if (ids.isEmpty()) flowOf(emptyList())
-                        else channelRepository.getChannelsByIds(ids).map { channels ->
-                            val channelMap = channels.associateBy { it.id }
-                            ids.mapNotNull { channelMap[it] }
-                        }
-                    },
+                recentFlow,
                 preferencesRepository.liveChannelNumberingMode
             ) { channels, numberingMode ->
                 numberingMode to channels
@@ -1459,15 +1805,49 @@ class PlayerViewModel @Inject constructor(
 
     private fun observeLastVisitedCategory() {
         lastVisitedCategoryJob?.cancel()
-        if (currentContentType != ContentType.LIVE || currentProviderId <= 0) {
+        if (currentContentType != ContentType.LIVE || (currentProviderId <= 0 && currentCombinedProfileId == null)) {
             _lastVisitedCategory.value = null
             return
         }
 
         lastVisitedCategoryJob = viewModelScope.launch {
-            combine(
+            val categoriesFlow = currentCombinedProfileId?.let { profileId ->
+                combinedProviderIdsFlow(profileId).flatMapLatest { providerIds ->
+                    combine(
+                        combinedM3uRepository.getCombinedCategories(profileId),
+                        getCustomCategories(providerIds, ContentType.LIVE)
+                    ) { combinedCategories, customCategories ->
+                        combinedCategoriesById = combinedCategories.associateBy { it.category.id }
+                        buildList {
+                            val favoritesCategory = customCategories.find { it.id == VirtualCategoryIds.FAVORITES }
+                            if (favoritesCategory != null) {
+                                add(favoritesCategory)
+                            }
+                            add(
+                                Category(
+                                    id = VirtualCategoryIds.RECENT,
+                                    name = "Recent",
+                                    type = ContentType.LIVE,
+                                    isVirtual = true,
+                                    count = 0
+                                )
+                            )
+                            addAll(customCategories.filter { it.id != VirtualCategoryIds.FAVORITES })
+                            add(
+                                Category(
+                                    id = ChannelRepository.ALL_CHANNELS_ID,
+                                    name = "All Channels",
+                                    type = ContentType.LIVE,
+                                    count = combinedCategories.sumOf { it.category.count }
+                                )
+                            )
+                            addAll(combinedCategories.map { it.category })
+                        } to null
+                    }
+                }
+            } ?: combine(
                 channelRepository.getCategories(currentProviderId),
-                getCustomCategories(ContentType.LIVE),
+                getCustomCategories(currentProviderId, ContentType.LIVE),
                 preferencesRepository.getLastLiveCategoryId(currentProviderId)
             ) { providerCategories, customCategories, lastVisitedCategoryId ->
                 val allCategories = customCategories + providerCategories
@@ -1476,8 +1856,10 @@ class PlayerViewModel @Inject constructor(
                 } else {
                     allCategories.firstOrNull { it.id == lastVisitedCategoryId }
                 }
-                Pair(allCategories, lastVisited)
-            }.collect { (allCategories, lastVisited) ->
+                allCategories to lastVisited
+            }
+
+            categoriesFlow.collect { (allCategories, lastVisited) ->
                 availableCategoriesFlow.value = allCategories
                 _lastVisitedCategory.value = lastVisited
             }
@@ -1486,7 +1868,7 @@ class PlayerViewModel @Inject constructor(
 
     fun openLastVisitedCategory() {
         val category = _lastVisitedCategory.value ?: return
-        if (currentContentType != ContentType.LIVE || currentProviderId <= 0) return
+        if (currentContentType != ContentType.LIVE) return
 
         currentCategoryId = category.id
         activeCategoryIdFlow.value = category.id
@@ -1585,6 +1967,7 @@ class PlayerViewModel @Inject constructor(
 
     internal fun updateStreamClass(label: String) {
         currentStreamClassLabel = label
+        _isCatchUpPlayback.value = (label == "Catch-up")
         _playerDiagnostics.update { it.copy(streamClassLabel = label) }
     }
 
@@ -1637,6 +2020,7 @@ class PlayerViewModel @Inject constructor(
         if (!isActivePlaybackSession(requestVersion, playbackUrl)) return false
 
         hasRetriedXtreamAuthRefresh = true
+        probePassedProviderIds.remove(currentProviderId)
         setLastFailureReason(error.message)
         appendRecoveryAction("Refreshed Xtream playback URL after auth failure")
         showPlayerNotice(
@@ -1768,10 +2152,18 @@ class PlayerViewModel @Inject constructor(
     }
 
     internal fun scheduleZapBufferWatchdog(targetIndex: Int) {
+        if (!zapAutoRevertEnabled) return
         zapBufferWatchdogJob?.cancel()
         val requestVersion = prepareRequestVersion
         zapBufferWatchdogJob = viewModelScope.launch {
-            delay(9000)
+            // Check every second for 15 s; back off immediately once the stream starts playing
+            repeat(15) {
+                delay(1000)
+                if (!isActivePlaybackSession(requestVersion)) return@launch
+                if (currentChannelIndex != targetIndex) return@launch
+                val state = playerEngine.playbackState.value
+                if (state == PlaybackState.READY || state == PlaybackState.ENDED) return@launch
+            }
             if (!isActivePlaybackSession(requestVersion)) return@launch
             val stillOnTarget = currentChannelIndex == targetIndex
             val state = playerEngine.playbackState.value
@@ -1798,7 +2190,11 @@ class PlayerViewModel @Inject constructor(
         val fallbackIndex = previousChannelIndex
         if (fallbackIndex in channelList.indices && fallbackIndex != currentChannelIndex) {
             android.util.Log.w("PlayerVM", "Falling back to previous channel: $reason")
-            changeChannel(fallbackIndex)
+            // Save before changeChannel overwrites previousChannelIndex with the bad channel's index
+            val savedPrevious = previousChannelIndex
+            changeChannel(fallbackIndex, isAutoFallback = true)
+            // Restore so that zapToLastChannel and a spurious second watchdog don't point at the bad channel
+            previousChannelIndex = savedPrevious
             return true
         }
         return false
@@ -1917,7 +2313,6 @@ class PlayerViewModel @Inject constructor(
         )
         if (!preparePlayer(catchupStream, requestVersion)) return
         playerEngine.play()
-        showControlsFlow.value = true
     }
 
     fun playCatchUp(program: Program) {
@@ -2088,10 +2483,21 @@ class PlayerViewModel @Inject constructor(
             return
         }
         val currentId = if (currentChannelIndex != -1 && channelList.isNotEmpty()) channelList[currentChannelIndex].id else -1L
-        prepare(streamUrl, epgChannelId, currentId, currentCategoryId, currentProviderId, isVirtualCategory, currentContentType.name, currentTitle)
+        prepare(
+            streamUrl = streamUrl,
+            epgChannelId = epgChannelId,
+            internalChannelId = currentId,
+            categoryId = currentCategoryId,
+            providerId = currentProviderId,
+            isVirtual = isVirtualCategory,
+            combinedProfileId = currentCombinedProfileId,
+            combinedSourceFilterProviderId = currentCombinedSourceFilterProviderId,
+            contentType = currentContentType.name,
+            title = currentTitle
+        )
     }
 
-    private suspend fun resolvePlaybackStreamInfo(
+    internal suspend fun resolvePlaybackStreamInfo(
         logicalUrl: String,
         internalContentId: Long,
         providerId: Long,
@@ -2151,10 +2557,12 @@ class PlayerViewModel @Inject constructor(
                 fallbackContentType = contentType,
                 fallbackContainerExtension = fallbackContainerExtension
             )?.let { resolved ->
+                val ext = resolved.containerExtension ?: fallbackContainerExtension
                 return com.streamvault.domain.model.StreamInfo(
                     url = resolved.url,
                     title = currentTitle,
-                    containerExtension = fallbackContainerExtension,
+                    streamType = com.streamvault.domain.model.StreamType.fromContainerExtension(ext),
+                    containerExtension = ext,
                     expirationTime = resolved.expirationTime
                 )
             }
@@ -2169,6 +2577,7 @@ class PlayerViewModel @Inject constructor(
             com.streamvault.domain.model.StreamInfo(
                 url = it,
                 title = currentTitle,
+                streamType = com.streamvault.domain.model.StreamType.fromContainerExtension(fallbackContainerExtension),
                 containerExtension = fallbackContainerExtension
             )
         }
@@ -2210,6 +2619,7 @@ class PlayerViewModel @Inject constructor(
         zapOverlayJob?.cancel()
         zapBufferWatchdogJob?.cancel()
         progressTrackingJob?.cancel()
+        tokenRenewalJob?.cancel()
         aspectRatioJob?.cancel()
         recentChannelsJob?.cancel()
         lastVisitedCategoryJob?.cancel()

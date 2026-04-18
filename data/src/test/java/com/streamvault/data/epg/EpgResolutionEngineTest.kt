@@ -145,6 +145,22 @@ class EpgResolutionEngineTest {
         val mapping = captor.firstValue.single()
         assertThat(mapping.sourceType).isEqualTo(EpgSourceType.NONE.name)
         assertThat(mapping.matchType).isNull()
+        assertThat(mapping.failedAttempts).isEqualTo(1)
+    }
+
+    @Test
+    fun `resolveForProvider_providerNativeCountsAsLowConfidenceRematchCandidate`() = runTest {
+        val channel = makeChannel(id = 1, name = "Local Channel", epgChannelId = "local.ch1")
+        whenever(channelDao.getByProviderSync(PROVIDER_ID)).thenReturn(listOf(channel))
+        whenever(providerEpgSourceDao.getEnabledForProviderSync(PROVIDER_ID)).thenReturn(emptyList())
+        whenever(channelEpgMappingDao.getForProvider(PROVIDER_ID)).thenReturn(emptyList())
+        whenever(programDao.countByProvider(PROVIDER_ID)).thenReturn(10)
+
+        val summary = engine.resolveForProvider(PROVIDER_ID)
+
+        assertThat(summary.providerNativeMatches).isEqualTo(1)
+        assertThat(summary.lowConfidenceChannels).isEqualTo(1)
+        assertThat(summary.rematchCandidateChannels).isEqualTo(1)
     }
 
     @Test

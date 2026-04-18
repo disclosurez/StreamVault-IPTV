@@ -4,8 +4,6 @@ import com.streamvault.domain.model.Program
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.InputStream
-import java.io.InputStreamReader
-import java.io.Reader
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -86,109 +84,11 @@ class XmltvParser {
         }.onFailure {
             logger.log(Level.FINE, "XML pull parser does not support relaxed mode", it)
         }
-        parser.setInput(SanitizingXmlReader(InputStreamReader(inputStream, Charsets.UTF_8)))
+        // Pass the raw stream with null encoding so the parser auto-detects charset
+        // from the BOM or the XML declaration (e.g. encoding="iso-8859-1").
+        // Relaxed mode handles bare & characters in text content.
+        parser.setInput(inputStream, null)
         return parser
-    }
-
-    /**
-     * Repairs common real-world XMLTV malformations on the fly without buffering the full file.
-     *
-     * Today this focuses on illegal bare `&` characters inside text nodes, which frequently appear
-     * in guide titles like `Law&Crime` or `A&E`. Valid entities are preserved as-is.
-     */
-    private class SanitizingXmlReader(
-        private val delegate: Reader
-    ) : Reader() {
-        private val outputBuffer = ArrayDeque<Char>()
-        private val replayBuffer = ArrayDeque<Char>()
-
-        override fun read(cbuf: CharArray, off: Int, len: Int): Int {
-            if (len <= 0) return 0
-
-            var written = 0
-            while (written < len) {
-                val next = nextChar()
-                if (next == -1) {
-                    break
-                }
-                cbuf[off + written] = next.toChar()
-                written++
-            }
-
-            return if (written == 0) -1 else written
-        }
-
-        override fun close() {
-            delegate.close()
-        }
-
-        private fun nextChar(): Int {
-            if (outputBuffer.isNotEmpty()) {
-                return outputBuffer.removeFirst().code
-            }
-
-            val next = readRawChar()
-            if (next == -1) return -1
-            if (next.toChar() != '&') {
-                return next
-            }
-
-            val candidate = readEntityCandidate()
-            return if (isValidEntity(candidate)) {
-                outputBuffer.addLast('&')
-                candidate.forEach(outputBuffer::addLast)
-                outputBuffer.removeFirst().code
-            } else {
-                replayCandidate(candidate)
-                "&amp;".forEach(outputBuffer::addLast)
-                outputBuffer.removeFirst().code
-            }
-        }
-
-        private fun readRawChar(): Int {
-            if (replayBuffer.isNotEmpty()) {
-                return replayBuffer.removeFirst().code
-            }
-            return delegate.read()
-        }
-
-        private fun readEntityCandidate(): String {
-            val builder = StringBuilder()
-            while (builder.length < 32) {
-                val next = delegate.read()
-                if (next == -1) {
-                    break
-                }
-                val ch = next.toChar()
-                builder.append(ch)
-                if (ch == ';') {
-                    break
-                }
-                if (ch == '&' || ch == '<' || ch == '>' || ch == '"' || ch == '\'' || ch.isWhitespace()) {
-                    break
-                }
-            }
-            return builder.toString()
-        }
-
-        private fun replayCandidate(candidate: String) {
-            for (index in candidate.indices.reversed()) {
-                replayBuffer.addFirst(candidate[index])
-            }
-        }
-
-        private fun isValidEntity(candidate: String): Boolean {
-            if (!candidate.endsWith(";")) return false
-            val body = candidate.dropLast(1)
-            return when {
-                body in setOf("amp", "lt", "gt", "quot", "apos") -> true
-                body.startsWith("#x", ignoreCase = true) && body.length > 2 ->
-                    body.drop(2).all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
-                body.startsWith("#") && body.length > 1 ->
-                    body.drop(1).all(Char::isDigit)
-                else -> false
-            }
-        }
     }
 
     @Deprecated(

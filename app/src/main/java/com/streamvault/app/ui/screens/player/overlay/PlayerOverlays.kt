@@ -297,10 +297,12 @@ fun ChannelInfoOverlay(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            StatusPill(
-                                label = stringResource(R.string.player_live_channel, displayChannelNumber),
-                                containerColor = AppColors.BrandMuted
-                            )
+                            if (displayChannelNumber > 0) {
+                                StatusPill(
+                                    label = stringResource(R.string.player_live_channel, displayChannelNumber),
+                                    containerColor = AppColors.BrandMuted
+                                )
+                            }
                             if (showTimeshiftControls) {
                                 StatusPill(
                                     label = stringResource(R.string.player_live_rewind_badge),
@@ -1039,7 +1041,13 @@ private fun CompactMenuActionButton(
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.White.copy(alpha = 0.08f),
-            focusedContainerColor = Primary.copy(alpha = 0.88f)
+            focusedContainerColor = Color.White.copy(alpha = 0.16f)
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.75f))
+            )
         ),
         modifier = modifier
             .onFocusChanged {
@@ -1519,12 +1527,8 @@ fun EpgOverlay(
     currentProgram: Program?,
     nextProgram: Program?,
     upcomingPrograms: List<Program>,
-    overlayFocusRequester: FocusRequester = remember { FocusRequester() },
-    preferredFocusedProgramToken: Long? = null,
-    onFocusedProgramChange: (Long) -> Unit = {},
     onDismiss: () -> Unit,
     onOpenArchiveBrowser: (() -> Unit)? = null,
-    onPlayCatchUp: (Program) -> Unit,
     onOverlayInteracted: () -> Unit = {}
 ) {
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -1704,33 +1708,14 @@ fun EpgOverlay(
                     items(displayPrograms.size) { index ->
                         val program = displayPrograms[index]
                         val isNext = index == 0 && nextProgram != null
-                        val focusToken = if (program.id > 0) program.id else program.startTime
-                        val shouldRequestFocus = preferredFocusedProgramToken?.let { it == focusToken } ?: (index == 0)
 
-                        TvClickableSurface(
-                            onClick = {
-                                if (program.hasArchive || currentChannel?.catchUpSupported == true) {
-                                    onOverlayInteracted()
-                                    onPlayCatchUp(program)
-                                }
-                            },
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = if (isNext) Primary.copy(alpha = 0.08f) else Color.Transparent,
-                                focusedContainerColor = Primary.copy(alpha = 0.2f)
-                            ),
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .then(
-                                    if (shouldRequestFocus) Modifier.focusRequester(overlayFocusRequester)
-                                    else Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isNext) Primary.copy(alpha = 0.08f) else Color.Transparent
                                 )
-                                .onFocusChanged {
-                                    if (it.isFocused) {
-                                        onOverlayInteracted()
-                                        onFocusedProgramChange(focusToken)
-                                    }
-                                }
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 if (isNext) {
@@ -1825,6 +1810,9 @@ fun DiagnosticsOverlay(
             PlayerMetaRow(stringResource(R.string.player_diagnostics_video_codec), stats.videoCodec)
             PlayerMetaRow(stringResource(R.string.player_diagnostics_video_bitrate), "${stats.videoBitrate / 1000} kbps")
             PlayerMetaRow(stringResource(R.string.player_diagnostics_dropped_frames), stats.droppedFrames.toString())
+            if (stats.ttffMs > 0L) {
+                PlayerMetaRow("TTFF", "${stats.ttffMs} ms")
+            }
             PlayerOverlaySectionLabel(stringResource(R.string.player_diagnostics_section_audio))
             PlayerMetaRow(stringResource(R.string.player_diagnostics_audio_codec), stats.audioCodec)
             PlayerOverlaySectionLabel(stringResource(R.string.player_diagnostics_section_recovery))

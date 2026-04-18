@@ -24,7 +24,8 @@ interface EpgSourceRepository {
     suspend fun deleteSource(id: Long)
 
     suspend fun setSourceEnabled(id: Long, enabled: Boolean)
-
+    /** Returns all provider IDs that have this source assigned, regardless of UI load state. */
+    suspend fun getProviderIdsForSource(sourceId: Long): List<Long>
     // ── Provider ↔ Source assignment ───────────────────────────────
 
     fun getAssignmentsForProvider(providerId: Long): Flow<List<ProviderEpgSourceAssignment>>
@@ -34,6 +35,15 @@ interface EpgSourceRepository {
     suspend fun unassignSourceFromProvider(providerId: Long, epgSourceId: Long)
 
     suspend fun updateAssignmentPriority(providerId: Long, epgSourceId: Long, priority: Int)
+
+    /** Atomically swaps the priorities of two assignments within a single database transaction. */
+    suspend fun swapAssignmentPriorities(
+        providerId: Long,
+        epgSourceId1: Long,
+        newPriority1: Int,
+        epgSourceId2: Long,
+        newPriority2: Int
+    )
 
     // ── Refresh / Ingestion ────────────────────────────────────────
 

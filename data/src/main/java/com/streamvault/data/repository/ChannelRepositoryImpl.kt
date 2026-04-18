@@ -1,7 +1,9 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.ChannelDao
+import com.streamvault.data.local.dao.FavoriteDao
 import com.streamvault.data.local.entity.ChannelBrowseEntity
 import com.streamvault.data.local.entity.CategoryEntity
 import com.streamvault.data.local.entity.ChannelEntity
@@ -12,8 +14,10 @@ import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.StreamInfo
+import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.repository.ChannelRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
@@ -28,6 +32,7 @@ import javax.inject.Singleton
 class ChannelRepositoryImpl @Inject constructor(
     private val channelDao: ChannelDao,
     private val categoryDao: CategoryDao,
+    private val favoriteDao: FavoriteDao,
     private val preferencesRepository: PreferencesRepository,
     private val parentalControlManager: com.streamvault.domain.manager.ParentalControlManager,
     private val xtreamStreamUrlResolver: XtreamStreamUrlResolver
@@ -57,6 +62,37 @@ class ChannelRepositoryImpl @Inject constructor(
     override fun getChannelsByCategory(providerId: Long, categoryId: Long): Flow<List<Channel>> =
         observeChannels(channelFlow(providerId, categoryId), providerId)
 
+    override fun getChannelsByCategoryPage(providerId: Long, categoryId: Long, limit: Int): Flow<List<Channel>> =
+        observeChannels(channelFlowPage(providerId, categoryId, limit), providerId)
+
+    override fun searchChannelsByCategoryPaged(providerId: Long, categoryId: Long, query: String, limit: Int): Flow<List<Channel>> =
+        query.trim().takeIf { it.length >= MIN_SEARCH_QUERY_LENGTH }?.toFtsPrefixQuery().let { ftsQuery ->
+            if (ftsQuery.isNullOrBlank()) {
+                flowOf(emptyList())
+            } else {
+                combine(
+                    if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+                        safeSearchFlow(channelDao.search(providerId, ftsQuery, limit))
+                    } else {
+                        safeSearchFlow(channelDao.searchByCategory(providerId, categoryId, ftsQuery, limit))
+                    },
+                    preferencesRepository.parentalControlLevel,
+                    parentalControlManager.unlockedCategoriesForProvider(providerId),
+                    preferencesRepository.liveChannelNumberingMode
+                ) { entities, level, unlockedCats, numberingMode ->
+                    val filtered = if (level == 2) {
+                        entities.filter { entity ->
+                            val isUnlocked = entity.categoryId != null && unlockedCats.contains(entity.categoryId)
+                            (!entity.isAdult && !entity.isUserProtected) || isUnlocked
+                        }
+                    } else {
+                        entities
+                    }
+                    applyNumbering(groupAndMapChannels(filtered, unlockedCats), numberingMode)
+                }
+            }
+        }
+
     override fun getChannelsByNumber(providerId: Long, categoryId: Long): Flow<List<Channel>> =
         observeChannels(channelFlow(providerId, categoryId), providerId)
             .map(::sortChannelsByNumber)
@@ -72,9 +108,9 @@ class ChannelRepositoryImpl @Inject constructor(
             } else {
                 combine(
                     if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
-                        channelDao.search(providerId, ftsQuery, CATEGORY_SEARCH_LIMIT)
+                        safeSearchFlow(channelDao.search(providerId, ftsQuery, CATEGORY_SEARCH_LIMIT))
                     } else {
-                        channelDao.searchByCategory(providerId, categoryId, ftsQuery, CATEGORY_SEARCH_LIMIT)
+                        safeSearchFlow(channelDao.searchByCategory(providerId, categoryId, ftsQuery, CATEGORY_SEARCH_LIMIT))
                     },
                     preferencesRepository.parentalControlLevel,
                     parentalControlManager.unlockedCategoriesForProvider(providerId),
@@ -133,7 +169,7 @@ class ChannelRepositoryImpl @Inject constructor(
             if (ftsQuery.isNullOrBlank()) {
                 flowOf(emptyList())
             } else combine(
-                channelDao.search(providerId, ftsQuery, GLOBAL_SEARCH_LIMIT),
+                safeSearchFlow(channelDao.search(providerId, ftsQuery, GLOBAL_SEARCH_LIMIT)),
                 preferencesRepository.parentalControlLevel,
                 parentalControlManager.unlockedCategoriesForProvider(providerId),
                 preferencesRepository.liveChannelNumberingMode
@@ -149,23 +185,29 @@ class ChannelRepositoryImpl @Inject constructor(
 
                 applyNumbering(groupAndMapChannels(filtered, unlockedCats), numberingMode)
                     .rankSearchResults(query) { it.name }
+            }.combine(favoriteDao.getAllByType(providerId, ContentType.LIVE.name)) { channels, favorites ->
+                val favoriteIds = favorites.map { it.contentId }.toSet()
+                channels.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
             }
         }
 
     override suspend fun getChannel(channelId: Long): Channel? =
         channelDao.getById(channelId)?.toDomain()
 
-    override suspend fun getStreamInfo(channel: Channel): Result<StreamInfo> = try {
+    override suspend fun getStreamInfo(channel: Channel, preferStableUrl: Boolean): Result<StreamInfo> = try {
         xtreamStreamUrlResolver.resolveWithMetadata(
             url = channel.streamUrl,
             fallbackProviderId = channel.providerId,
             fallbackStreamId = channel.streamId,
-            fallbackContentType = ContentType.LIVE
+            fallbackContentType = ContentType.LIVE,
+            preferStableUrl = preferStableUrl
         )?.let { resolvedStream ->
             Result.success(
                 StreamInfo(
                     url = resolvedStream.url,
                     title = channel.name,
+                    streamType = StreamType.fromContainerExtension(resolvedStream.containerExtension),
+                    containerExtension = resolvedStream.containerExtension,
                     expirationTime = resolvedStream.expirationTime
                 )
             )
@@ -277,6 +319,7 @@ class ChannelRepositoryImpl @Inject constructor(
                 channel.copy(number = index + 1)
             }
             ChannelNumberingMode.PROVIDER -> channels
+            ChannelNumberingMode.HIDDEN -> channels.map { it.copy(number = 0) }
         }
 
     private fun channelFlow(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>> =
@@ -286,11 +329,27 @@ class ChannelRepositoryImpl @Inject constructor(
             channelDao.getByCategory(providerId, categoryId)
         }
 
+    private fun channelFlowPage(providerId: Long, categoryId: Long, limit: Int): Flow<List<ChannelBrowseEntity>> =
+        if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+            channelDao.getByProviderBrowsePage(providerId, limit)
+        } else {
+            channelDao.getByCategoryBrowsePage(providerId, categoryId, limit)
+        }
+
     private fun channelFlowWithoutErrors(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>> =
         if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
             channelDao.getByProviderWithoutErrors(providerId)
         } else {
             channelDao.getByCategoryWithoutErrors(providerId, categoryId)
+        }
+
+    private fun safeSearchFlow(source: Flow<List<ChannelBrowseEntity>>): Flow<List<ChannelBrowseEntity>> =
+        source.catch { error ->
+            if (error is SQLiteException) {
+                emit(emptyList<ChannelBrowseEntity>())
+            } else {
+                throw error
+            }
         }
 
     private fun buildMergedQualityOptions(

@@ -40,6 +40,7 @@ enum class PlayerTimeoutProfile(
             return when {
                 resolvedStreamType == ResolvedStreamType.HLS -> LIVE
                 resolvedStreamType == ResolvedStreamType.MPEG_TS_LIVE -> LIVE
+                resolvedStreamType == ResolvedStreamType.RTSP -> LIVE
                 resolvedStreamType == ResolvedStreamType.PROGRESSIVE -> PROGRESSIVE
                 streamInfo.streamType == StreamType.PROGRESSIVE -> PROGRESSIVE
                 else -> VOD

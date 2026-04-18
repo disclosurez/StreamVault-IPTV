@@ -9,6 +9,7 @@ import com.streamvault.data.local.entity.RecordingRunEntity
 import com.streamvault.data.local.entity.RecordingRunWithSchedule
 import com.streamvault.data.local.entity.RecordingScheduleEntity
 import com.streamvault.data.local.entity.RecordingStorageEntity
+import com.streamvault.data.local.entity.ProgramReminderEntity
 import com.streamvault.domain.model.RecordingStatus
 import kotlinx.coroutines.flow.Flow
 
@@ -111,4 +112,76 @@ interface RecordingStorageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(storage: RecordingStorageEntity)
+}
+
+@Dao
+interface ProgramReminderDao {
+    @Query(
+        """
+        SELECT * FROM program_reminders
+        WHERE is_dismissed = 0
+          AND program_start_time >= :now
+        ORDER BY remind_at ASC, program_start_time ASC
+        """
+    )
+    fun observeUpcoming(now: Long = System.currentTimeMillis()): Flow<List<ProgramReminderEntity>>
+
+    @Query(
+        """
+        SELECT * FROM program_reminders
+        WHERE provider_id = :providerId
+          AND channel_id = :channelId
+          AND program_title = :programTitle
+          AND program_start_time = :programStartTime
+        LIMIT 1
+        """
+    )
+    suspend fun getByProgram(
+        providerId: Long,
+        channelId: String,
+        programTitle: String,
+        programStartTime: Long
+    ): ProgramReminderEntity?
+
+    @Query("SELECT * FROM program_reminders WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): ProgramReminderEntity?
+
+    @Query(
+        """
+        SELECT * FROM program_reminders
+        WHERE is_dismissed = 0
+          AND notified_at IS NULL
+          AND program_start_time > :now
+        ORDER BY remind_at ASC
+        """
+    )
+    suspend fun getPendingActive(now: Long = System.currentTimeMillis()): List<ProgramReminderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(reminder: ProgramReminderEntity): Long
+
+    @Update
+    suspend fun update(reminder: ProgramReminderEntity)
+
+    @Query(
+        """
+        DELETE FROM program_reminders
+        WHERE provider_id = :providerId
+          AND channel_id = :channelId
+          AND program_title = :programTitle
+          AND program_start_time = :programStartTime
+        """
+    )
+    suspend fun deleteByProgram(
+        providerId: Long,
+        channelId: String,
+        programTitle: String,
+        programStartTime: Long
+    )
+
+    @Query("DELETE FROM program_reminders WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM program_reminders WHERE program_start_time < :beforeTime")
+    suspend fun deleteExpired(beforeTime: Long): Int
 }

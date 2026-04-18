@@ -130,12 +130,7 @@ class PreloadCoordinator(
         return stableHash(canonical)
     }
 
-    /** SHA-256 fingerprint truncated to 16 hex chars — stable across JVM restarts. */
-    private fun stableHash(input: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(input.toByteArray(Charsets.UTF_8))
-        return digest.take(8).joinToString("") { "%02x".format(it) }
-    }
+
 
     companion object {
         private const val TAG = "PreloadCoordinator"

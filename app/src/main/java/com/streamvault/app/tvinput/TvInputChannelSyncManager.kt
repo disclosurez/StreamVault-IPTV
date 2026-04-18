@@ -90,7 +90,7 @@ class TvInputChannelSyncManager @Inject constructor(
         val merged = mutableMapOf<String, List<Program>>()
 
         epgIds.distinct().chunked(EPG_QUERY_CHUNK_SIZE).forEach { chunk ->
-            merged += epgRepository.getProgramsForChannels(providerId, chunk, start, end).first()
+            merged += epgRepository.getProgramsForChannelsSnapshot(providerId, chunk, start, end)
         }
         return merged
     }

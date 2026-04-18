@@ -1,5 +1,6 @@
 package com.streamvault.app.ui.screens.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1152,18 +1153,34 @@ internal fun summarizeRecordingOutputPath(path: String): String {
 }
 
 @Composable
-internal fun RecordingActionButton(label: String, accent: Color, onClick: () -> Unit) {
+internal fun RecordingActionButton(
+    label: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     TvButton(
         onClick = onClick,
         modifier = Modifier
-            .widthIn(min = 190.dp, max = 260.dp)
-            .heightIn(min = 52.dp),
+            .widthIn(min = 168.dp, max = 220.dp)
+            .heightIn(min = 52.dp)
+            .then(modifier),
         shape = ButtonDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ButtonDefaults.colors(
             containerColor = accent.copy(alpha = 0.14f),
             focusedContainerColor = accent.copy(alpha = 0.28f),
             contentColor = accent,
             focusedContentColor = accent
+        ),
+        border = ButtonDefaults.border(
+            border = Border(
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                shape = RoundedCornerShape(10.dp)
+            ),
+            focusedBorder = Border(
+                border = BorderStroke(FocusSpec.BorderWidth, Color.White),
+                shape = RoundedCornerShape(10.dp)
+            )
         ),
         scale = ButtonDefaults.scale(focusedScale = 1f)
     ) {
@@ -1356,10 +1373,12 @@ internal fun VodViewMode.descriptionResId(): Int = when (this) {
 internal fun ChannelNumberingMode.labelResId(): Int = when (this) {
     ChannelNumberingMode.GROUP -> R.string.settings_live_channel_numbering_group
     ChannelNumberingMode.PROVIDER -> R.string.settings_live_channel_numbering_provider
+    ChannelNumberingMode.HIDDEN -> R.string.settings_live_channel_numbering_hidden
 }
 
 internal fun ChannelNumberingMode.descriptionResId(): Int = when (this) {
     ChannelNumberingMode.GROUP -> R.string.settings_live_channel_numbering_group_desc
     ChannelNumberingMode.PROVIDER -> R.string.settings_live_channel_numbering_provider_desc
+    ChannelNumberingMode.HIDDEN -> R.string.settings_live_channel_numbering_hidden_desc
 }
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.streamvault.app.ui.model.applyProviderCategoryDisplayPreferences
 import com.streamvault.domain.manager.ParentalControlManager
+import com.streamvault.domain.manager.ProgramReminderManager
 import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ChannelEpgMapping
@@ -12,6 +13,7 @@ import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.CombinedCategory
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.EpgOverrideCandidate
+import com.streamvault.domain.model.Favorite
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.repository.ChannelRepository
@@ -47,6 +49,7 @@ data class EpgUiState(
     val currentProviderName: String? = null,
     val providerSourceLabel: String = "",
     val providerArchiveSummary: String = "",
+    val combinedProfileId: Long? = null,
     val categories: List<Category> = emptyList(),
     val selectedCategoryId: Long = ChannelRepository.ALL_CHANNELS_ID,
     val programSearchQuery: String = "",
@@ -80,6 +83,21 @@ data class EpgOverrideUiState(
     val isSaving: Boolean = false,
     val error: String? = null
 )
+
+data class ProgramReminderUiState(
+    val providerId: Long = 0L,
+    val channelId: String = "",
+    val programTitle: String = "",
+    val programStartTime: Long = 0L,
+    val isScheduled: Boolean = false,
+    val isLoading: Boolean = false
+) {
+    fun matches(providerId: Long, channelId: String, programTitle: String, programStartTime: Long): Boolean =
+        this.providerId == providerId &&
+            this.channelId == channelId &&
+            this.programTitle == programTitle &&
+            this.programStartTime == programStartTime
+}
 
 enum class GuideChannelMode {
     ALL,
@@ -160,6 +178,18 @@ private data class GuideSelectionRequest(
     val isStartupSelection: Boolean
 )
 
+private data class CombinedGuideDependencies(
+    val combinedCategories: List<CombinedCategory>,
+    val providerIds: List<Long>,
+    val customCategories: List<Category>,
+    val selection: Pair<GuideSelectionSeed, Int>
+)
+
+private data class CombinedGuideRequest(
+    val request: GuideBaseRequest,
+    val providerIds: List<Long>
+)
+
 @HiltViewModel
 class EpgViewModel @Inject constructor(
     private val providerRepository: ProviderRepository,
@@ -170,6 +200,7 @@ class EpgViewModel @Inject constructor(
     private val favoriteRepository: FavoriteRepository,
     private val preferencesRepository: PreferencesRepository,
     private val parentalControlManager: ParentalControlManager,
+    private val programReminderManager: ProgramReminderManager,
     private val getCustomCategories: GetCustomCategories
 ) : ViewModel() {
 
@@ -201,6 +232,8 @@ class EpgViewModel @Inject constructor(
     private val baseGuideSnapshot = MutableStateFlow<GuideBaseSnapshot?>(null)
     private val _overrideUiState = MutableStateFlow(EpgOverrideUiState())
     val overrideUiState: StateFlow<EpgOverrideUiState> = _overrideUiState.asStateFlow()
+    private val _programReminderUiState = MutableStateFlow(ProgramReminderUiState())
+    val programReminderUiState: StateFlow<ProgramReminderUiState> = _programReminderUiState.asStateFlow()
     private var overrideSearchJob: Job? = null
     private var combinedCategoriesById: Map<Long, CombinedCategory> = emptyMap()
 
@@ -254,6 +287,76 @@ class EpgViewModel @Inject constructor(
     fun dismissEpgOverride() {
         overrideSearchJob?.cancel()
         _overrideUiState.value = EpgOverrideUiState()
+    }
+
+    fun loadProgramReminderState(channel: Channel, program: Program) {
+        val providerId = program.providerId.takeIf { it > 0L } ?: channel.providerId
+        val channelId = program.channelId
+        if (providerId <= 0L || channelId.isBlank()) {
+            _programReminderUiState.value = ProgramReminderUiState()
+            return
+        }
+        _programReminderUiState.update {
+            it.copy(
+                providerId = providerId,
+                channelId = channelId,
+                programTitle = program.title,
+                programStartTime = program.startTime,
+                isLoading = true
+            )
+        }
+        viewModelScope.launch {
+            val scheduled = programReminderManager.isReminderScheduled(
+                providerId = providerId,
+                channelId = channelId,
+                programTitle = program.title,
+                programStartTime = program.startTime
+            )
+            _programReminderUiState.value = ProgramReminderUiState(
+                providerId = providerId,
+                channelId = channelId,
+                programTitle = program.title,
+                programStartTime = program.startTime,
+                isScheduled = scheduled,
+                isLoading = false
+            )
+        }
+    }
+
+    fun toggleProgramReminder(channel: Channel, program: Program) {
+        val providerId = program.providerId.takeIf { it > 0L } ?: channel.providerId
+        val channelId = program.channelId
+        if (providerId <= 0L || channelId.isBlank()) return
+        val currentState = _programReminderUiState.value
+        val isScheduled = currentState.matches(providerId, channelId, program.title, program.startTime) &&
+            currentState.isScheduled
+        _programReminderUiState.update {
+            it.copy(
+                providerId = providerId,
+                channelId = channelId,
+                programTitle = program.title,
+                programStartTime = program.startTime,
+                isLoading = true
+            )
+        }
+        viewModelScope.launch {
+            if (isScheduled) {
+                programReminderManager.cancelReminder(
+                    providerId = providerId,
+                    channelId = channelId,
+                    programTitle = program.title,
+                    programStartTime = program.startTime
+                )
+            } else {
+                programReminderManager.scheduleReminder(
+                    providerId = providerId,
+                    channelId = channelId,
+                    channelName = channel.name,
+                    program = program
+                )
+            }
+            loadProgramReminderState(channel, program)
+        }
     }
 
     fun updateEpgOverrideSearch(query: String) {
@@ -421,6 +524,7 @@ class EpgViewModel @Inject constructor(
                             currentProviderName = null,
                             providerSourceLabel = "",
                             providerArchiveSummary = "",
+                            combinedProfileId = null,
                             categories = emptyList(),
                             channels = emptyList(),
                             programsByChannel = emptyMap(),
@@ -442,12 +546,14 @@ class EpgViewModel @Inject constructor(
 
                 when (activeSource) {
                     is ActiveLiveSource.ProviderSource -> {
+                        _uiState.update { it.copy(combinedProfileId = null) }
                         val provider = activeProvider?.takeIf { it.id == activeSource.providerId }
                             ?: providerRepository.getProvider(activeSource.providerId)
                             ?: return@collectLatest
                         observeSingleProviderGuide(provider)
                     }
                     is ActiveLiveSource.CombinedM3uSource -> {
+                        _uiState.update { it.copy(combinedProfileId = activeSource.profileId) }
                         observeCombinedGuide(activeSource.profileId)
                     }
                     null -> Unit
@@ -459,7 +565,7 @@ class EpgViewModel @Inject constructor(
     private suspend fun observeSingleProviderGuide(provider: com.streamvault.domain.model.Provider) {
         combine(
             channelRepository.getCategories(provider.id),
-            getCustomCategories(ContentType.LIVE),
+            getCustomCategories(provider.id, ContentType.LIVE),
             preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.LIVE),
             preferencesRepository.getCategorySortMode(provider.id, ContentType.LIVE)
         ) { providerCategories, customCategories, hiddenCategoryIds, sortMode ->
@@ -469,6 +575,8 @@ class EpgViewModel @Inject constructor(
                 hiddenCategoryIds = hiddenCategoryIds,
                 sortMode = sortMode
             )
+        }.combine(preferencesRepository.showAllChannelsCategory) { data, showAll ->
+            data.copy(showAllChannels = showAll)
         }
             .combine(
                 combine(
@@ -504,7 +612,8 @@ class EpgViewModel @Inject constructor(
                 )
                 val orderedCategories = buildGuideCategoryList(
                     providerCategories = visibleProviderCategories,
-                    customCategories = categoryData.customCategories
+                    customCategories = categoryData.customCategories,
+                    showAllChannels = categoryData.showAllChannels
                 )
                 val resolvedCategoryId = resolveGuideCategorySelection(
                     requestedCategoryId = selection.requestedCategoryId,
@@ -547,7 +656,7 @@ class EpgViewModel @Inject constructor(
                     )
                 }
 
-                combine(loadGuideChannelsForProvider(provider.id, request), favoriteRepository.getFavorites(ContentType.LIVE)) { preferredChannels, favorites ->
+                combine(loadGuideChannelsForProvider(provider.id, request), favoriteRepository.getFavorites(provider.id, ContentType.LIVE)) { preferredChannels, favorites ->
                     val favoriteIds = favorites.map { it.contentId }.toSet()
                     GuideChannelSelection(
                         channels = preferredChannels.filterNot { channel -> channel.categoryId in request.hiddenCategoryIds },
@@ -581,9 +690,13 @@ class EpgViewModel @Inject constructor(
     }
 
     private suspend fun observeCombinedGuide(profileId: Long) {
+        val providerIdsFlow = combinedProviderIdsFlow(profileId)
         combine(
             combinedM3uRepository.getCombinedCategories(profileId),
-            getCustomCategories(ContentType.LIVE),
+            providerIdsFlow,
+            providerIdsFlow.flatMapLatest { providerIds ->
+                getCustomCategories(providerIds, ContentType.LIVE)
+            },
             combine(
                 selectedCategoryId,
                 startupCategoryId,
@@ -600,30 +713,43 @@ class EpgViewModel @Inject constructor(
             }.combine(preferencesRepository.parentalControlLevel) { selection, parentalControlLevel ->
                 selection to parentalControlLevel
             }
-        ) { combinedCategories, customCategories, selection ->
+        ) { combinedCategories, providerIds, customCategories, selection ->
             combinedCategoriesById = combinedCategories.associateBy { it.category.id }
+            CombinedGuideDependencies(
+                combinedCategories = combinedCategories,
+                providerIds = providerIds,
+                customCategories = customCategories,
+                selection = selection
+            )
+        }.combine(preferencesRepository.showAllChannelsCategory) { data, showAllChannels ->
             val categories = buildGuideCategoryList(
-                providerCategories = combinedCategories.map { it.category },
-                customCategories = customCategories
+                providerCategories = data.combinedCategories.map { it.category },
+                customCategories = data.customCategories,
+                showAllChannels = showAllChannels
             )
             val resolvedCategoryId = resolveGuideCategorySelection(
-                requestedCategoryId = selection.first.requestedCategoryId,
+                requestedCategoryId = data.selection.first.requestedCategoryId,
                 categories = categories,
-                parentalControlLevel = selection.second,
+                parentalControlLevel = data.selection.second,
                 unlockedCategoryIds = emptySet(),
-                fallbackFromEmptyFavorites = selection.first.isStartupSelection
+                fallbackFromEmptyFavorites = data.selection.first.isStartupSelection
             )
-            GuideBaseRequest(
-                categories = categories,
-                hiddenCategoryIds = emptySet(),
-                resolvedCategoryId = resolvedCategoryId,
-                parentalControlLevel = selection.second,
-                anchorTime = selection.first.anchorTime,
-                favoritesOnly = selection.first.favoritesOnly,
-                windowStart = selection.first.anchorTime - LOOKBACK_MS,
-                windowEnd = selection.first.anchorTime + LOOKAHEAD_MS
+            CombinedGuideRequest(
+                request = GuideBaseRequest(
+                    categories = categories,
+                    hiddenCategoryIds = emptySet(),
+                    resolvedCategoryId = resolvedCategoryId,
+                    parentalControlLevel = data.selection.second,
+                    anchorTime = data.selection.first.anchorTime,
+                    favoritesOnly = data.selection.first.favoritesOnly,
+                    windowStart = data.selection.first.anchorTime - LOOKBACK_MS,
+                    windowEnd = data.selection.first.anchorTime + LOOKAHEAD_MS
+                ),
+                providerIds = data.providerIds
             )
-        }.collectLatest { request ->
+        }.collectLatest { combinedRequest ->
+            val request = combinedRequest.request
+            val providerIds = combinedRequest.providerIds
             val categories = request.categories
             val profile = combinedM3uRepository.getProfile(profileId)
             val profileName = profile?.name ?: "Combined M3U"
@@ -647,8 +773,8 @@ class EpgViewModel @Inject constructor(
             }
 
             combine(
-                combinedGuideChannels(profileId, request.resolvedCategoryId),
-                favoriteRepository.getFavorites(ContentType.LIVE)
+                combinedGuideChannels(profileId, request.resolvedCategoryId, providerIds),
+                observeLiveFavorites(providerIds)
             ) { channels, favorites ->
                 val favoriteIds = favorites.map { it.contentId }.toSet()
                 val preferredChannels = if (request.favoritesOnly) channels.filter { it.id in favoriteIds } else channels
@@ -676,13 +802,13 @@ class EpgViewModel @Inject constructor(
         }
     }
 
-    private fun combinedGuideChannels(profileId: Long, categoryId: Long) =
+    private fun combinedGuideChannels(profileId: Long, categoryId: Long, providerIds: List<Long>) =
         if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
             val flows = combinedCategoriesById.values.map { combinedM3uRepository.getCombinedChannels(profileId, it) }
             if (flows.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
             else combine(flows) { arrays -> arrays.toList().flatMap { it } }
         } else if (categoryId == VirtualCategoryIds.FAVORITES) {
-            favoriteRepository.getFavorites(ContentType.LIVE)
+            observeLiveFavorites(providerIds)
                 .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
                 .flatMapLatest(::loadGuideChannelsByOrderedIds)
         } else if (categoryId < 0L) {
@@ -880,7 +1006,8 @@ class EpgViewModel @Inject constructor(
 
     private fun buildGuideCategoryList(
         providerCategories: List<Category>,
-        customCategories: List<Category>
+        customCategories: List<Category>,
+        showAllChannels: Boolean = true
     ): List<Category> {
         val favoritesCategory = customCategories.find { it.id == VirtualCategoryIds.FAVORITES }
         return buildList {
@@ -888,14 +1015,16 @@ class EpgViewModel @Inject constructor(
                 add(favoritesCategory)
             }
             addAll(customCategories.filter { it.id != VirtualCategoryIds.FAVORITES })
-            add(
-                Category(
-                    id = ChannelRepository.ALL_CHANNELS_ID,
-                    name = "All Channels",
-                    type = ContentType.LIVE,
-                    count = providerCategories.sumOf(Category::count)
+            if (showAllChannels) {
+                add(
+                    Category(
+                        id = ChannelRepository.ALL_CHANNELS_ID,
+                        name = "All Channels",
+                        type = ContentType.LIVE,
+                        count = providerCategories.sumOf(Category::count)
+                    )
                 )
-            )
+            }
             addAll(providerCategories)
         }
     }
@@ -907,7 +1036,7 @@ class EpgViewModel @Inject constructor(
         ChannelRepository.ALL_CHANNELS_ID -> combine(
             channelRepository.getChannelsByNumber(providerId, request.resolvedCategoryId),
             channelRepository.getChannelsWithoutErrors(providerId, request.resolvedCategoryId),
-            favoriteRepository.getFavorites(ContentType.LIVE)
+            favoriteRepository.getFavorites(providerId, ContentType.LIVE)
         ) { channelsByNumber, healthyChannels, favorites ->
             val favoriteIds = favorites.map { it.contentId }.toSet()
             if (request.favoritesOnly) {
@@ -918,7 +1047,7 @@ class EpgViewModel @Inject constructor(
             }
         }
 
-        VirtualCategoryIds.FAVORITES -> favoriteRepository.getFavorites(ContentType.LIVE)
+        VirtualCategoryIds.FAVORITES -> favoriteRepository.getFavorites(providerId, ContentType.LIVE)
             .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
             .flatMapLatest { ids -> loadGuideChannelsByOrderedIds(ids, providerId) }
 
@@ -929,7 +1058,7 @@ class EpgViewModel @Inject constructor(
         else -> combine(
             channelRepository.getChannelsByNumber(providerId, request.resolvedCategoryId),
             channelRepository.getChannelsWithoutErrors(providerId, request.resolvedCategoryId),
-            favoriteRepository.getFavorites(ContentType.LIVE)
+            favoriteRepository.getFavorites(providerId, ContentType.LIVE)
         ) { channelsByNumber, healthyChannels, favorites ->
             val favoriteIds = favorites.map { it.contentId }.toSet()
             if (request.favoritesOnly) {
@@ -939,6 +1068,18 @@ class EpgViewModel @Inject constructor(
                 healthyChannels.ifEmpty { channelsByNumber }
             }
         }
+    }
+
+    private fun combinedProviderIdsFlow(profileId: Long): kotlinx.coroutines.flow.Flow<List<Long>> = kotlinx.coroutines.flow.flow {
+        emit(combinedM3uRepository.getProfile(profileId)?.members.orEmpty())
+    }.map { members ->
+        members.filter { it.enabled }.map { it.providerId }
+    }
+
+    private fun observeLiveFavorites(providerIds: List<Long>): kotlinx.coroutines.flow.Flow<List<Favorite>> = when (providerIds.size) {
+        0 -> kotlinx.coroutines.flow.flowOf(emptyList())
+        1 -> favoriteRepository.getFavorites(providerIds.first(), ContentType.LIVE)
+        else -> favoriteRepository.getFavorites(providerIds, ContentType.LIVE)
     }
 
     private fun loadGuideChannelsByOrderedIds(ids: List<Long>, providerId: Long? = null) =
@@ -993,7 +1134,7 @@ class EpgViewModel @Inject constructor(
                 }.distinct()
                 runCatching {
                     if (xmltvKeys.isEmpty()) emptyMap()
-                    else epgRepository.getProgramsForChannels(providerId, xmltvKeys, windowStart, windowEnd).first()
+                    else epgRepository.getProgramsForChannelsSnapshot(providerId, xmltvKeys, windowStart, windowEnd)
                 }.getOrElse { emptyMap() }
             } else {
                 emptyMap()
@@ -1184,8 +1325,7 @@ class EpgViewModel @Inject constructor(
         unlockedCategoryIds: Set<Long>,
         fallbackFromEmptyFavorites: Boolean = false
     ): Long {
-        val requestedExists = requestedCategoryId == ChannelRepository.ALL_CHANNELS_ID ||
-            categories.any { it.id == requestedCategoryId }
+        val requestedExists = categories.any { it.id == requestedCategoryId }
         if (requestedCategoryId == ChannelRepository.ALL_CHANNELS_ID && requestedExists) {
             return ChannelRepository.ALL_CHANNELS_ID
         }
@@ -1193,7 +1333,13 @@ class EpgViewModel @Inject constructor(
         val requestedCategory = categories.firstOrNull { it.id == requestedCategoryId }
         if (requestedCategory != null && isGuideCategoryAccessible(requestedCategory, parentalControlLevel, unlockedCategoryIds)) {
             if (fallbackFromEmptyFavorites && requestedCategory.id == VirtualCategoryIds.FAVORITES && requestedCategory.count <= 0) {
-                return ChannelRepository.ALL_CHANNELS_ID
+                return categories.find { it.id == ChannelRepository.ALL_CHANNELS_ID }?.id
+                    ?: categories.firstOrNull {
+                        !(it.id == VirtualCategoryIds.FAVORITES && it.count <= 0) &&
+                            isGuideCategoryAccessible(it, parentalControlLevel, unlockedCategoryIds)
+                    }?.id
+                    ?: categories.firstOrNull()?.id
+                    ?: ChannelRepository.ALL_CHANNELS_ID
             }
             return requestedCategory.id
         }
@@ -1204,7 +1350,7 @@ class EpgViewModel @Inject constructor(
             } else {
                 isGuideCategoryAccessible(category, parentalControlLevel, unlockedCategoryIds)
             }
-        }?.id ?: ChannelRepository.ALL_CHANNELS_ID
+        }?.id ?: categories.firstOrNull()?.id ?: ChannelRepository.ALL_CHANNELS_ID
     }
 
     private fun isGuideCategoryAccessible(
@@ -1238,5 +1384,6 @@ private data class GuideCategoryData(
     val providerCategories: List<Category>,
     val customCategories: List<Category>,
     val hiddenCategoryIds: Set<Long>,
-    val sortMode: com.streamvault.domain.model.CategorySortMode
+    val sortMode: com.streamvault.domain.model.CategorySortMode,
+    val showAllChannels: Boolean = true
 )

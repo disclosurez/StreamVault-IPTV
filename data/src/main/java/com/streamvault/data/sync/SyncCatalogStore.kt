@@ -1,8 +1,13 @@
 package com.streamvault.data.sync
 
+import android.util.Log
 import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CatalogSyncDao
+import com.streamvault.data.local.dao.CategoryDao
+import com.streamvault.data.local.dao.ChannelDao
 import com.streamvault.data.local.dao.MovieDao
+import com.streamvault.data.local.dao.SeriesDao
+import com.streamvault.data.local.dao.TmdbIdentityDao
 import com.streamvault.data.local.entity.CategoryEntity
 import com.streamvault.data.local.entity.CategoryImportStageEntity
 import com.streamvault.data.local.entity.ChannelEntity
@@ -11,32 +16,58 @@ import com.streamvault.data.local.entity.MovieEntity
 import com.streamvault.data.local.entity.MovieImportStageEntity
 import com.streamvault.data.local.entity.SeriesEntity
 import com.streamvault.data.local.entity.SeriesImportStageEntity
+import com.streamvault.data.local.entity.TmdbIdentityEntity
+import com.streamvault.domain.model.ContentType
 import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.random.Random
 
 internal class SyncCatalogStore(
+    private val channelDao: ChannelDao,
     private val movieDao: MovieDao,
+    private val seriesDao: SeriesDao,
+    private val categoryDao: CategoryDao,
     private val catalogSyncDao: CatalogSyncDao,
-    private val transactionRunner: DatabaseTransactionRunner
+    private val tmdbIdentityDao: TmdbIdentityDao,
+    private val transactionRunner: DatabaseTransactionRunner,
+    private val sizeLimits: CatalogSizeLimits = CatalogSizeLimits()
 ) {
-    private val sessionIds = AtomicLong(System.currentTimeMillis())
+    companion object {
+        private const val TAG = "SyncCatalogStore"
+        private const val STAGE_BATCH_SIZE = 500
+    }
+
+    private val sessionIds = AtomicLong(Random.nextLong(1L, Long.MAX_VALUE))
     private val digest = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
-    fun newSessionId(): Long = sessionIds.incrementAndGet()
+    fun newSessionId(): Long {
+        while (true) {
+            val current = sessionIds.get()
+            val next = if (current >= Long.MAX_VALUE - 1) {
+                Random.nextLong(1L, Long.MAX_VALUE)
+            } else {
+                current + 1
+            }
+            if (sessionIds.compareAndSet(current, next)) {
+                return next
+            }
+        }
+    }
 
     suspend fun replaceLiveCatalog(providerId: Long, categories: List<CategoryEntity>?, channels: List<ChannelEntity>): Int {
         val sessionId = newSessionId()
         val stagedChannels = buildChannelStages(providerId, sessionId, channels)
+        val limitedChannels = limitChannels(providerId, stagedChannels)
         try {
             clearProviderStaging(providerId)
             categories?.let { stageCategories(providerId, sessionId, it) }
-            insertStageRows(stagedChannels, catalogSyncDao::insertChannelStages)
+            insertStageRows(limitedChannels, catalogSyncDao::insertChannelStages)
             transactionRunner.inTransaction {
                 categories?.let { applyCategories(providerId, sessionId, "LIVE") }
                 applyChannels(providerId, sessionId)
             }
-            return stagedChannels.size
+            return limitedChannels.size
         } finally {
             clearSession(providerId, sessionId)
         }
@@ -180,27 +211,176 @@ internal class SyncCatalogStore(
     }
 
     private suspend fun applyCategories(providerId: Long, sessionId: Long, type: String) {
-        catalogSyncDao.updateChangedCategoriesFromStage(providerId, sessionId, type)
+        val stagedByCategoryId = catalogSyncDao.getCategoryStages(providerId, sessionId, type)
+            .associateBy { it.categoryId }
+        val remappedProtectedCategoryIds = mutableListOf<Long>()
+        val changed = categoryDao.getByProviderAndTypeSync(providerId, type)
+            .mapNotNull { current ->
+                val stage = stagedByCategoryId[current.categoryId] ?: return@mapNotNull null
+                if (current.syncFingerprint == stage.syncFingerprint) return@mapNotNull null
+                val invalidateProtection = current.isUserProtected
+                if (invalidateProtection) {
+                    remappedProtectedCategoryIds += current.categoryId
+                }
+                current.copy(
+                    name = stage.name,
+                    parentId = stage.parentId,
+                    isAdult = stage.isAdult,
+                    isUserProtected = if (invalidateProtection) false else current.isUserProtected,
+                    syncFingerprint = stage.syncFingerprint
+                )
+            }
+        if (changed.isNotEmpty()) {
+            categoryDao.updateAll(changed)
+        }
+        if (remappedProtectedCategoryIds.isNotEmpty()) {
+            when (type) {
+                "LIVE" -> channelDao.clearProtectionForCategories(providerId, remappedProtectedCategoryIds)
+                "MOVIE" -> movieDao.clearProtectionForCategories(providerId, remappedProtectedCategoryIds)
+                "SERIES" -> seriesDao.clearProtectionForCategories(providerId, remappedProtectedCategoryIds)
+            }
+        }
         catalogSyncDao.insertMissingCategoriesFromStage(providerId, sessionId, type)
         catalogSyncDao.deleteStaleCategoriesForStage(providerId, sessionId, type)
     }
 
     private suspend fun applyChannels(providerId: Long, sessionId: Long) {
-        catalogSyncDao.updateChangedChannelsFromStage(providerId, sessionId)
+        val stagedByStreamId = catalogSyncDao.getChannelStages(providerId, sessionId)
+            .associateBy { it.streamId }
+        val changed = channelDao.getByProviderSync(providerId)
+            .mapNotNull { current ->
+                val stage = stagedByStreamId[current.streamId] ?: return@mapNotNull null
+                if (current.syncFingerprint == stage.syncFingerprint) return@mapNotNull null
+                current.copy(
+                    name = stage.name,
+                    logoUrl = stage.logoUrl,
+                    groupTitle = stage.groupTitle,
+                    categoryId = stage.categoryId,
+                    categoryName = stage.categoryName,
+                    streamUrl = stage.streamUrl,
+                    epgChannelId = stage.epgChannelId,
+                    number = stage.number,
+                    catchUpSupported = stage.catchUpSupported,
+                    catchUpDays = stage.catchUpDays,
+                    catchUpSource = stage.catchUpSource,
+                    isAdult = stage.isAdult,
+                    logicalGroupId = stage.logicalGroupId,
+                    errorCount = stage.errorCount,
+                    syncFingerprint = stage.syncFingerprint
+                )
+            }
+        if (changed.isNotEmpty()) {
+            channelDao.updateAll(changed)
+        }
         catalogSyncDao.insertMissingChannelsFromStage(providerId, sessionId)
         catalogSyncDao.deleteStaleChannelsForStage(providerId, sessionId)
     }
 
     private suspend fun applyMovies(providerId: Long, sessionId: Long) {
-        catalogSyncDao.updateChangedMoviesFromStage(providerId, sessionId)
+        val stagedByStreamId = catalogSyncDao.getMovieStages(providerId, sessionId)
+            .associateBy { it.streamId }
+        val changed = movieDao.getByProviderSync(providerId)
+            .mapNotNull { current ->
+                val stage = stagedByStreamId[current.streamId] ?: return@mapNotNull null
+                if (current.syncFingerprint == stage.syncFingerprint) return@mapNotNull null
+                current.copy(
+                    name = stage.name,
+                    posterUrl = stage.posterUrl,
+                    backdropUrl = stage.backdropUrl,
+                    categoryId = stage.categoryId,
+                    categoryName = stage.categoryName,
+                    streamUrl = stage.streamUrl,
+                    containerExtension = stage.containerExtension,
+                    plot = stage.plot,
+                    cast = stage.cast,
+                    director = stage.director,
+                    genre = stage.genre,
+                    releaseDate = stage.releaseDate,
+                    duration = stage.duration,
+                    durationSeconds = stage.durationSeconds,
+                    rating = stage.rating,
+                    year = stage.year,
+                    tmdbId = stage.tmdbId,
+                    youtubeTrailer = stage.youtubeTrailer,
+                    isAdult = stage.isAdult,
+                    syncFingerprint = stage.syncFingerprint
+                )
+            }
+        if (changed.isNotEmpty()) {
+            movieDao.updateAll(changed)
+        }
         catalogSyncDao.insertMissingMoviesFromStage(providerId, sessionId)
         catalogSyncDao.deleteStaleMoviesForStage(providerId, sessionId)
+        refreshMovieTmdbIdentities(providerId)
     }
 
     private suspend fun applySeries(providerId: Long, sessionId: Long) {
-        catalogSyncDao.updateChangedSeriesFromStage(providerId, sessionId)
+        val stagedBySeriesId = catalogSyncDao.getSeriesStages(providerId, sessionId)
+            .associateBy { it.seriesId }
+        val changed = seriesDao.getByProviderSync(providerId)
+            .mapNotNull { current ->
+                val stage = stagedBySeriesId[current.seriesId] ?: return@mapNotNull null
+                if (current.syncFingerprint == stage.syncFingerprint) return@mapNotNull null
+                current.copy(
+                    name = stage.name,
+                    posterUrl = stage.posterUrl,
+                    backdropUrl = stage.backdropUrl,
+                    categoryId = stage.categoryId,
+                    categoryName = stage.categoryName,
+                    plot = stage.plot,
+                    cast = stage.cast,
+                    director = stage.director,
+                    genre = stage.genre,
+                    releaseDate = stage.releaseDate,
+                    rating = stage.rating,
+                    tmdbId = stage.tmdbId,
+                    youtubeTrailer = stage.youtubeTrailer,
+                    episodeRunTime = stage.episodeRunTime,
+                    lastModified = stage.lastModified,
+                    isAdult = stage.isAdult,
+                    syncFingerprint = stage.syncFingerprint
+                )
+            }
+        if (changed.isNotEmpty()) {
+            seriesDao.updateAll(changed)
+        }
         catalogSyncDao.insertMissingSeriesFromStage(providerId, sessionId)
         catalogSyncDao.deleteStaleSeriesForStage(providerId, sessionId)
+        refreshSeriesTmdbIdentities(providerId)
+    }
+
+    private suspend fun refreshMovieTmdbIdentities(providerId: Long) {
+        val identities = movieDao.getTmdbIdsByProvider(providerId)
+            .distinctBy { it.tmdbId }
+            .map { mapping ->
+                TmdbIdentityEntity(
+                    tmdbId = mapping.tmdbId,
+                    contentType = ContentType.MOVIE,
+                    canonicalProviderId = providerId,
+                    firstSeenAt = System.currentTimeMillis()
+                )
+            }
+        if (identities.isNotEmpty()) {
+            tmdbIdentityDao.upsertAll(identities)
+        }
+        tmdbIdentityDao.pruneOrphanedMovieIdentities()
+    }
+
+    private suspend fun refreshSeriesTmdbIdentities(providerId: Long) {
+        val identities = seriesDao.getTmdbIdsByProvider(providerId)
+            .distinctBy { it.tmdbId }
+            .map { mapping ->
+                TmdbIdentityEntity(
+                    tmdbId = mapping.tmdbId,
+                    contentType = ContentType.SERIES,
+                    canonicalProviderId = providerId,
+                    firstSeenAt = System.currentTimeMillis()
+                )
+            }
+        if (identities.isNotEmpty()) {
+            tmdbIdentityDao.upsertAll(identities)
+        }
+        tmdbIdentityDao.pruneOrphanedSeriesIdentities()
     }
 
     private suspend fun clearSession(providerId: Long, sessionId: Long) {
@@ -318,6 +498,12 @@ internal class SyncCatalogStore(
         return stageDistinctRows(
             items = movies,
             keySelector = { movie -> movie.streamId },
+            limit = sizeLimits.maxMoviesPerProvider,
+            bestFirstComparator = compareByDescending<MovieEntity> { it.rating }
+                .thenBy { it.name.lowercase() }
+                .thenBy { it.streamId },
+            logLabel = "movies",
+            providerId = providerId,
             stageBuilder = { movie -> movieStageEntity(providerId, sessionId, movie) },
             insert = catalogSyncDao::insertMovieStages
         )
@@ -331,6 +517,12 @@ internal class SyncCatalogStore(
         return stageDistinctRows(
             items = series,
             keySelector = { item -> item.seriesId },
+            limit = sizeLimits.maxSeriesPerProvider,
+            bestFirstComparator = compareByDescending<SeriesEntity> { it.rating }
+                .thenBy { it.name.lowercase() }
+                .thenBy { it.seriesId },
+            logLabel = "series",
+            providerId = providerId,
             stageBuilder = { item -> seriesStageEntity(providerId, sessionId, item) },
             insert = catalogSyncDao::insertSeriesStages
         )
@@ -339,30 +531,54 @@ internal class SyncCatalogStore(
     private suspend fun <T, K, S> stageDistinctRows(
         items: Sequence<T>,
         keySelector: (T) -> K,
+        limit: Int,
+        bestFirstComparator: Comparator<T>,
+        logLabel: String,
+        providerId: Long,
         stageBuilder: (T) -> S,
         insert: suspend (List<S>) -> Unit
     ): Int {
         val seenKeys = HashSet<K>()
+        val bestItems = java.util.PriorityQueue<T>(limit.coerceAtLeast(1), bestFirstComparator.reversed())
         val batch = ArrayList<S>(STAGE_BATCH_SIZE)
-        var acceptedCount = 0
+        var distinctCount = 0
 
         items.forEach { item ->
             if (!seenKeys.add(keySelector(item))) {
                 return@forEach
             }
-            batch += stageBuilder(item)
-            acceptedCount++
-            if (batch.size >= STAGE_BATCH_SIZE) {
-                insert(batch)
-                batch.clear()
+            distinctCount++
+            if (bestItems.size < limit) {
+                bestItems += item
+            } else if (limit > 0 && bestFirstComparator.compare(item, bestItems.peek()) < 0) {
+                bestItems.poll()
+                bestItems += item
             }
         }
+
+        if (distinctCount > limit) {
+            Log.w(
+                TAG,
+                "Provider $providerId $logLabel staging exceeded limit $limit; kept ${bestItems.size} highest-priority distinct rows out of $distinctCount."
+            )
+        }
+
+        bestItems
+            .toList()
+            .sortedWith(bestFirstComparator)
+            .forEach { item ->
+                batch.add(stageBuilder(item))
+                if (batch.size >= STAGE_BATCH_SIZE) {
+                    insert(batch)
+                    batch.clear()
+                }
+            }
 
         if (batch.isNotEmpty()) {
             insert(batch)
         }
 
-        return acceptedCount
+        return bestItems.size
     }
 
     private suspend fun <T> insertStageRows(
@@ -404,7 +620,8 @@ internal class SyncCatalogStore(
             tmdbId = movie.tmdbId,
             youtubeTrailer = movie.youtubeTrailer,
             isAdult = movie.isAdult,
-            syncFingerprint = movieFingerprint(movie)
+            syncFingerprint = movieFingerprint(movie),
+            addedAt = movie.addedAt
         )
     }
 
@@ -554,7 +771,26 @@ internal class SyncCatalogStore(
             .ifBlank { url.lowercase() }
     }
 
-    private companion object {
-        private const val STAGE_BATCH_SIZE = 500
+    private fun limitChannels(
+        providerId: Long,
+        channels: List<ChannelImportStageEntity>
+    ): List<ChannelImportStageEntity> {
+        if (channels.size <= sizeLimits.maxChannelsPerProvider) {
+            return channels
+        }
+        val limited = channels
+            .sortedWith(
+                compareBy<ChannelImportStageEntity>(
+                    { if (it.number > 0) it.number else Int.MAX_VALUE },
+                    { it.name.lowercase() },
+                    { it.streamId }
+                )
+            )
+            .take(sizeLimits.maxChannelsPerProvider)
+        Log.w(
+            TAG,
+            "Provider $providerId channel staging exceeded limit ${sizeLimits.maxChannelsPerProvider}; kept ${limited.size} lowest-numbered distinct rows out of ${channels.size}."
+        )
+        return limited
     }
 }

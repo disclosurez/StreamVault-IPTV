@@ -145,15 +145,17 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 preferencesRepository.autoCheckAppUpdates,
-                preferencesRepository.lastAppUpdateCheckTimestamp
-            ) { autoCheckEnabled, lastCheckedAt ->
-                autoCheckEnabled to lastCheckedAt
-            }.distinctUntilChanged().collect { (autoCheckEnabled, lastCheckedAt) ->
+                preferencesRepository.lastAppUpdateCheckTimestamp,
+                preferencesRepository.autoDownloadAppUpdates
+            ) { autoCheckEnabled, lastCheckedAt, autoDownload ->
+                Triple(autoCheckEnabled, lastCheckedAt, autoDownload)
+            }.distinctUntilChanged().collect { (autoCheckEnabled, lastCheckedAt, autoDownload) ->
                 if (autoCheckEnabled && appUpdateActions.shouldAutoCheckForUpdates(lastCheckedAt)) {
                     appUpdateActions.checkForAppUpdates(
                         scope = viewModelScope,
                         manual = false,
-                        isRemoteVersionNewer = ::isRemoteVersionNewer
+                        isRemoteVersionNewer = ::isRemoteVersionNewer,
+                        autoDownload = autoDownload
                     )
                 }
             }
@@ -200,6 +202,12 @@ class SettingsViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            preferencesRepository.lastMaintenanceSnapshot.collect { snapshot ->
+                _uiState.update { it.copy(databaseMaintenance = snapshot?.toUiModel()) }
+            }
+        }
+
+        viewModelScope.launch {
             observeCategoryManagement(
                 activeProviderIdFlow = activeProviderIdFlow,
                 preferencesRepository = preferencesRepository,
@@ -229,6 +237,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             recordingManager.observeStorageState().collect { storage ->
                 _uiState.update { it.copy(recordingStorageState = storage) }
+            }
+        }
+
+        viewModelScope.launch {
+            epgSourceRepository.getAllSources().collect { sources ->
+                _uiState.update { it.copy(epgSources = sources) }
             }
         }
     }
@@ -298,6 +312,18 @@ class SettingsViewModel @Inject constructor(
     fun setShowLiveSourceSwitcher(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setShowLiveSourceSwitcher(enabled)
+        }
+    }
+
+    fun setShowAllChannelsCategory(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setShowAllChannelsCategory(enabled)
+        }
+    }
+
+    fun setShowRecentChannelsCategory(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setShowRecentChannelsCategory(enabled)
         }
     }
 
@@ -372,6 +398,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setAutoDownloadAppUpdates(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setAutoDownloadAppUpdates(enabled)
+        }
+    }
+
+    fun refreshDownloadState() {
+        viewModelScope.launch {
+            appUpdateInstaller.refreshState()
+        }
+    }
+
     fun checkForAppUpdates() {
         appUpdateActions.checkForAppUpdates(
             scope = viewModelScope,
@@ -429,6 +467,12 @@ class SettingsViewModel @Inject constructor(
     fun setPlayerTimeshiftDepthMinutes(minutes: Int) {
         viewModelScope.launch {
             preferencesRepository.setPlayerTimeshiftDepthMinutes(minutes)
+        }
+    }
+
+    fun setZapAutoRevert(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setZapAutoRevert(enabled)
         }
     }
 
@@ -741,16 +785,16 @@ class SettingsViewModel @Inject constructor(
 
     // ── EPG Source Management ────────────────────────────────────────
 
-    fun loadEpgSources() {
-        epgActions.loadEpgSources(viewModelScope)
-    }
-
     fun loadEpgAssignments(providerId: Long) {
         epgActions.loadEpgAssignments(viewModelScope, providerId)
     }
 
     fun addEpgSource(name: String, url: String) {
         epgActions.addEpgSource(viewModelScope, name, url)
+    }
+
+    fun setPendingDeleteEpgSource(id: Long?) {
+        _uiState.update { it.copy(epgPendingDeleteSourceId = id) }
     }
 
     fun deleteEpgSource(sourceId: Long) {
@@ -787,7 +831,14 @@ class SettingsViewModel @Inject constructor(
                 is ActiveLiveSource.CombinedM3uSource -> {
                     combine(
                         combinedM3uRepository.getCombinedCategories(activeSource.profileId),
-                        getCustomCategories(ContentType.LIVE)
+                        flow {
+                            emit(combinedM3uRepository.getProfile(activeSource.profileId)?.members.orEmpty())
+                        }.flatMapLatest { members ->
+                            getCustomCategories(
+                                members.filter { it.enabled }.map { it.providerId },
+                                ContentType.LIVE
+                            )
+                        }
                     ) { combinedCategories, customCategories ->
                         buildGuideDefaultCategoryOptions(
                             physicalCategories = combinedCategories.map { it.category },
@@ -798,7 +849,7 @@ class SettingsViewModel @Inject constructor(
                 is ActiveLiveSource.ProviderSource -> {
                     combine(
                         channelRepository.getCategories(activeSource.providerId),
-                        getCustomCategories(ContentType.LIVE),
+                        getCustomCategories(activeSource.providerId, ContentType.LIVE),
                         preferencesRepository.getHiddenCategoryIds(activeSource.providerId, ContentType.LIVE),
                         preferencesRepository.getCategorySortMode(activeSource.providerId, ContentType.LIVE)
                     ) { categories, customCategories, hiddenCategoryIds, sortMode ->

@@ -1,5 +1,6 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.google.common.truth.Truth.assertThat
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.EpisodeDao
@@ -17,9 +18,11 @@ import com.streamvault.data.remote.xtream.XtreamParsingException
 import com.streamvault.data.remote.xtream.XtreamApiService
 import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
 import com.streamvault.data.security.CredentialCrypto
+import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -157,6 +160,21 @@ class SeriesRepositoryImplTest {
         assertThat(series.id).isEqualTo(15L)
         assertThat(series.name).isEqualTo("Stored Series")
         assertThat(series.posterUrl).isEqualTo("https://img.example.test/poster.jpg")
+    }
+
+    @Test
+    fun `searchSeries returns empty list when sqlite throws for malformed fts query`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(seriesDao.search(eq(7L), any(), any())).thenReturn(
+            flow { throw SQLiteException("malformed MATCH expression") }
+        )
+        whenever(favoriteDao.getAllByType(7L, ContentType.SERIES.name)).thenReturn(flowOf(emptyList()))
+
+        val repository = createRepository()
+
+        val result = repository.searchSeries(7L, "drama").first()
+
+        assertThat(result).isEmpty()
     }
 
     private fun createRepository() = SeriesRepositoryImpl(

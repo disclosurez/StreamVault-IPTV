@@ -6,6 +6,21 @@ import org.junit.Test
 class AdultContentClassifierTest {
 
     @Test
+    fun `cache uses bounded eviction instead of full flush`() {
+        AdultContentClassifier.resetCacheForTesting()
+
+        repeat(4096) { index ->
+            AdultContentClassifier.isAdultCategoryName("Category $index")
+        }
+        AdultContentClassifier.isAdultCategoryName("Category 4095")
+        AdultContentClassifier.isAdultCategoryName("Category 4096")
+
+        assertThat(AdultContentClassifier.cacheSizeForTesting()).isEqualTo(4096)
+        assertThat(AdultContentClassifier.isCachedForTesting("Category 4095")).isTrue()
+        assertThat(AdultContentClassifier.isCachedForTesting("Category 0")).isFalse()
+    }
+
+    @Test
     fun `matches plus18 and adults labels used by xtream categories`() {
         assertThat(AdultContentClassifier.isAdultCategoryName("|+18| ADULTS LIVE")).isTrue()
         assertThat(AdultContentClassifier.isAdultCategoryName("|+18| ADULTS")).isTrue()

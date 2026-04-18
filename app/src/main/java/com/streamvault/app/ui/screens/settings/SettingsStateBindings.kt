@@ -72,6 +72,8 @@ internal fun observeSettingsPreferenceSnapshot(
             xtreamBase64TextCompatibility = false,
             liveTvChannelMode = LiveTvChannelMode.PRO,
             showLiveSourceSwitcher = false,
+            showAllChannelsCategory = true,
+            showRecentChannelsCategory = true,
             liveTvCategoryFilters = emptyList(),
             liveTvQuickFilterVisibilityMode = LiveTvQuickFilterVisibilityMode.ALWAYS_VISIBLE,
             liveChannelNumberingMode = ChannelNumberingMode.GROUP,
@@ -79,7 +81,9 @@ internal fun observeSettingsPreferenceSnapshot(
             guideDefaultCategoryId = VirtualCategoryIds.FAVORITES,
             guideDefaultCategoryOptions = emptyList(),
             preventStandbyDuringPlayback = true,
+            zapAutoRevert = true,
             autoCheckAppUpdates = true,
+            autoDownloadAppUpdates = false,
             lastAppUpdateCheckAt = null,
             cachedAppUpdateVersionName = null,
             cachedAppUpdateVersionCode = null,
@@ -140,6 +144,10 @@ internal fun observeSettingsPreferenceSnapshot(
         snapshot.copy(liveTvChannelMode = LiveTvChannelMode.fromStorage(liveTvChannelMode))
     }.combine(preferencesRepository.showLiveSourceSwitcher) { snapshot, showLiveSourceSwitcher ->
         snapshot.copy(showLiveSourceSwitcher = showLiveSourceSwitcher)
+    }.combine(preferencesRepository.showAllChannelsCategory) { snapshot, showAllChannelsCategory ->
+        snapshot.copy(showAllChannelsCategory = showAllChannelsCategory)
+    }.combine(preferencesRepository.showRecentChannelsCategory) { snapshot, showRecentChannelsCategory ->
+        snapshot.copy(showRecentChannelsCategory = showRecentChannelsCategory)
     }.combine(preferencesRepository.liveTvCategoryFilters) { snapshot, liveTvCategoryFilters ->
         snapshot.copy(liveTvCategoryFilters = liveTvCategoryFilters)
     }.combine(preferencesRepository.liveTvQuickFilterVisibility) { snapshot, visibilityMode ->
@@ -154,8 +162,12 @@ internal fun observeSettingsPreferenceSnapshot(
         snapshot.copy(guideDefaultCategoryId = guideDefaultCategoryId ?: VirtualCategoryIds.FAVORITES)
     }.combine(preferencesRepository.preventStandbyDuringPlayback) { snapshot, preventStandby ->
         snapshot.copy(preventStandbyDuringPlayback = preventStandby)
+    }.combine(preferencesRepository.zapAutoRevert) { snapshot, zapAutoRevert ->
+        snapshot.copy(zapAutoRevert = zapAutoRevert)
     }.combine(preferencesRepository.autoCheckAppUpdates) { snapshot, autoCheckAppUpdates ->
         snapshot.copy(autoCheckAppUpdates = autoCheckAppUpdates)
+    }.combine(preferencesRepository.autoDownloadAppUpdates) { snapshot, autoDownloadAppUpdates ->
+        snapshot.copy(autoDownloadAppUpdates = autoDownloadAppUpdates)
     }.combine(preferencesRepository.lastAppUpdateCheckTimestamp) { snapshot, lastAppUpdateCheckAt ->
         snapshot.copy(lastAppUpdateCheckAt = lastAppUpdateCheckAt)
     }.combine(preferencesRepository.cachedAppUpdateVersionName) { snapshot, versionName ->
@@ -210,6 +222,8 @@ internal fun SettingsUiState.applyPreferenceSnapshot(snapshot: SettingsPreferenc
         xtreamBase64TextCompatibility = snapshot.xtreamBase64TextCompatibility,
         liveTvChannelMode = snapshot.liveTvChannelMode,
         showLiveSourceSwitcher = snapshot.showLiveSourceSwitcher,
+        showAllChannelsCategory = snapshot.showAllChannelsCategory,
+        showRecentChannelsCategory = snapshot.showRecentChannelsCategory,
         liveTvCategoryFilters = snapshot.liveTvCategoryFilters,
         liveTvQuickFilterVisibilityMode = snapshot.liveTvQuickFilterVisibilityMode,
         liveChannelNumberingMode = snapshot.liveChannelNumberingMode,
@@ -217,7 +231,9 @@ internal fun SettingsUiState.applyPreferenceSnapshot(snapshot: SettingsPreferenc
         guideDefaultCategoryId = snapshot.guideDefaultCategoryId,
         guideDefaultCategoryOptions = guideDefaultCategoryOptions,
         preventStandbyDuringPlayback = snapshot.preventStandbyDuringPlayback,
+        zapAutoRevert = snapshot.zapAutoRevert,
         autoCheckAppUpdates = snapshot.autoCheckAppUpdates,
+        autoDownloadAppUpdates = snapshot.autoDownloadAppUpdates,
         appUpdate = cachedAppUpdate.copy(
             downloadStatus = appUpdate.downloadStatus,
             downloadedVersionName = appUpdate.downloadedVersionName,
@@ -255,6 +271,12 @@ internal fun observeProviderDiagnostics(
                                 movieSyncMode = metadata?.movieSyncMode ?: VodSyncMode.UNKNOWN,
                                 movieWarningsCount = metadata?.movieWarningsCount ?: 0,
                                 movieCatalogStale = metadata?.movieCatalogStale ?: false,
+                                liveSequentialFailuresRemembered = metadata?.liveSequentialFailuresRemembered ?: false,
+                                liveHealthySyncStreak = metadata?.liveHealthySyncStreak ?: 0,
+                                movieParallelFailuresRemembered = metadata?.movieParallelFailuresRemembered ?: false,
+                                movieHealthySyncStreak = metadata?.movieHealthySyncStreak ?: 0,
+                                seriesSequentialFailuresRemembered = metadata?.seriesSequentialFailuresRemembered ?: false,
+                                seriesHealthySyncStreak = metadata?.seriesHealthySyncStreak ?: 0,
                                 capabilitySummary = buildCapabilitySummary(application, provider),
                                 sourceLabel = provider.sourceLabel(),
                                 expirySummary = provider.expirySummary(),

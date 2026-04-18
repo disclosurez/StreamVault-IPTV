@@ -7,24 +7,29 @@ import com.streamvault.domain.model.VirtualGroup
 import kotlinx.coroutines.flow.Flow
 
 interface FavoriteRepository {
-    fun getFavorites(contentType: ContentType? = null): Flow<List<Favorite>>
-    @Deprecated("Use getFavorites(contentType) instead", replaceWith = ReplaceWith("getFavorites(contentType)"))
-    fun getAllFavorites(contentType: ContentType): Flow<List<Favorite>>
+    fun getFavorites(providerId: Long, contentType: ContentType? = null): Flow<List<Favorite>>
+    fun getFavorites(providerIds: List<Long>, contentType: ContentType? = null): Flow<List<Favorite>>
+    @Deprecated(
+        "Use getFavorites(providerId, contentType) instead",
+        replaceWith = ReplaceWith("getFavorites(providerId, contentType)")
+    )
+    fun getAllFavorites(providerId: Long, contentType: ContentType): Flow<List<Favorite>>
     fun getFavoritesByGroup(groupId: Long): Flow<List<Favorite>>
-    fun getGroups(contentType: ContentType): Flow<List<VirtualGroup>>
+    fun getGroups(providerId: Long, contentType: ContentType): Flow<List<VirtualGroup>>
+    fun getGroups(providerIds: List<Long>, contentType: ContentType): Flow<List<VirtualGroup>>
 
-    fun getGlobalFavoriteCount(contentType: ContentType): Flow<Int>
-    fun getGroupFavoriteCounts(contentType: ContentType): Flow<Map<Long, Int>>
+    fun getGlobalFavoriteCount(providerId: Long, contentType: ContentType): Flow<Int>
+    fun getGroupFavoriteCounts(providerId: Long, contentType: ContentType): Flow<Map<Long, Int>>
 
-    suspend fun addFavorite(contentId: Long, contentType: ContentType, groupId: Long? = null): Result<Unit>
-    suspend fun removeFavorite(contentId: Long, contentType: ContentType, groupId: Long? = null): Result<Unit>
+    suspend fun addFavorite(providerId: Long, contentId: Long, contentType: ContentType, groupId: Long? = null): Result<Unit>
+    suspend fun removeFavorite(providerId: Long, contentId: Long, contentType: ContentType, groupId: Long? = null): Result<Unit>
     
     suspend fun reorderFavorites(favorites: List<Favorite>): Result<Unit>
-    suspend fun isFavorite(contentId: Long, contentType: ContentType): Boolean
+    suspend fun isFavorite(providerId: Long, contentId: Long, contentType: ContentType): Boolean
     
-    suspend fun getGroupMemberships(contentId: Long, contentType: ContentType): List<Long>
+    suspend fun getGroupMemberships(providerId: Long, contentId: Long, contentType: ContentType): List<Long>
 
-    suspend fun createGroup(name: String, iconEmoji: String? = null, contentType: ContentType): Result<VirtualGroup>
+    suspend fun createGroup(providerId: Long, name: String, iconEmoji: String? = null, contentType: ContentType): Result<VirtualGroup>
     suspend fun deleteGroup(groupId: Long): Result<Unit>
     suspend fun renameGroup(groupId: Long, newName: String): Result<Unit>
 }

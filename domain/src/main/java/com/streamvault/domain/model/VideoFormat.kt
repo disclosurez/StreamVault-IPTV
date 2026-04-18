@@ -6,13 +6,15 @@ data class VideoFormat(
     val frameRate: Float = 0f,
     val bitrate: Int = 0,
     val codecV: String? = null,
-    val codecA: String? = null
+    val codecA: String? = null,
+    val pixelWidthHeightRatio: Float = 1f
 ) {
     init {
         require(width >= 0) { "width must be non-negative" }
         require(height >= 0) { "height must be non-negative" }
         require(frameRate >= 0f) { "frameRate must be non-negative" }
         require(bitrate >= 0) { "bitrate must be non-negative" }
+        require(pixelWidthHeightRatio > 0f) { "pixelWidthHeightRatio must be positive" }
     }
 
     val resolutionLabel: String

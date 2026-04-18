@@ -28,6 +28,8 @@ import com.streamvault.data.local.entity.*
         FavoriteEntity::class,
         VirtualGroupEntity::class,
         PlaybackHistoryEntity::class,
+        TmdbIdentityEntity::class,
+        SearchHistoryEntity::class,
         SyncMetadataEntity::class,
         MovieCategoryHydrationEntity::class,
         SeriesCategoryHydrationEntity::class,
@@ -40,9 +42,10 @@ import com.streamvault.data.local.entity.*
         CombinedM3uProfileMemberEntity::class,
         RecordingScheduleEntity::class,
         RecordingRunEntity::class,
+        ProgramReminderEntity::class,
         RecordingStorageEntity::class
     ],
-    version = 30,
+    version = 37,
     exportSchema = true   // ← was false; schema JSON now tracked in version control
 )
 @TypeConverters(RoomEnumConverters::class)
@@ -59,6 +62,8 @@ abstract class StreamVaultDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun virtualGroupDao(): VirtualGroupDao
     abstract fun playbackHistoryDao(): PlaybackHistoryDao
+    abstract fun tmdbIdentityDao(): TmdbIdentityDao
+    abstract fun searchHistoryDao(): SearchHistoryDao
     abstract fun syncMetadataDao(): SyncMetadataDao
     abstract fun movieCategoryHydrationDao(): MovieCategoryHydrationDao
     abstract fun seriesCategoryHydrationDao(): SeriesCategoryHydrationDao
@@ -71,9 +76,23 @@ abstract class StreamVaultDatabase : RoomDatabase() {
     abstract fun combinedM3uProfileMemberDao(): CombinedM3uProfileMemberDao
     abstract fun recordingScheduleDao(): RecordingScheduleDao
     abstract fun recordingRunDao(): RecordingRunDao
+    abstract fun programReminderDao(): ProgramReminderDao
     abstract fun recordingStorageDao(): RecordingStorageDao
 
     companion object {
+        private fun validateForeignKeys(database: SupportSQLiteDatabase) {
+            database.query("PRAGMA foreign_key_check").use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val table = if (!cursor.isNull(0)) cursor.getString(0) else "<unknown>"
+                    val rowId = if (!cursor.isNull(1)) cursor.getLong(1) else -1L
+                    val parent = if (!cursor.isNull(2)) cursor.getString(2) else "<unknown>"
+                    throw IllegalStateException(
+                        "Foreign key violation after migration: table=$table rowId=$rowId parent=$parent"
+                    )
+                }
+            }
+        }
+
         /**
          * Migration 1 → 2: no-op stub.
          * v1 databases had the same table structure as v2; this migration prevents Room
@@ -527,6 +546,7 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_episodes_provider_id ON episodes(provider_id)")
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_episodes_provider_id_episode_id ON episodes(provider_id, episode_id)")
                 database.execSQL("DROP TABLE episode_id_map")
+                validateForeignKeys(database)
             }
         }
 
@@ -886,6 +906,7 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                 database.execSQL("CREATE UNIQUE INDEX index_favorites_content_id_content_type_group_id ON favorites(content_id, content_type, group_id)")
                 database.execSQL("CREATE INDEX index_favorites_content_type_group_id ON favorites(content_type, group_id)")
                 database.execSQL("CREATE INDEX index_favorites_group_id_position ON favorites(group_id, position)")
+                validateForeignKeys(database)
             }
         }
         /**
@@ -1326,6 +1347,7 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+                validateForeignKeys(database)
             }
         }
 
@@ -1364,6 +1386,295 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_combined_m3u_profile_members_profile_id_provider_id ON combined_m3u_profile_members(profile_id, provider_id)"
                 )
+            }
+        }
+
+        val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE movies ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                fun firstLong(query: String): Long? = database.query(query).use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+                }
+
+                val defaultProviderId = firstLong(
+                    "SELECT id FROM providers WHERE is_active = 1 ORDER BY id LIMIT 1"
+                ) ?: firstLong(
+                    "SELECT id FROM providers ORDER BY id LIMIT 1"
+                )
+
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS virtual_groups_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        provider_id INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        icon_emoji TEXT,
+                        position INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        content_type TEXT NOT NULL,
+                        FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+
+                val providersByLegacyGroup = mutableMapOf<Long, MutableSet<Long>>()
+                database.query(
+                    """
+                    SELECT f.group_id,
+                           CASE f.content_type
+                               WHEN 'LIVE' THEN (SELECT provider_id FROM channels WHERE id = f.content_id)
+                               WHEN 'MOVIE' THEN (SELECT provider_id FROM movies WHERE id = f.content_id)
+                               WHEN 'SERIES' THEN (SELECT provider_id FROM series WHERE id = f.content_id)
+                               ELSE NULL
+                           END AS provider_id
+                    FROM favorites f
+                    WHERE f.group_id IS NOT NULL
+                    """.trimIndent()
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        if (cursor.isNull(0) || cursor.isNull(1)) continue
+                        val groupId = cursor.getLong(0)
+                        val providerId = cursor.getLong(1)
+                        providersByLegacyGroup.getOrPut(groupId) { linkedSetOf() }.add(providerId)
+                    }
+                }
+
+                val groupProviderToNewId = mutableMapOf<Pair<Long, Long>, Long>()
+                var nextGroupId = (firstLong("SELECT MAX(id) FROM virtual_groups") ?: 0L) + 1L
+
+                database.query(
+                    "SELECT id, name, icon_emoji, position, created_at, content_type FROM virtual_groups ORDER BY id"
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val legacyGroupId = cursor.getLong(0)
+                        val name = cursor.getString(1)
+                        val iconEmoji = if (cursor.isNull(2)) null else cursor.getString(2)
+                        val position = cursor.getInt(3)
+                        val createdAt = cursor.getLong(4)
+                        val contentType = cursor.getString(5)
+                        val providerIds = providersByLegacyGroup[legacyGroupId]
+                            ?.toList()
+                            ?.sorted()
+                            ?: defaultProviderId?.let(::listOf)
+                            ?: emptyList()
+
+                        providerIds.forEachIndexed { index, providerId ->
+                            val newGroupId = if (index == 0) legacyGroupId else nextGroupId++
+                            groupProviderToNewId[legacyGroupId to providerId] = newGroupId
+                            database.execSQL(
+                                """
+                                INSERT INTO virtual_groups_new(
+                                    id, provider_id, name, icon_emoji, position, created_at, content_type
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """.trimIndent(),
+                                arrayOf(newGroupId, providerId, name, iconEmoji, position, createdAt, contentType)
+                            )
+                        }
+                    }
+                }
+
+                database.execSQL("ALTER TABLE virtual_groups RENAME TO virtual_groups_legacy")
+                database.execSQL("ALTER TABLE virtual_groups_new RENAME TO virtual_groups")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_virtual_groups_provider_id_content_type ON virtual_groups(provider_id, content_type)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_virtual_groups_position ON virtual_groups(position)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_virtual_groups_content_type ON virtual_groups(content_type)"
+                )
+
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS favorites_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        provider_id INTEGER NOT NULL,
+                        content_id INTEGER NOT NULL,
+                        content_type TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        group_id INTEGER,
+                        added_at INTEGER NOT NULL,
+                        FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+                        FOREIGN KEY(group_id) REFERENCES virtual_groups(id) ON DELETE SET NULL
+                    )
+                    """.trimIndent()
+                )
+
+                database.query(
+                    """
+                    SELECT f.id, f.content_id, f.content_type, f.position, f.group_id, f.added_at,
+                           CASE f.content_type
+                               WHEN 'LIVE' THEN (SELECT provider_id FROM channels WHERE id = f.content_id)
+                               WHEN 'MOVIE' THEN (SELECT provider_id FROM movies WHERE id = f.content_id)
+                               WHEN 'SERIES' THEN (SELECT provider_id FROM series WHERE id = f.content_id)
+                               ELSE NULL
+                           END AS provider_id
+                    FROM favorites f
+                    ORDER BY f.id ASC
+                    """.trimIndent()
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val favoriteId = cursor.getLong(0)
+                        val contentId = cursor.getLong(1)
+                        val contentType = cursor.getString(2)
+                        val position = cursor.getInt(3)
+                        val legacyGroupId = if (cursor.isNull(4)) null else cursor.getLong(4)
+                        val addedAt = cursor.getLong(5)
+                        val providerId = when {
+                            !cursor.isNull(6) -> cursor.getLong(6)
+                            legacyGroupId != null -> groupProviderToNewId.keys
+                                .firstOrNull { it.first == legacyGroupId }
+                                ?.second
+                            else -> null
+                        } ?: continue
+
+                        val newGroupId = legacyGroupId?.let { groupId ->
+                            groupProviderToNewId[groupId to providerId]
+                                ?: groupProviderToNewId.entries.firstOrNull { it.key.first == groupId }?.value
+                        }
+
+                        database.execSQL(
+                            """
+                            INSERT OR REPLACE INTO favorites_new(
+                                id, provider_id, content_id, content_type, position, group_id, added_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """.trimIndent(),
+                            arrayOf(favoriteId, providerId, contentId, contentType, position, newGroupId, addedAt)
+                        )
+                    }
+                }
+
+                database.execSQL("ALTER TABLE favorites RENAME TO favorites_legacy")
+                database.execSQL("ALTER TABLE favorites_new RENAME TO favorites")
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_favorites_provider_id_content_id_content_type_group_id ON favorites(provider_id, content_id, content_type, group_id)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_favorites_provider_id_content_type_group_id ON favorites(provider_id, content_type, group_id)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_favorites_group_id_position ON favorites(group_id, position)"
+                )
+
+                database.execSQL("DROP TABLE favorites_legacy")
+                database.execSQL("DROP TABLE virtual_groups_legacy")
+                validateForeignKeys(database)
+            }
+        }
+
+        val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE movies ADD COLUMN watch_count INTEGER NOT NULL DEFAULT 0")
+                database.execSQL(
+                    """
+                    UPDATE movies
+                    SET watch_count = COALESCE((
+                        SELECT playback_history.watch_count
+                        FROM playback_history
+                        WHERE playback_history.content_id = movies.id
+                          AND playback_history.content_type = 'MOVIE'
+                          AND playback_history.provider_id = movies.provider_id
+                    ), 0)
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE INDEX IF NOT EXISTS index_favorites_global_provider_id_content_type_content_id
+                    ON favorites(provider_id, content_type, content_id)
+                    WHERE group_id IS NULL
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE sync_metadata ADD COLUMN last_live_success INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE sync_metadata ADD COLUMN last_series_success INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE sync_metadata ADD COLUMN last_epg_success INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("UPDATE sync_metadata SET last_live_success = last_live_sync")
+                database.execSQL("UPDATE sync_metadata SET last_series_success = last_series_sync")
+                database.execSQL("UPDATE sync_metadata SET last_epg_success = last_epg_sync")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_programs_provider_id_end_time_channel_id ON programs(provider_id, end_time, channel_id)"
+                )
+                validateForeignKeys(database)
+            }
+        }
+
+        val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS search_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        query TEXT NOT NULL,
+                        content_scope TEXT NOT NULL,
+                        provider_id INTEGER NOT NULL DEFAULT 0,
+                        used_at INTEGER NOT NULL,
+                        use_count INTEGER NOT NULL DEFAULT 1
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_search_history_content_scope_provider_id_used_at ON search_history(content_scope, provider_id, used_at)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_search_history_used_at ON search_history(used_at)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_search_history_provider_id ON search_history(provider_id)"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_search_history_query_content_scope_provider_id ON search_history(query, content_scope, provider_id)"
+                )
+                validateForeignKeys(database)
+            }
+        }
+
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE channel_epg_mappings ADD COLUMN matched_at INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE channel_epg_mappings ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE channel_epg_mappings ADD COLUMN source TEXT")
+
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS program_reminders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        provider_id INTEGER NOT NULL,
+                        channel_id TEXT NOT NULL,
+                        channel_name TEXT NOT NULL,
+                        program_title TEXT NOT NULL,
+                        program_start_time INTEGER NOT NULL,
+                        remind_at INTEGER NOT NULL,
+                        lead_time_minutes INTEGER NOT NULL DEFAULT 5,
+                        is_dismissed INTEGER NOT NULL DEFAULT 0,
+                        notified_at INTEGER,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_program_reminders_provider_id_remind_at ON program_reminders(provider_id, remind_at)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_program_reminders_is_dismissed_notified_at_remind_at ON program_reminders(is_dismissed, notified_at, remind_at)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_program_reminders_provider_id_channel_id_program_start_time ON program_reminders(provider_id, channel_id, program_start_time)"
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_program_reminders_provider_id_channel_id_program_title_program_start_time ON program_reminders(provider_id, channel_id, program_title, program_start_time)"
+                )
+                validateForeignKeys(database)
             }
         }
 
@@ -1459,6 +1770,44 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                 """.trimIndent())
                 database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_channel_epg_mappings_provider_id_provider_channel_id ON channel_epg_mappings(provider_id, provider_channel_id)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_channel_epg_mappings_provider_id ON channel_epg_mappings(provider_id)")
+            }
+        }
+
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS tmdb_identity (
+                        tmdb_id INTEGER NOT NULL,
+                        content_type TEXT NOT NULL,
+                        canonical_provider_id INTEGER NOT NULL,
+                        first_seen_at INTEGER NOT NULL,
+                        PRIMARY KEY (tmdb_id, content_type),
+                        FOREIGN KEY(canonical_provider_id) REFERENCES providers(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tmdb_identity_content_type ON tmdb_identity(content_type)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tmdb_identity_canonical_provider_id ON tmdb_identity(canonical_provider_id)")
+                database.execSQL(
+                    """
+                    INSERT OR REPLACE INTO tmdb_identity (tmdb_id, content_type, canonical_provider_id, first_seen_at)
+                    SELECT tmdb_id, 'MOVIE', MIN(provider_id), 0
+                    FROM movies
+                    WHERE tmdb_id IS NOT NULL
+                    GROUP BY tmdb_id
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT OR REPLACE INTO tmdb_identity (tmdb_id, content_type, canonical_provider_id, first_seen_at)
+                    SELECT tmdb_id, 'SERIES', MIN(provider_id), 0
+                    FROM series
+                    WHERE tmdb_id IS NOT NULL
+                    GROUP BY tmdb_id
+                    """.trimIndent()
+                )
+                validateForeignKeys(database)
             }
         }
     }

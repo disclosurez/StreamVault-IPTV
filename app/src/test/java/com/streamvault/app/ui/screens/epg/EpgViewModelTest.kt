@@ -4,14 +4,20 @@ import com.google.common.truth.Truth.assertThat
 import androidx.lifecycle.ViewModel
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.domain.manager.ParentalControlManager
+import com.streamvault.domain.manager.ProgramReminderManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.CategorySortMode
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.Favorite
+import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.CombinedCategory
+import com.streamvault.domain.model.CombinedCategoryBinding
+import com.streamvault.domain.model.CombinedM3uProfile
+import com.streamvault.domain.model.CombinedM3uProfileMember
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.EpgRepository
@@ -22,6 +28,7 @@ import com.streamvault.domain.usecase.GetCustomCategories
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -37,6 +44,7 @@ import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.mockito.kotlin.argThat
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EpgViewModelTest {
@@ -49,6 +57,7 @@ class EpgViewModelTest {
     private val favoriteRepository: FavoriteRepository = mock()
     private val preferencesRepository: PreferencesRepository = mock()
     private val parentalControlManager: ParentalControlManager = mock()
+    private val programReminderManager: ProgramReminderManager = mock()
     private val getCustomCategories by lazy { GetCustomCategories(favoriteRepository) }
     private val createdViewModels = mutableListOf<EpgViewModel>()
 
@@ -57,12 +66,19 @@ class EpgViewModelTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(null))
         whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.showAllChannelsCategory).thenReturn(flowOf(true))
         whenever(combinedM3uRepository.getActiveLiveSource()).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideDefaultCategoryId).thenReturn(flowOf(null))
-        whenever(favoriteRepository.getGroups(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
-        whenever(favoriteRepository.getGlobalFavoriteCount(ContentType.LIVE)).thenReturn(flowOf(0))
-        whenever(favoriteRepository.getGroupFavoriteCounts(ContentType.LIVE)).thenReturn(flowOf(emptyMap()))
+        runBlocking {
+            whenever(epgRepository.getResolvedProgramsForChannels(any(), any(), any(), any())).thenReturn(emptyMap())
+            whenever(epgRepository.getProgramsForChannels(any(), any(), any(), any())).thenReturn(flowOf(emptyMap()))
+        }
+        whenever(favoriteRepository.getGroups(any<Long>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getGroups(any<List<Long>>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(any<Long>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(any<List<Long>>(), eq(ContentType.LIVE))).thenReturn(flowOf(emptyList()))
     }
 
     @After
@@ -94,6 +110,7 @@ class EpgViewModelTest {
             favoriteRepository = favoriteRepository,
             preferencesRepository = preferencesRepository,
             parentalControlManager = parentalControlManager,
+            programReminderManager = programReminderManager,
             getCustomCategories = getCustomCategories
         ).also(createdViewModels::add)
 
@@ -125,7 +142,7 @@ class EpgViewModelTest {
         whenever(channelRepository.getChannels(provider.id)).thenReturn(flowOf(channels))
         whenever(channelRepository.getChannelsByNumber(provider.id, ChannelRepository.ALL_CHANNELS_ID)).thenReturn(flowOf(channels))
         whenever(channelRepository.getChannelsWithoutErrors(provider.id, ChannelRepository.ALL_CHANNELS_ID)).thenReturn(flowOf(channels))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.guideDensity).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideChannelMode).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
@@ -184,7 +201,7 @@ class EpgViewModelTest {
         whenever(channelRepository.getChannelsByNumber(provider.id, 10L)).thenReturn(flowOf(channels))
         whenever(channelRepository.getChannelsWithoutErrors(provider.id, ChannelRepository.ALL_CHANNELS_ID)).thenReturn(flowOf(channels))
         whenever(channelRepository.getChannelsWithoutErrors(provider.id, 10L)).thenReturn(flowOf(channels))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.guideDensity).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideChannelMode).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
@@ -278,8 +295,8 @@ class EpgViewModelTest {
         whenever(channelRepository.getChannelsWithoutErrors(provider.id, 10L)).thenReturn(
             flowOf(listOf(healthyChannel))
         )
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(
-            flowOf(listOf(Favorite(contentId = unhealthyFavorite.id, contentType = ContentType.LIVE)))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(
+            flowOf(listOf(Favorite(providerId = provider.id, contentId = unhealthyFavorite.id, contentType = ContentType.LIVE)))
         )
         whenever(preferencesRepository.guideDensity).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideChannelMode).thenReturn(flowOf(null))
@@ -298,6 +315,7 @@ class EpgViewModelTest {
             favoriteRepository = favoriteRepository,
             preferencesRepository = preferencesRepository,
             parentalControlManager = parentalControlManager,
+            programReminderManager = programReminderManager,
             getCustomCategories = getCustomCategories
         )
 
@@ -328,7 +346,7 @@ class EpgViewModelTest {
         whenever(channelRepository.getCategories(provider.id)).thenReturn(flowOf(listOf(Category(id = 10L, name = "News", count = 1))))
         whenever(channelRepository.getChannelsByNumber(provider.id, ChannelRepository.ALL_CHANNELS_ID)).thenReturn(flowOf(channels))
         whenever(channelRepository.getChannelsWithoutErrors(provider.id, ChannelRepository.ALL_CHANNELS_ID)).thenReturn(flowOf(channels))
-        whenever(favoriteRepository.getFavorites(ContentType.LIVE)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteRepository.getFavorites(provider.id, ContentType.LIVE)).thenReturn(flowOf(emptyList()))
         whenever(preferencesRepository.guideDensity).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideChannelMode).thenReturn(flowOf(null))
         whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(false))
@@ -347,6 +365,7 @@ class EpgViewModelTest {
             favoriteRepository = favoriteRepository,
             preferencesRepository = preferencesRepository,
             parentalControlManager = parentalControlManager,
+            programReminderManager = programReminderManager,
             getCustomCategories = getCustomCategories
         )
 
@@ -354,5 +373,90 @@ class EpgViewModelTest {
         waitForUiState { viewModel.uiState.value.selectedCategoryId == ChannelRepository.ALL_CHANNELS_ID }
 
         assertThat(viewModel.uiState.value.selectedCategoryId).isEqualTo(ChannelRepository.ALL_CHANNELS_ID)
+    }
+
+    @Test
+    fun `combined guide merges favorites across member providers`() = runTest {
+        val providerOneChannel = Channel(
+            id = 101L,
+            name = "Provider One Favorite",
+            providerId = 1L,
+            epgChannelId = "one",
+            number = 1,
+            categoryId = 10L
+        )
+        val providerTwoChannel = Channel(
+            id = 201L,
+            name = "Provider Two Favorite",
+            providerId = 2L,
+            epgChannelId = "two",
+            number = 2,
+            categoryId = 20L
+        )
+        val profile = CombinedM3uProfile(
+            id = 77L,
+            name = "Combined",
+            members = listOf(
+                CombinedM3uProfileMember(profileId = 77L, providerId = 1L, priority = 0, enabled = true),
+                CombinedM3uProfileMember(profileId = 77L, providerId = 2L, priority = 1, enabled = true)
+            )
+        )
+
+        whenever(combinedM3uRepository.getActiveLiveSource()).thenReturn(
+            flowOf(ActiveLiveSource.CombinedM3uSource(profile.id))
+        )
+        whenever(combinedM3uRepository.getProfile(profile.id)).thenReturn(profile)
+        whenever(combinedM3uRepository.getCombinedCategories(profile.id)).thenReturn(
+            flowOf(
+                listOf(
+                    CombinedCategory(
+                        category = Category(id = 10L, name = "One"),
+                        bindings = listOf(CombinedCategoryBinding(providerId = 1L, providerName = "Provider One", categoryId = 10L))
+                    ),
+                    CombinedCategory(
+                        category = Category(id = 20L, name = "Two"),
+                        bindings = listOf(CombinedCategoryBinding(providerId = 2L, providerName = "Provider Two", categoryId = 20L))
+                    )
+                )
+            )
+        )
+        whenever(combinedM3uRepository.getCombinedChannels(eq(profile.id), any())).thenAnswer { invocation ->
+            val combinedCategory = invocation.getArgument<CombinedCategory>(1)
+            when (combinedCategory.category.id) {
+                10L -> flowOf(listOf(providerOneChannel))
+                20L -> flowOf(listOf(providerTwoChannel))
+                else -> flowOf(emptyList())
+            }
+        }
+        whenever(channelRepository.getChannelsByIds(listOf(providerOneChannel.id, providerTwoChannel.id))).thenReturn(
+            flowOf(listOf(providerOneChannel, providerTwoChannel))
+        )
+        whenever(favoriteRepository.getFavorites(argThat<List<Long>> { this == listOf(1L, 2L) }, eq(ContentType.LIVE))).thenReturn(
+            flowOf(
+                listOf(
+                    Favorite(providerId = 1L, contentId = providerOneChannel.id, contentType = ContentType.LIVE, position = 0),
+                    Favorite(providerId = 2L, contentId = providerTwoChannel.id, contentType = ContentType.LIVE, position = 1)
+                )
+            )
+        )
+        whenever(preferencesRepository.guideDensity).thenReturn(flowOf(null))
+        whenever(preferencesRepository.guideChannelMode).thenReturn(flowOf(null))
+        whenever(preferencesRepository.guideFavoritesOnly).thenReturn(flowOf(true))
+        whenever(preferencesRepository.guideScheduledOnly).thenReturn(flowOf(false))
+        whenever(preferencesRepository.guideAnchorTime).thenReturn(flowOf(null))
+        whenever(preferencesRepository.guideDefaultCategoryId).thenReturn(flowOf(com.streamvault.domain.model.VirtualCategoryIds.FAVORITES))
+        whenever(epgRepository.getResolvedProgramsForChannels(eq(0L), any(), any(), any())).thenReturn(emptyMap())
+        whenever(epgRepository.getProgramsForChannels(eq(0L), any(), any(), any())).thenReturn(flowOf(emptyMap()))
+
+        val viewModel = createViewModel()
+
+        advanceUntilIdle()
+        waitForUiState {
+            viewModel.uiState.value.channels.map { it.id } == listOf(providerOneChannel.id, providerTwoChannel.id)
+        }
+
+        assertThat(viewModel.uiState.value.channels.map { it.id })
+            .containsExactly(providerOneChannel.id, providerTwoChannel.id)
+        verify(favoriteRepository, atLeastOnce()).getFavorites(argThat<List<Long>> { this == listOf(1L, 2L) }, eq(ContentType.LIVE))
     }
 }

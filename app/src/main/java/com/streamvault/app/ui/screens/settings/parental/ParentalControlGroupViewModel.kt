@@ -138,40 +138,31 @@ class ParentalControlGroupViewModel @Inject constructor(
         }
     }
 
-    fun hideAllCategories() {
+    fun hideAllCategories(type: ContentType) {
         viewModelScope.launch {
-            val categoriesByType = categoryRepository.getCategories(providerId)
+            val categoryIds = categoryRepository.getCategories(providerId)
                 .first()
-                .groupBy(Category::type)
-            ContentType.entries
-                .filter { it != ContentType.SERIES_EPISODE }
-                .forEach { type ->
-                    val categoryIds = categoriesByType[type]
-                        .orEmpty()
-                        .map(Category::id)
-                        .toSet()
-                    preferencesRepository.setHiddenCategoryIds(
-                        providerId = providerId,
-                        type = type,
-                        categoryIds = categoryIds
-                    )
-                }
-            _userMessage.value = "All categories hidden."
+                .asSequence()
+                .filter { it.type == type }
+                .map(Category::id)
+                .toSet()
+            preferencesRepository.setHiddenCategoryIds(
+                providerId = providerId,
+                type = type,
+                categoryIds = categoryIds
+            )
+            _userMessage.value = "${contentTypeMessageLabel(type)} categories hidden."
         }
     }
 
-    fun unhideAllCategories() {
+    fun unhideAllCategories(type: ContentType) {
         viewModelScope.launch {
-            ContentType.entries
-                .filter { it != ContentType.SERIES_EPISODE }
-                .forEach { type ->
-                    preferencesRepository.setHiddenCategoryIds(
-                        providerId = providerId,
-                        type = type,
-                        categoryIds = emptySet()
-                    )
-                }
-            _userMessage.value = "All categories restored."
+            preferencesRepository.setHiddenCategoryIds(
+                providerId = providerId,
+                type = type,
+                categoryIds = emptySet()
+            )
+            _userMessage.value = "${contentTypeMessageLabel(type)} categories restored."
         }
     }
 
@@ -223,6 +214,13 @@ class ParentalControlGroupViewModel @Inject constructor(
 
 private fun categoryControlKey(category: Category): String = "${category.type.name}:${category.id}"
 
+private fun contentTypeMessageLabel(type: ContentType): String = when (type) {
+    ContentType.LIVE -> "Live TV"
+    ContentType.MOVIE -> "Movie"
+    ContentType.SERIES,
+    ContentType.SERIES_EPISODE -> "Series"
+}
+
 private data class CategoryUiInputs(
     val categories: List<Category>,
     val hiddenByType: Map<ContentType, Set<Long>>,
@@ -237,10 +235,7 @@ private fun buildUiState(
     inputs: CategoryUiInputs,
     isLoading: Boolean
 ): ParentalControlGroupUiState {
-    val filteredCategories = inputs.categories.filter { category ->
-        inputs.query.isBlank() || category.name.contains(inputs.query, ignoreCase = true)
-    }
-    val items = filteredCategories.map { category ->
+    val items = inputs.categories.map { category ->
         val isInitiallyProtected = category.isAdult || category.isUserProtected
         val isProtected = if (category.isAdult) {
             true

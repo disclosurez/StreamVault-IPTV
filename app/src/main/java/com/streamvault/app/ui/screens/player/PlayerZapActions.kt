@@ -4,13 +4,22 @@ import androidx.lifecycle.viewModelScope
 import com.streamvault.domain.model.ChannelNumberingMode
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.PlaybackHistory
-import com.streamvault.domain.model.StreamInfo
-import com.streamvault.domain.model.StreamType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
+
+internal const val MAX_NUMERIC_CHANNEL_INPUT_DIGITS = 6
+
+internal fun appendNumericChannelDigit(currentBuffer: String, digit: Int): String {
+    val nextDigit = digit.toString()
+    return if (currentBuffer.length >= MAX_NUMERIC_CHANNEL_INPUT_DIGITS) {
+        nextDigit
+    } else {
+        currentBuffer + nextDigit
+    }
+}
 
 fun PlayerViewModel.playNext() {
     clearNumericChannelInput()
@@ -59,16 +68,7 @@ fun PlayerViewModel.inputNumericChannelDigit(digit: Int) {
     if (currentContentType != ContentType.LIVE || channelList.isEmpty()) return
     if (digit !in 0..9) return
 
-    if (numericInputBuffer.isBlank() && digit == 0 && hasLastChannel()) {
-        zapToLastChannel()
-        return
-    }
-
-    numericInputBuffer = if (numericInputBuffer.length >= 4) {
-        digit.toString()
-    } else {
-        numericInputBuffer + digit.toString()
-    }
+    numericInputBuffer = appendNumericChannelDigit(numericInputBuffer, digit)
     val exactMatch = resolveChannelByNumber(numericInputBuffer.toIntOrNull())
     val previewMatch = exactMatch ?: resolveChannelByPrefix(numericInputBuffer)
 
@@ -84,6 +84,13 @@ fun PlayerViewModel.inputNumericChannelDigit(digit: Int) {
 fun PlayerViewModel.commitNumericChannelInput() {
     numericInputCommitJob?.cancel()
     if (numericInputBuffer.isBlank()) return
+
+    // "0" committed alone after timeout → zap to last channel (standard IPTV remote behaviour)
+    if (numericInputBuffer == "0" && hasLastChannel()) {
+        clearNumericChannelInput()
+        zapToLastChannel()
+        return
+    }
 
     val targetChannel = resolveChannelByNumber(numericInputBuffer.toIntOrNull())
     if (targetChannel != null) {
@@ -115,7 +122,10 @@ fun PlayerViewModel.clearNumericChannelInput() {
     numericChannelInputFlow.value = null
 }
 
-internal fun PlayerViewModel.changeChannel(index: Int) {
+internal fun PlayerViewModel.changeChannel(index: Int, isAutoFallback: Boolean = false) {
+    check(index in channelList.indices) {
+        "changeChannel index=$index out of channelList bounds (size=${channelList.size})"
+    }
     clearNumericChannelInput()
     if (currentChannelIndex != -1 && currentChannelIndex != index) {
         previousChannelIndex = currentChannelIndex
@@ -137,14 +147,9 @@ internal fun PlayerViewModel.changeChannel(index: Int) {
     playerEngine.setScrubbingMode(true)
 
     viewModelScope.launch {
-        val resolvedUrl = resolvePlaybackUrl(channel.streamUrl, channel.id, channel.providerId, ContentType.LIVE)
+        val streamInfo = resolvePlaybackStreamInfo(channel.streamUrl, channel.id, channel.providerId, ContentType.LIVE)
             ?: return@launch
         if (!isActivePlaybackSession(requestVersion, channel.streamUrl)) return@launch
-        val streamInfo = StreamInfo(
-            url = resolvedUrl,
-            title = currentTitle,
-            streamType = StreamType.UNKNOWN
-        )
         if (!preparePlayer(streamInfo, requestVersion)) return@launch
         playerEngine.play()
 
@@ -175,7 +180,7 @@ internal fun PlayerViewModel.changeChannel(index: Int) {
     triedAlternativeStreams.add(channel.streamUrl)
     if (currentContentType == ContentType.LIVE) {
         recordLivePlayback(channel)
-        scheduleZapBufferWatchdog(index)
+        if (!isAutoFallback) scheduleZapBufferWatchdog(index)
     }
 }
 
@@ -184,19 +189,13 @@ internal fun PlayerViewModel.preloadAdjacentChannel(currentIndex: Int) {
     val nextIndex = (currentIndex + 1) % channelList.size
     val nextChannel = channelList[nextIndex]
     viewModelScope.launch {
-        val nextUrl = resolvePlaybackUrl(
+        val streamInfo = resolvePlaybackStreamInfo(
             nextChannel.streamUrl,
             nextChannel.id,
             nextChannel.providerId,
             ContentType.LIVE
         ) ?: return@launch
-        playerEngine.preload(
-            StreamInfo(
-                url = nextUrl,
-                title = nextChannel.name,
-                streamType = StreamType.UNKNOWN
-            )
-        )
+        playerEngine.preload(streamInfo)
     }
 }
 
@@ -234,18 +233,12 @@ internal fun PlayerViewModel.scheduleNumericChannelCommit() {
 
 internal fun PlayerViewModel.resolveChannelByNumber(number: Int?): com.streamvault.domain.model.Channel? {
     if (number == null) return null
-    return channelList
-        .withIndex()
-        .firstOrNull { (index, channel) -> resolveChannelNumber(channel, index) == number }
-        ?.value
+    return channelNumberIndex[number]
 }
 
 internal fun PlayerViewModel.resolveChannelByPrefix(prefix: String): com.streamvault.domain.model.Channel? {
-    return channelList
-        .withIndex()
-        .firstOrNull { (index, channel) ->
-            resolveChannelNumber(channel, index).toString().startsWith(prefix)
-        }
+    return channelNumberIndex.entries
+        .firstOrNull { (key, _) -> key.toString().startsWith(prefix) }
         ?.value
 }
 
@@ -255,4 +248,5 @@ internal fun PlayerViewModel.resolveChannelNumber(
 ): Int = when (channelNumberingMode) {
     ChannelNumberingMode.GROUP -> if (index >= 0) index + 1 else channel.number.takeIf { it > 0 } ?: 0
     ChannelNumberingMode.PROVIDER -> channel.number.takeIf { it > 0 } ?: if (index >= 0) index + 1 else 0
+    ChannelNumberingMode.HIDDEN -> 0
 }

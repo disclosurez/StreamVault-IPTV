@@ -5,6 +5,16 @@ data class TimeshiftConfig(
     val depthMinutes: Int = 30
 ) {
     val depthMs: Long = depthMinutes.coerceIn(15, 60) * 60_000L
+
+    fun effectiveDepthMs(backend: LiveTimeshiftBackend): Long =
+        if (backend == LiveTimeshiftBackend.MEMORY)
+            depthMinutes.coerceIn(1, MAX_MEMORY_BACKEND_DEPTH_MINUTES) * 60_000L
+        else
+            depthMs
+
+    companion object {
+        const val MAX_MEMORY_BACKEND_DEPTH_MINUTES = 5
+    }
 }
 
 enum class LiveTimeshiftBackend {

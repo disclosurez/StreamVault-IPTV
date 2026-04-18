@@ -95,6 +95,7 @@ fun PlayerControlsOverlay(
     visible: Boolean,
     title: String,
     contentType: String,
+    isCatchUpPlayback: Boolean = false,
     isPlaying: Boolean,
     currentProgram: Program?,
     currentChannelName: String?,
@@ -179,6 +180,7 @@ fun PlayerControlsOverlay(
             PlayerBottomBar(
                 title = title,
                 contentType = contentType,
+                isCatchUpPlayback = isCatchUpPlayback,
                 isPlaying = isPlaying,
                 currentProgram = currentProgram,
                 currentChannelName = currentChannelName,
@@ -257,13 +259,15 @@ fun PlayerZapOverlay(
                 .widthIn(min = 320.dp, max = 460.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = displayChannelNumber.toString(),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(16.dp))
+                if (displayChannelNumber > 0) {
+                    Text(
+                        text = displayChannelNumber.toString(),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                }
                 Column {
                     Text(
                         text = channelName.orEmpty(),
@@ -499,6 +503,7 @@ private fun PlayerTopBar(
 private fun PlayerBottomBar(
     title: String,
     contentType: String,
+    isCatchUpPlayback: Boolean = false,
     isPlaying: Boolean,
     currentProgram: Program?,
     currentChannelName: String?,
@@ -546,7 +551,7 @@ private fun PlayerBottomBar(
     onSeekPreviewPositionChanged: (Long?) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isVod = contentType != "LIVE"
+    val isVod = contentType != "LIVE" || isCatchUpPlayback
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -624,7 +629,9 @@ private fun PlayerBottomBar(
                         onTogglePlayPause = onTogglePlayPause,
                         onSeekBackward = onSeekBackward,
                         onSeekForward = onSeekForward,
-                        onSeekToLiveEdge = onSeekToLiveEdge
+                        onSeekToLiveEdge = onSeekToLiveEdge,
+                        onSeekToPosition = onSeekToPosition,
+                        onSetScrubbingMode = onSetScrubbingMode
                     )
                 } else {
                     PlayerVodInfo(
@@ -703,7 +710,9 @@ private fun PlayerLiveInfo(
     onTogglePlayPause: () -> Unit,
     onSeekBackward: () -> Unit,
     onSeekForward: () -> Unit,
-    onSeekToLiveEdge: () -> Unit
+    onSeekToLiveEdge: () -> Unit,
+    onSeekToPosition: (Long) -> Unit,
+    onSetScrubbingMode: (Boolean) -> Unit
 ) {
     val showTimeshiftControls = timeshiftUiState.available && !isCastConnected
     val primaryActions = buildList {
@@ -763,7 +772,9 @@ private fun PlayerLiveInfo(
                     },
                     accent = true
                 )
-                PlayerMetaPill(text = stringResource(R.string.player_live_channel, displayChannelNumber))
+                if (displayChannelNumber > 0) {
+                    PlayerMetaPill(text = stringResource(R.string.player_live_channel, displayChannelNumber))
+                }
                 if (currentProgram?.hasArchive == true) {
                     PlayerMetaPill(text = stringResource(R.string.player_archive_badge))
                 }
@@ -791,7 +802,11 @@ private fun PlayerLiveInfo(
             )
             Text(
                 text = if (currentProgram != null) {
-                    stringResource(R.string.channel_number_name_format, displayChannelNumber, currentChannelName.orEmpty())
+                    if (displayChannelNumber > 0) {
+                        stringResource(R.string.channel_number_name_format, displayChannelNumber, currentChannelName.orEmpty())
+                    } else {
+                        currentChannelName.orEmpty()
+                    }
                 } else {
                     stringResource(R.string.player_no_guide_data)
                 },
@@ -804,96 +819,18 @@ private fun PlayerLiveInfo(
     Spacer(modifier = Modifier.height(16.dp))
 
     if (showTimeshiftControls) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            colors = SurfaceDefaults.colors(containerColor = Color.White.copy(alpha = 0.06f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    colors = SurfaceDefaults.colors(containerColor = Color.Black.copy(alpha = 0.24f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        PlayerTransportButton(
-                            label = "\u23EA",
-                            contentDescription = stringResource(R.string.player_rewind),
-                            onClick = onSeekBackward,
-                            modifier = Modifier.focusProperties { down = quickActionsFocusRequester }
-                        )
-                        TvClickableSurface(
-                            onClick = onTogglePlayPause,
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = Primary.copy(alpha = 0.84f),
-                                focusedContainerColor = Primary
-                            ),
-                            modifier = Modifier
-                                .size(62.dp)
-                                .focusRequester(playButtonFocusRequester)
-                                .focusProperties { down = quickActionsFocusRequester }
-                        ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                if (isPlaying) {
-                                    Text(text = "II", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = stringResource(R.string.player_play),
-                                        tint = Color.White,
-                                        modifier = Modifier.size(30.dp)
-                                    )
-                                }
-                            }
-                        }
-                        PlayerTransportButton(
-                            label = "\u23E9",
-                            contentDescription = stringResource(R.string.player_forward),
-                            onClick = onSeekForward,
-                            modifier = Modifier.focusProperties { down = quickActionsFocusRequester }
-                        )
-                    }
-                }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = timeshiftUiState.statusMessage.ifBlank {
-                            if (timeshiftUiState.bufferDepthMs > 0L) {
-                                stringResource(R.string.player_live_timeshift_buffering)
-                            } else {
-                                stringResource(R.string.player_live_timeshift_ready)
-                            }
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color.White
-                    )
-                    Text(
-                        text = if (timeshiftUiState.bufferedBehindLiveMs > 1_000L) {
-                            stringResource(R.string.player_live_offset, formatDuration(timeshiftUiState.bufferedBehindLiveMs))
-                        } else {
-                            stringResource(R.string.player_live_ready)
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.72f)
-                    )
-                }
-                if (timeshiftUiState.canSeekToLive) {
-                    PlayerQuickSettingsButton(
-                        text = stringResource(R.string.player_jump_to_live),
-                        onClick = onSeekToLiveEdge
-                    )
-                }
-            }
-        }
-
+        LiveTimeshiftScrubber(
+            timeshiftUiState = timeshiftUiState,
+            isPlaying = isPlaying,
+            playButtonFocusRequester = playButtonFocusRequester,
+            quickActionsFocusRequester = quickActionsFocusRequester,
+            onTogglePlayPause = onTogglePlayPause,
+            onSeekBackward = onSeekBackward,
+            onSeekForward = onSeekForward,
+            onSeekToPosition = onSeekToPosition,
+            onSeekToLiveEdge = onSeekToLiveEdge,
+            onSetScrubbingMode = onSetScrubbingMode
+        )
         Spacer(modifier = Modifier.height(16.dp))
     }
 
@@ -1520,6 +1457,241 @@ private fun PlayerQuickActionRows(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LiveTimeshiftScrubber(
+    timeshiftUiState: PlayerTimeshiftUiState,
+    isPlaying: Boolean,
+    playButtonFocusRequester: FocusRequester,
+    quickActionsFocusRequester: FocusRequester,
+    onTogglePlayPause: () -> Unit,
+    onSeekBackward: () -> Unit,
+    onSeekForward: () -> Unit,
+    onSeekToPosition: (Long) -> Unit,
+    onSeekToLiveEdge: () -> Unit,
+    onSetScrubbingMode: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bufferDepthMs = timeshiftUiState.bufferDepthMs.coerceAtLeast(1L)
+    val bufferedBehindLive = timeshiftUiState.bufferedBehindLiveMs
+    val targetFraction = remember(bufferedBehindLive, bufferDepthMs) {
+        1f - (bufferedBehindLive.toFloat() / bufferDepthMs.toFloat()).coerceIn(0f, 1f)
+    }
+    var scrubberFraction by remember { mutableStateOf(targetFraction) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    val latestSeekCallback by rememberUpdatedState(onSeekToPosition)
+    val latestScrubbingCallback by rememberUpdatedState(onSetScrubbingMode)
+    val latestSeekBackward by rememberUpdatedState(onSeekBackward)
+    val latestSeekForward by rememberUpdatedState(onSeekForward)
+    val latestSeekToLiveEdge by rememberUpdatedState(onSeekToLiveEdge)
+
+    LaunchedEffect(targetFraction, isScrubbing) {
+        if (!isScrubbing) scrubberFraction = targetFraction
+    }
+
+    val engineState = timeshiftUiState.engineState
+    val oldestWallMs = engineState.bufferStartMs
+    val oldestLabel = if (oldestWallMs > 0L) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(oldestWallMs))
+    } else if (bufferDepthMs > 1_000L) {
+        "-${formatTimeshiftDuration(bufferDepthMs)}"
+    } else {
+        ""
+    }
+
+    val currentOffsetMs = if (isScrubbing) {
+        ((1f - scrubberFraction) * bufferDepthMs.toFloat()).toLong()
+    } else {
+        bufferedBehindLive
+    }
+
+    var liveDotVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(700L)
+            liveDotVisible = !liveDotVisible
+        }
+    }
+
+    val scrubberCd = stringResource(R.string.player_live_scrubber_cd)
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        colors = SurfaceDefaults.colors(containerColor = Color.White.copy(alpha = 0.06f)),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Transport controls pill
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                colors = SurfaceDefaults.colors(containerColor = Color.Black.copy(alpha = 0.24f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PlayerTransportButton(
+                        label = "\u23EA",
+                        contentDescription = stringResource(R.string.player_rewind),
+                        onClick = onSeekBackward,
+                        modifier = Modifier.focusProperties { down = quickActionsFocusRequester }
+                    )
+                    TvClickableSurface(
+                        onClick = onTogglePlayPause,
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Primary.copy(alpha = 0.84f),
+                            focusedContainerColor = Primary
+                        ),
+                        modifier = Modifier
+                            .size(62.dp)
+                            .focusRequester(playButtonFocusRequester)
+                            .focusProperties { down = quickActionsFocusRequester }
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            if (isPlaying) {
+                                Text(text = "II", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = stringResource(R.string.player_play),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+                        }
+                    }
+                    PlayerTransportButton(
+                        label = "\u23E9",
+                        contentDescription = stringResource(R.string.player_forward),
+                        onClick = onSeekForward,
+                        modifier = Modifier.focusProperties { down = quickActionsFocusRequester }
+                    )
+                }
+            }
+
+            // Scrubber section
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Labels: oldest time | current offset | LIVE badge
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = oldestLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.55f)
+                    )
+                    Text(
+                        text = if (currentOffsetMs < 2_000L) {
+                            stringResource(R.string.player_live_ready)
+                        } else {
+                            stringResource(R.string.player_live_offset, formatTimeshiftDuration(currentOffsetMs))
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (currentOffsetMs < 2_000L) FontWeight.Bold else FontWeight.Normal,
+                        color = if (currentOffsetMs < 2_000L) Primary else Color.White
+                    )
+                    // LIVE edge badge with pulsing dot
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(
+                                    color = Color.Red.copy(alpha = if (liveDotVisible) 0.95f else 0.30f),
+                                    shape = RoundedCornerShape(999.dp)
+                                )
+                        )
+                        Text(
+                            text = stringResource(R.string.player_jump_to_live_short),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+
+                // Timeline slider
+                Slider(
+                    value = scrubberFraction,
+                    onValueChange = { newValue ->
+                        val clamped = newValue.coerceIn(0f, 1f)
+                        if (!isScrubbing) {
+                            isScrubbing = true
+                            latestScrubbingCallback(true)
+                        }
+                        scrubberFraction = clamped
+                    },
+                    onValueChangeFinished = {
+                        val finalFraction = scrubberFraction.coerceIn(0f, 1f)
+                        if (finalFraction >= 0.995f) {
+                            latestSeekToLiveEdge()
+                        } else {
+                            latestSeekCallback((finalFraction * bufferDepthMs.toFloat()).toLong())
+                        }
+                        if (isScrubbing) {
+                            latestScrubbingCallback(false)
+                            isScrubbing = false
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusProperties {
+                            down = quickActionsFocusRequester
+                            up = playButtonFocusRequester
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when (event.nativeKeyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { latestSeekBackward(); true }
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    if (timeshiftUiState.canSeekToLive) latestSeekForward() else latestSeekToLiveEdge()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                        .semantics { contentDescription = scrubberCd },
+                    enabled = bufferDepthMs > 2_000L,
+                    colors = SliderDefaults.colors(
+                        activeTrackColor = Primary,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.22f),
+                        thumbColor = Primary
+                    )
+                )
+            }
+        }
+    }
+}
+
+private fun formatTimeshiftDuration(ms: Long): String {
+    val totalSeconds = ms / 1_000L
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    val hours = minutes / 60L
+    val remainingMinutes = minutes % 60L
+    return if (hours > 0L) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, remainingMinutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
     }
 }
 

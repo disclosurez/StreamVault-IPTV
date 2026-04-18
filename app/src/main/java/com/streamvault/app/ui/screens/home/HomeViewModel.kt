@@ -21,6 +21,7 @@ import com.streamvault.domain.model.ChannelNumberingMode
 import com.streamvault.domain.model.CombinedCategory
 import com.streamvault.domain.model.CombinedM3uProfileMember
 import com.streamvault.domain.model.ContentType
+import com.streamvault.domain.model.Favorite
 import com.streamvault.domain.model.PlaybackHistory
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.model.Provider
@@ -80,6 +81,9 @@ class HomeViewModel @Inject constructor(
 ) : ViewModel() {
     private companion object {
         const val MIN_CHANNEL_SEARCH_QUERY_LENGTH = 2
+        const val CHANNEL_PAGE_SIZE = 200
+        const val CHANNEL_SEARCH_PAGE_SIZE = 300
+        const val LOAD_MORE_THRESHOLD = 5
     }
 
     private val appContext = application
@@ -88,6 +92,8 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     private val _localChannels = MutableStateFlow<List<Channel>>(emptyList())
+    private val _channelBrowseLimit = MutableStateFlow(CHANNEL_PAGE_SIZE)
+    private val _channelSearchLimit = MutableStateFlow(CHANNEL_SEARCH_PAGE_SIZE)
     private val _preferredInitialCategoryId = MutableStateFlow<Long?>(null)
     private val _visibleChannelWindow = MutableStateFlow<Set<Long>>(emptySet())
     private val _epgProgramMap = MutableStateFlow<Map<String, Program>>(emptyMap())
@@ -224,9 +230,9 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 _localChannels,
-                favoriteRepository.getFavorites(ContentType.LIVE),
+                observeCurrentLiveFavorites(),
                 _epgProgramMap
-            ) { channels, favorites, epgProgramMap ->
+            ) { channels: List<Channel>, favorites: List<Favorite>, epgProgramMap: Map<String, Program> ->
                 Triple(channels, favorites, epgProgramMap)
             }.collectLatest { (channels, favorites, epgProgramMap) ->
                 val favoriteIds = favorites.map { it.contentId }.toSet()
@@ -399,7 +405,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { it.copy(isCategoriesLoading = true, errorMessage = null) }
                 combine(
                     channelRepository.getCategories(providerId),
-                    getCustomCategories(),
+                    getCustomCategories(providerId, ContentType.LIVE),
                     preferencesRepository.defaultCategoryId,
                     preferencesRepository.getLastLiveCategoryId(providerId),
                     preferencesRepository.getHiddenCategoryIds(providerId, ContentType.LIVE),
@@ -454,6 +460,10 @@ class HomeViewModel @Inject constructor(
                         lastVisitedCategoryId = lastVisitedCategoryId,
                         pinnedCategoryIds = pinnedCategoryIds
                     )
+                }.combine(preferencesRepository.showRecentChannelsCategory) { ctx, showRecent ->
+                    if (!showRecent) ctx.copy(categories = ctx.categories.filter { it.id != VirtualCategoryIds.RECENT }) else ctx
+                }.combine(preferencesRepository.showAllChannelsCategory) { ctx, showAll ->
+                    if (!showAll) ctx.copy(categories = ctx.categories.filter { it.id != ChannelRepository.ALL_CHANNELS_ID }) else ctx
                 }.collect { selectionContext ->
                     val categories = selectionContext.categories
                     val defaultId = selectionContext.defaultCategoryId
@@ -523,9 +533,10 @@ class HomeViewModel @Inject constructor(
         categoriesJob = viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isCategoriesLoading = true, errorMessage = null, pinnedCategoryIds = emptySet()) }
+                val providerIds = currentCombinedProviderIds()
                 combine(
                     combinedM3uRepository.getCombinedCategories(profileId),
-                    getCustomCategories()
+                    getCustomCategories(providerIds, ContentType.LIVE)
                 ) { combinedCategories, customCats ->
                     combinedCategoriesById = combinedCategories.associateBy { it.category.id }
                     val recentCategory = Category(
@@ -554,6 +565,10 @@ class HomeViewModel @Inject constructor(
                         lastVisitedCategoryId = null,
                         pinnedCategoryIds = emptySet()
                     )
+                }.combine(preferencesRepository.showRecentChannelsCategory) { ctx, showRecent ->
+                    if (!showRecent) ctx.copy(categories = ctx.categories.filter { it.id != VirtualCategoryIds.RECENT }) else ctx
+                }.combine(preferencesRepository.showAllChannelsCategory) { ctx, showAll ->
+                    if (!showAll) ctx.copy(categories = ctx.categories.filter { it.id != ChannelRepository.ALL_CHANNELS_ID }) else ctx
                 }.collect { selectionContext ->
                     val categories = selectionContext.categories
                     _uiState.update {
@@ -638,6 +653,8 @@ class HomeViewModel @Inject constructor(
 
     private fun loadChannelsForCategory(category: Category) {
         loadChannelsJob?.cancel()
+        _channelBrowseLimit.value = CHANNEL_PAGE_SIZE
+        _channelSearchLimit.value = CHANNEL_SEARCH_PAGE_SIZE
         loadChannelsJob = viewModelScope.launch {
             try {
                 _uiState.update {
@@ -662,7 +679,24 @@ class HomeViewModel @Inject constructor(
                         if (allFlows.isEmpty()) flowOf(emptyList())
                         else combine(allFlows) { arrays -> arrays.toList().flatMap { it } }
                     } else if (category.isVirtual) {
-                        flowOf(emptyList())
+                        val providerIds = currentLiveProviderIds()
+                        when (category.id) {
+                            VirtualCategoryIds.RECENT -> {
+                                observeRecentLiveIds(providerIds, limit = 24)
+                                    .flatMapLatest(::loadChannelsByOrderedIds)
+                            }
+                            VirtualCategoryIds.FAVORITES -> {
+                                observeLiveFavorites(providerIds)
+                                    .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
+                                    .flatMapLatest(::loadChannelsByOrderedIds)
+                            }
+                            else -> {
+                                val groupId = -category.id
+                                favoriteRepository.getFavoritesByGroup(groupId)
+                                    .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
+                                    .flatMapLatest(::loadChannelsByOrderedIds)
+                            }
+                        }
                     } else {
                         val combinedCategory = combinedCategoriesById[category.id]
                         if (combinedCategory == null) {
@@ -687,7 +721,7 @@ class HomeViewModel @Inject constructor(
                             .map { it.toRecentLiveContentIds() }
                             .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
                     } else if (category.id == VirtualCategoryIds.FAVORITES) {
-                        favoriteRepository.getFavorites(ContentType.LIVE)
+                        favoriteRepository.getFavorites(providerId, ContentType.LIVE)
                             .map { favorites -> favorites.sortedBy { it.position }.map { it.contentId } }
                             .flatMapLatest { ids -> loadChannelsByOrderedIds(ids) }
                     } else {
@@ -712,11 +746,15 @@ class HomeViewModel @Inject constructor(
                     queryFlow.flatMapLatest { query ->
                         val trimmedQuery = query.trim()
                         if (trimmedQuery.isBlank()) {
-                            channelRepository.getChannelsByCategory(providerId, category.id)
+                            _channelBrowseLimit.flatMapLatest { limit ->
+                                channelRepository.getChannelsByCategoryPage(providerId, category.id, limit)
+                            }
                         } else if (trimmedQuery.length < MIN_CHANNEL_SEARCH_QUERY_LENGTH) {
                             flowOf(emptyList())
                         } else {
-                            channelRepository.searchChannelsByCategory(providerId, category.id, trimmedQuery)
+                            _channelSearchLimit.flatMapLatest { limit ->
+                                channelRepository.searchChannelsByCategoryPaged(providerId, category.id, trimmedQuery, limit)
+                            }
                         }
                     }
                 }
@@ -734,14 +772,22 @@ class HomeViewModel @Inject constructor(
                             channel.copy(number = index + 1)
                         }
                         ChannelNumberingMode.PROVIDER -> visibleChannels
+                        ChannelNumberingMode.HIDDEN -> visibleChannels.map { it.copy(number = 0) }
                     }
                 }.collect { displayedChannels ->
+                    val currentQuery = _uiState.value.channelSearchQuery.trim()
+                    val currentLimit = if (currentQuery.length < MIN_CHANNEL_SEARCH_QUERY_LENGTH) {
+                        _channelBrowseLimit.value
+                    } else {
+                        _channelSearchLimit.value
+                    }
                     _localChannels.value = displayedChannels
                     _uiState.update {
                         it.copy(
                             hasChannels = displayedChannels.isNotEmpty(),
                             isLoading = displayedChannels.isEmpty() && it.isSyncing,
-                            errorMessage = null
+                            errorMessage = null,
+                            hasMoreChannels = displayedChannels.size >= currentLimit
                         )
                     }
                 }
@@ -845,7 +891,17 @@ class HomeViewModel @Inject constructor(
 
     fun updateChannelSearchQuery(query: String) {
         if (_uiState.value.isChannelReorderMode) return
+        _channelSearchLimit.value = CHANNEL_SEARCH_PAGE_SIZE
         _uiState.update { it.copy(channelSearchQuery = query) }
+    }
+
+    fun loadMoreChannels() {
+        val currentQuery = _uiState.value.channelSearchQuery.trim()
+        if (currentQuery.length < MIN_CHANNEL_SEARCH_QUERY_LENGTH) {
+            _channelBrowseLimit.update { it + CHANNEL_PAGE_SIZE }
+        } else {
+            _channelSearchLimit.update { it + CHANNEL_SEARCH_PAGE_SIZE }
+        }
     }
 
     fun previewChannel(channel: Channel) {
@@ -1047,6 +1103,7 @@ class HomeViewModel @Inject constructor(
     fun addFavorite(channel: Channel) {
         viewModelScope.launch {
             favoriteRepository.addFavorite(
+                providerId = channel.providerId,
                 contentId = channel.id,
                 contentType = ContentType.LIVE,
                 groupId = null
@@ -1059,6 +1116,7 @@ class HomeViewModel @Inject constructor(
     fun removeFavorite(channel: Channel) {
         viewModelScope.launch {
             favoriteRepository.removeFavorite(
+                providerId = channel.providerId,
                 contentId = channel.id,
                 contentType = ContentType.LIVE,
                 groupId = null
@@ -1084,7 +1142,12 @@ class HomeViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            favoriteRepository.createGroup(trimmed, contentType = ContentType.LIVE)
+            val providerId = resolveLiveWriteProviderId()
+            if (providerId == null) {
+                _uiState.update { it.copy(userMessage = appContext.getString(R.string.home_error_load_failed)) }
+                return@launch
+            }
+            favoriteRepository.createGroup(providerId, trimmed, contentType = ContentType.LIVE)
             _uiState.update { it.copy(userMessage = appContext.getString(R.string.home_group_created, trimmed)) }
         }
     }
@@ -1201,6 +1264,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val groupId = -category.id
             favoriteRepository.addFavorite(
+                providerId = channel.providerId,
                 contentId = channel.id,
                 contentType = ContentType.LIVE,
                 groupId = groupId
@@ -1215,6 +1279,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val groupId = -category.id
             favoriteRepository.removeFavorite(
+                providerId = channel.providerId,
                 contentId = channel.id,
                 contentType = ContentType.LIVE,
                 groupId = groupId
@@ -1242,7 +1307,7 @@ class HomeViewModel @Inject constructor(
             val groupId = if (currentCategory.id == VirtualCategoryIds.FAVORITES) null else -currentCategory.id
 
             val favoritesFlow = if (groupId == null) {
-                favoriteRepository.getFavorites(ContentType.LIVE)
+                observeLiveFavorites(currentLiveProviderIds())
             } else {
                 favoriteRepository.getFavoritesByGroup(groupId)
             }
@@ -1252,8 +1317,6 @@ class HomeViewModel @Inject constructor(
 
             val reorderedFavorites = currentList.mapNotNull { ch ->
                 favoriteMap[ch.id]
-            }.mapIndexed { i, fav ->
-                fav.copy(position = i)
             }
 
             favoriteRepository.reorderFavorites(reorderedFavorites)
@@ -1277,7 +1340,7 @@ class HomeViewModel @Inject constructor(
     fun onShowDialog(channel: Channel) {
         _uiState.update { it.copy(showDialog = true, selectedChannelForDialog = channel) }
         viewModelScope.launch {
-            val memberships = favoriteRepository.getGroupMemberships(channel.id, ContentType.LIVE)
+            val memberships = favoriteRepository.getGroupMemberships(channel.providerId, channel.id, ContentType.LIVE)
             _uiState.update { it.copy(dialogGroupMemberships = memberships) }
         }
     }
@@ -1360,6 +1423,28 @@ class HomeViewModel @Inject constructor(
                 dismissCategoryOptions()
             }
             _uiState.update { it.copy(userMessage = "Hidden category '${category.name}'") }
+        }
+    }
+
+    fun setShowAllChannelsCategory(enabled: Boolean) {
+        viewModelScope.launch { preferencesRepository.setShowAllChannelsCategory(enabled) }
+    }
+
+    fun setShowRecentChannelsCategory(enabled: Boolean) {
+        viewModelScope.launch { preferencesRepository.setShowRecentChannelsCategory(enabled) }
+    }
+
+    fun clearRecentChannels() {
+        val providerId = _uiState.value.provider?.id ?: return
+        viewModelScope.launch {
+            playbackHistoryRepository.clearLiveHistoryForProvider(providerId)
+        }
+    }
+
+    fun removeChannelFromRecent(channel: Channel) {
+        val providerId = _uiState.value.provider?.id ?: return
+        viewModelScope.launch {
+            playbackHistoryRepository.removeFromHistory(channel.id, ContentType.LIVE, providerId)
         }
     }
 
@@ -1450,7 +1535,7 @@ class HomeViewModel @Inject constructor(
                 val groupId = if (category.id == VirtualCategoryIds.FAVORITES) null else -category.id
 
                 val favoritesFlow = if (groupId == null) {
-                    favoriteRepository.getFavorites(ContentType.LIVE)
+                    observeLiveFavorites(currentLiveProviderIds())
                 } else {
                     favoriteRepository.getFavoritesByGroup(groupId)
                 }
@@ -1462,8 +1547,6 @@ class HomeViewModel @Inject constructor(
                 // Map the sorted Channel list back to Favorite entities with new positions
                 val reorderedFavorites = currentList.mapNotNull { ch ->
                     favoriteMap[ch.id]
-                }.mapIndexed { i, fav ->
-                    fav.copy(position = i)
                 }
 
                 // Persist the new order in DB
@@ -1490,7 +1573,7 @@ class HomeViewModel @Inject constructor(
 
         val groupId = if (category.id == VirtualCategoryIds.FAVORITES) null else -category.id
         val favorites = if (groupId == null) {
-            favoriteRepository.getFavorites(ContentType.LIVE).first()
+            observeLiveFavorites(currentLiveProviderIds()).first()
         } else {
             favoriteRepository.getFavoritesByGroup(groupId).first()
         }
@@ -1509,6 +1592,55 @@ class HomeViewModel @Inject constructor(
             .distinctBy { it.contentId }
             .map { it.contentId }
             .toList()
+
+    private fun currentCombinedProviderIds(): List<Long> =
+        _uiState.value.currentCombinedProfileMembers
+            .filter { it.enabled }
+            .map { it.providerId }
+
+    private fun currentLiveProviderIds(state: HomeUiState = _uiState.value): List<Long> = when (val source = state.activeLiveSource) {
+        is ActiveLiveSource.ProviderSource -> listOf(source.providerId)
+        is ActiveLiveSource.CombinedM3uSource -> state.currentCombinedProfileMembers
+            .filter { it.enabled }
+            .map { it.providerId }
+        null -> state.provider?.id?.let(::listOf).orEmpty()
+    }
+
+    private fun observeCurrentLiveFavorites(): Flow<List<Favorite>> =
+        _uiState.map(::currentLiveProviderIds)
+            .distinctUntilChanged()
+            .flatMapLatest(::observeLiveFavorites)
+
+    private fun observeLiveFavorites(providerIds: List<Long>): Flow<List<Favorite>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> favoriteRepository.getFavorites(providerIds.first(), ContentType.LIVE)
+        else -> favoriteRepository.getFavorites(providerIds, ContentType.LIVE)
+    }
+
+    private fun observeRecentLiveIds(providerIds: List<Long>, limit: Int): Flow<List<Long>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> playbackHistoryRepository.getRecentlyWatchedByProvider(providerIds.first(), limit)
+            .map { history -> history.toRecentLiveContentIds().take(limit) }
+        else -> combine(providerIds.map { providerId ->
+            playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit)
+        }) { histories ->
+            histories.toList()
+                .flatMap { it }
+                .asSequence()
+                .filter { it.contentType == ContentType.LIVE }
+                .sortedByDescending { it.lastWatchedAt }
+                .distinctBy { it.providerId to it.contentId }
+                .map { it.contentId }
+                .take(limit)
+                .toList()
+        }
+    }
+
+    private fun resolveLiveWriteProviderId(preferredProviderId: Long? = null): Long? =
+        preferredProviderId
+            ?: _uiState.value.provider?.id
+            ?: _uiState.value.selectedCombinedSourceProviderId
+            ?: currentLiveProviderIds().singleOrNull()
 
     override fun onCleared() {
         epgJob?.cancel()
@@ -1536,6 +1668,7 @@ data class HomeUiState(
     val selectedCategory: Category? = null,
     val filteredChannels: List<Channel> = emptyList(),
     val hasChannels: Boolean = false,
+    val hasMoreChannels: Boolean = false,
     val isLoading: Boolean = true,
     val isCategoriesLoading: Boolean = true,
     val isSyncing: Boolean = false,

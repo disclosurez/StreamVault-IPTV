@@ -132,8 +132,8 @@ class SeriesViewModel @Inject constructor(
                 .flatMapLatest { provider ->
                     activeProviderId = provider.id
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
-                        getCustomCategories(ContentType.SERIES),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.SERIES),
+                        getCustomCategories(provider.id, ContentType.SERIES),
                         seriesRepository.getCategories(provider.id),
                         seriesRepository.getCategoryItemCounts(provider.id),
                         seriesRepository.getLibraryCount(provider.id),
@@ -270,8 +270,8 @@ class SeriesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
-                        getCustomCategories(ContentType.SERIES),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.SERIES),
+                        getCustomCategories(provider.id, ContentType.SERIES),
                         seriesRepository.getCategories(provider.id),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 2_000),
                         preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.SERIES),
@@ -368,7 +368,7 @@ class SeriesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.SERIES),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.SERIES),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         seriesRepository.getTopRatedPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
                         seriesRepository.getFreshPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT)
@@ -460,9 +460,12 @@ class SeriesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            getCustomCategories(ContentType.SERIES).collect { categories ->
-                _uiState.update { it.copy(categories = categories) }
-            }
+            providerRepository.getActiveProvider()
+                .filterNotNull()
+                .flatMapLatest { provider -> getCustomCategories(provider.id, ContentType.SERIES) }
+                .collect { categories ->
+                    _uiState.update { it.copy(categories = categories) }
+                }
         }
     }
 
@@ -572,6 +575,7 @@ class SeriesViewModel @Inject constructor(
         viewModelScope.launch {
             val dialogSelection = loadVodDialogSelection(
                 item = series,
+                providerId = series.providerId,
                 itemId = series.id,
                 contentType = ContentType.SERIES,
                 favoriteRepository = favoriteRepository,
@@ -595,14 +599,14 @@ class SeriesViewModel @Inject constructor(
 
     fun addFavorite(series: Series) {
         viewModelScope.launch {
-            setVodFavorite(series.id, ContentType.SERIES, true, favoriteRepository)
+            setVodFavorite(series.providerId, series.id, ContentType.SERIES, true, favoriteRepository)
             _uiState.update { it.copy(selectedSeriesForDialog = series.copy(isFavorite = true)) }
         }
     }
 
     fun removeFavorite(series: Series) {
         viewModelScope.launch {
-            setVodFavorite(series.id, ContentType.SERIES, false, favoriteRepository)
+            setVodFavorite(series.providerId, series.id, ContentType.SERIES, false, favoriteRepository)
             _uiState.update { it.copy(selectedSeriesForDialog = series.copy(isFavorite = false)) }
         }
     }
@@ -610,6 +614,7 @@ class SeriesViewModel @Inject constructor(
     fun addToGroup(series: Series, group: Category) {
         viewModelScope.launch {
             val memberships = updateVodGroupMembership(
+                providerId = series.providerId,
                 itemId = series.id,
                 groupId = group.id,
                 contentType = ContentType.SERIES,
@@ -623,6 +628,7 @@ class SeriesViewModel @Inject constructor(
     fun removeFromGroup(series: Series, group: Category) {
         viewModelScope.launch {
             val memberships = updateVodGroupMembership(
+                providerId = series.providerId,
                 itemId = series.id,
                 groupId = group.id,
                 contentType = ContentType.SERIES,
@@ -642,11 +648,13 @@ class SeriesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            when (val result = createVodGroup(normalizedName, ContentType.SERIES, favoriteRepository)) {
+            val providerId = activeProviderId ?: return@launch
+            when (val result = createVodGroup(providerId, normalizedName, ContentType.SERIES, favoriteRepository)) {
                 is Result.Success -> {
                     val selectedSeries = _uiState.value.selectedSeriesForDialog
                     val memberships = if (selectedSeries != null) {
                         updateVodGroupMembership(
+                            providerId = selectedSeries.providerId,
                             itemId = selectedSeries.id,
                             groupId = result.data.id,
                             contentType = ContentType.SERIES,
@@ -847,6 +855,7 @@ class SeriesViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 saveVodReorder(
+                    providerId = activeProviderId ?: return@launch,
                     category = category,
                     currentItems = currentList,
                     contentType = ContentType.SERIES,
@@ -860,6 +869,7 @@ class SeriesViewModel @Inject constructor(
 
     private suspend fun loadReorderSeries(category: Category): List<Series> {
         return loadVodReorderItems(
+            providerId = activeProviderId ?: return emptyList(),
             category = category,
             contentType = ContentType.SERIES,
             favoriteRepository = favoriteRepository,

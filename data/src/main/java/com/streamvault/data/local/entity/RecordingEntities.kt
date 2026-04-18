@@ -123,6 +123,41 @@ data class RecordingStorageEntity(
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )
 
+@Entity(
+    tableName = "program_reminders",
+    foreignKeys = [
+        ForeignKey(
+            entity = ProviderEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["provider_id"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["provider_id", "remind_at"]),
+        Index(value = ["is_dismissed", "notified_at", "remind_at"]),
+        Index(value = ["provider_id", "channel_id", "program_start_time"]),
+        Index(
+            value = ["provider_id", "channel_id", "program_title", "program_start_time"],
+            unique = true
+        )
+    ]
+)
+data class ProgramReminderEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    @ColumnInfo(name = "provider_id") val providerId: Long,
+    @ColumnInfo(name = "channel_id") val channelId: String,
+    @ColumnInfo(name = "channel_name") val channelName: String,
+    @ColumnInfo(name = "program_title") val programTitle: String,
+    @ColumnInfo(name = "program_start_time") val programStartTime: Long,
+    @ColumnInfo(name = "remind_at") val remindAt: Long,
+    @ColumnInfo(name = "lead_time_minutes") val leadTimeMinutes: Int = 5,
+    @ColumnInfo(name = "is_dismissed") val isDismissed: Boolean = false,
+    @ColumnInfo(name = "notified_at") val notifiedAt: Long? = null,
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
+)
+
 data class RecordingRunWithSchedule(
     @ColumnInfo(name = "id") val id: String,
     @ColumnInfo(name = "schedule_id") val scheduleId: Long,

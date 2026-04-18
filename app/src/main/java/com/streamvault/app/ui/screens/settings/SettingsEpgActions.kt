@@ -3,24 +3,23 @@ package com.streamvault.app.ui.screens.settings
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.EpgSourceRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 internal class SettingsEpgActions(
     private val epgSourceRepository: EpgSourceRepository,
     private val uiState: MutableStateFlow<SettingsUiState>
 ) {
-    fun loadEpgSources(scope: CoroutineScope) {
-        scope.launch {
-            epgSourceRepository.getAllSources().collect { sources ->
-                uiState.update { it.copy(epgSources = sources) }
-            }
-        }
-    }
+    // Tracks the active assignment-collector job per provider so recompositions
+    // cancel the old coroutine rather than leaking it in viewModelScope.
+    private val assignmentJobs = ConcurrentHashMap<Long, Job>()
 
     fun loadEpgAssignments(scope: CoroutineScope, providerId: Long) {
-        scope.launch {
+        assignmentJobs[providerId]?.cancel()
+        assignmentJobs[providerId] = scope.launch {
             epgSourceRepository.getAssignmentsForProvider(providerId).collect { assignments ->
                 val summary = epgSourceRepository.getResolutionSummary(providerId)
                 uiState.update {
@@ -44,7 +43,10 @@ internal class SettingsEpgActions(
 
     fun deleteEpgSource(scope: CoroutineScope, sourceId: Long) {
         scope.launch {
-            val affectedProviders = loadedProvidersForSource(sourceId)
+            uiState.update { it.copy(epgPendingDeleteSourceId = null) }
+            // Query from the repository BEFORE deletion so we capture all affected
+            // providers, not just those already loaded into the UI state.
+            val affectedProviders = epgSourceRepository.getProviderIdsForSource(sourceId)
             epgSourceRepository.deleteSource(sourceId)
             refreshLoadedResolutionSummaries(affectedProviders)
         }
@@ -52,7 +54,9 @@ internal class SettingsEpgActions(
 
     fun toggleEpgSourceEnabled(scope: CoroutineScope, sourceId: Long, enabled: Boolean) {
         scope.launch {
-            val affectedProviders = loadedProvidersForSource(sourceId)
+            // Query from the repository so all assigned providers are refreshed regardless
+            // of which ones have been opened in the UI.
+            val affectedProviders = epgSourceRepository.getProviderIdsForSource(sourceId)
             epgSourceRepository.setSourceEnabled(sourceId, enabled)
             refreshLoadedResolutionSummaries(affectedProviders)
         }
@@ -60,7 +64,7 @@ internal class SettingsEpgActions(
 
     fun refreshEpgSource(scope: CoroutineScope, sourceId: Long) {
         scope.launch {
-            uiState.update { it.copy(isSyncing = true) }
+            uiState.update { it.copy(refreshingEpgSourceIds = it.refreshingEpgSourceIds + sourceId) }
             val affectedProviders = loadedProvidersForSource(sourceId)
             val result = epgSourceRepository.refreshSource(sourceId)
             if (result !is Result.Error) {
@@ -68,7 +72,7 @@ internal class SettingsEpgActions(
             }
             uiState.update {
                 it.copy(
-                    isSyncing = false,
+                    refreshingEpgSourceIds = it.refreshingEpgSourceIds - sourceId,
                     userMessage = if (result is Result.Error) result.message else "EPG source refreshed"
                 )
             }
@@ -102,8 +106,11 @@ internal class SettingsEpgActions(
             if (index <= 0) return@launch
             val current = assignments[index]
             val previous = assignments[index - 1]
-            epgSourceRepository.updateAssignmentPriority(providerId, current.epgSourceId, previous.priority)
-            epgSourceRepository.updateAssignmentPriority(providerId, previous.epgSourceId, current.priority)
+            epgSourceRepository.swapAssignmentPriorities(
+                providerId,
+                current.epgSourceId, previous.priority,
+                previous.epgSourceId, current.priority
+            )
             refreshProviderEpgSummary(providerId)
         }
     }
@@ -115,8 +122,11 @@ internal class SettingsEpgActions(
             if (index == -1 || index >= assignments.lastIndex) return@launch
             val current = assignments[index]
             val next = assignments[index + 1]
-            epgSourceRepository.updateAssignmentPriority(providerId, current.epgSourceId, next.priority)
-            epgSourceRepository.updateAssignmentPriority(providerId, next.epgSourceId, current.priority)
+            epgSourceRepository.swapAssignmentPriorities(
+                providerId,
+                current.epgSourceId, next.priority,
+                next.epgSourceId, current.priority
+            )
             refreshProviderEpgSummary(providerId)
         }
     }

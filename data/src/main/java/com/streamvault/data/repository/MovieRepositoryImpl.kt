@@ -1,5 +1,6 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.streamvault.data.local.DatabaseTransactionRunner
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.FavoriteDao
@@ -9,6 +10,7 @@ import com.streamvault.data.local.dao.PlaybackHistoryDao
 import com.streamvault.data.local.dao.ProviderDao
 import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.local.entity.CategoryEntity
+import com.streamvault.data.local.entity.MovieBrowseEntity
 import com.streamvault.data.local.entity.MovieCategoryHydrationEntity
 import com.streamvault.data.mapper.toEntity
 import com.streamvault.data.mapper.toDomain
@@ -31,6 +33,7 @@ import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.Result.Success
 import com.streamvault.domain.model.StreamInfo
+import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.model.VodSyncMode
 import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
@@ -46,6 +49,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
@@ -75,11 +79,30 @@ class MovieRepositoryImpl @Inject constructor(
         const val MIN_SEARCH_QUERY_LENGTH = 2
         const val BROWSE_WINDOW_BUFFER = 80
         const val XTREAM_MOVIE_HYDRATION_TIMEOUT_MILLIS = 60_000L
+        const val CURSOR_BATCH_SIZE = 40
     }
 
     private data class CachedXtreamProvider(
         val signature: String,
         val provider: XtreamProvider
+    )
+
+    private data class NameCursor(
+        val name: String,
+        val id: Long
+    )
+
+    private data class RatingCursor(
+        val rating: Float,
+        val name: String,
+        val id: Long
+    )
+
+    private data class FreshCursor(
+        val addedAt: Long,
+        val releaseDate: String,
+        val name: String,
+        val id: Long
     )
 
     private val xtreamProviderCache = ConcurrentHashMap<Long, CachedXtreamProvider>()
@@ -205,7 +228,7 @@ class MovieRepositoryImpl @Inject constructor(
         combine(
             getTopRatedPreview(providerId, limit = maxOf(limit * 6, 48)),
             getFreshPreview(providerId, limit = maxOf(limit * 6, 48)),
-            favoriteDao.getAllByType(ContentType.MOVIE.name),
+            favoriteDao.getAllByType(providerId, ContentType.MOVIE.name),
             playbackHistoryDao.getRecentlyWatchedByProvider(providerId, limit = maxOf(limit * 4, 24))
         ) { topRated, fresh, favorites, history ->
             buildRecommendations(
@@ -277,45 +300,7 @@ class MovieRepositoryImpl @Inject constructor(
                     refreshStaleInBackground = true
                 )
             }
-            emitAll(
-                combine(
-                    movieBrowseSource(query),
-                    movieBrowseTotalCount(query),
-                    favoriteDao.getAllByType(ContentType.MOVIE.name),
-                    playbackHistoryDao.getByProvider(query.providerId)
-            ) { movies, totalCount, favorites, history ->
-                val favoriteIds = favorites
-                    .asSequence()
-                        .filter { it.groupId == null }
-                        .map { it.contentId }
-                        .toSet()
-                    val inProgressIds = history
-                        .asSequence()
-                        .filter { it.contentType == ContentType.MOVIE }
-                        .filter { it.resumePositionMs > 0L && (it.totalDurationMs <= 0L || !moviePlaybackComplete(it.resumePositionMs, it.totalDurationMs)) }
-                        .map { it.contentId }
-                        .toSet()
-                    val watchCounts = history
-                        .asSequence()
-                        .filter { it.contentType == ContentType.MOVIE }
-                        .associate { it.contentId to it.watchCount }
-
-                    val browsed = applyMovieBrowseQuery(
-                        movies = movies,
-                        query = query,
-                        favoriteIds = favoriteIds,
-                        inProgressIds = inProgressIds,
-                        watchCounts = watchCounts
-                    )
-
-                    PagedResult(
-                        items = browsed.drop(query.offset).take(query.limit),
-                        totalCount = totalCount,
-                        offset = query.offset,
-                        limit = query.limit
-                    )
-                }
-            )
+            emit(fetchMovieBrowseResult(query))
         }
     }
 
@@ -324,7 +309,7 @@ class MovieRepositoryImpl @Inject constructor(
             if (ftsQuery.isNullOrBlank()) {
             flowOf(emptyList())
             } else combine(
-                movieDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT),
+                safeMovieSearchFlow(movieDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT)),
                 preferencesRepository.parentalControlLevel
             ) { entities, level: Int ->
                 if (level == 2) {
@@ -335,6 +320,9 @@ class MovieRepositoryImpl @Inject constructor(
             }.map { list ->
                 list.map { it.toDomain() }
                     .rankSearchResults(query) { it.name }
+            }.combine(favoriteDao.getAllByType(providerId, ContentType.MOVIE.name)) { movies, favorites ->
+                val favoriteIds = favorites.map { it.contentId }.toSet()
+                movies.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
             }
         }
 
@@ -395,10 +383,13 @@ class MovieRepositoryImpl @Inject constructor(
             fallbackContentType = ContentType.MOVIE,
             fallbackContainerExtension = movie.containerExtension
         )?.let { resolvedStream ->
+            val ext = resolvedStream.containerExtension ?: movie.containerExtension
             Result.success(
                 StreamInfo(
                     url = resolvedStream.url,
                     title = movie.name,
+                    streamType = StreamType.fromContainerExtension(ext),
+                    containerExtension = ext,
                     expirationTime = resolvedStream.expirationTime
                 )
             )
@@ -531,7 +522,7 @@ class MovieRepositoryImpl @Inject constructor(
                 val ftsQuery = normalizedSearch.toFtsPrefixQuery() ?: return flowOf(emptyList())
                 query.categoryId?.let { categoryId ->
                     combine(
-                        movieDao.searchByCategory(query.providerId, categoryId, ftsQuery, SEARCH_RESULT_LIMIT),
+                        safeMovieSearchFlow(movieDao.searchByCategory(query.providerId, categoryId, ftsQuery, SEARCH_RESULT_LIMIT)),
                         preferencesRepository.parentalControlLevel
                     ) { entities, level ->
                         if (level == 2) entities.filter { !it.isUserProtected } else entities
@@ -740,6 +731,180 @@ class MovieRepositoryImpl @Inject constructor(
     private fun browseFetchLimit(query: LibraryBrowseQuery): Int =
         (query.offset + query.limit + BROWSE_WINDOW_BUFFER).coerceAtMost(SEARCH_RESULT_LIMIT)
 
+    private suspend fun fetchMovieBrowseResult(query: LibraryBrowseQuery): PagedResult<Movie> {
+        val totalCount = movieBrowseTotalCount(query).first()
+        val favoriteIds = favoriteDao.getAllByType(query.providerId, ContentType.MOVIE.name)
+            .first()
+            .asSequence()
+            .filter { it.groupId == null }
+            .map { it.contentId }
+            .toSet()
+
+        val items = if (supportsCursorBrowse(query)) {
+            fetchMovieCursorWindow(query, favoriteIds)
+        } else {
+            val movies = movieBrowseSource(query).first()
+            val history = playbackHistoryDao.getByProvider(query.providerId).first()
+            val inProgressIds = history
+                .asSequence()
+                .filter { it.contentType == ContentType.MOVIE }
+                .filter { it.resumePositionMs > 0L && (it.totalDurationMs <= 0L || !moviePlaybackComplete(it.resumePositionMs, it.totalDurationMs)) }
+                .map { it.contentId }
+                .toSet()
+            val watchCounts = history
+                .asSequence()
+                .filter { it.contentType == ContentType.MOVIE }
+                .associate { it.contentId to it.watchCount }
+
+            applyMovieBrowseQuery(
+                movies = movies,
+                query = query,
+                favoriteIds = favoriteIds,
+                inProgressIds = inProgressIds,
+                watchCounts = watchCounts
+            ).drop(query.offset).take(query.limit)
+        }
+
+        return PagedResult(
+            items = items,
+            totalCount = totalCount,
+            offset = query.offset,
+            limit = query.limit
+        )
+    }
+
+    private suspend fun fetchMovieCursorWindow(
+        query: LibraryBrowseQuery,
+        favoriteIds: Set<Long>
+    ): List<Movie> {
+        val parentalLevel = preferencesRepository.parentalControlLevel.first()
+        val targetVisibleCount = (query.offset + query.limit).coerceAtLeast(query.limit)
+        val collected = ArrayList<Movie>(targetVisibleCount)
+
+        when {
+            query.filterBy.type == LibraryFilterType.ALL &&
+                query.sortBy in setOf(LibrarySortBy.LIBRARY, LibrarySortBy.TITLE) -> {
+                collectMoviePages<NameCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadMovieNamePage(query, limit, cursor)
+                }
+            }
+            (query.sortBy == LibrarySortBy.RATING || query.filterBy.type == LibraryFilterType.TOP_RATED) -> {
+                collectMoviePages<RatingCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadMovieRatingPage(query, limit, cursor)
+                }
+            }
+            (
+                query.sortBy == LibrarySortBy.RELEASE ||
+                    query.sortBy == LibrarySortBy.UPDATED ||
+                    query.filterBy.type == LibraryFilterType.RECENTLY_UPDATED
+                ) -> {
+                collectMoviePages<FreshCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadMovieFreshPage(query, limit, cursor)
+                }
+            }
+        }
+
+        return collected.drop(query.offset).take(query.limit)
+    }
+
+    private suspend fun <C> collectMoviePages(
+        query: LibraryBrowseQuery,
+        parentalLevel: Int,
+        collected: MutableList<Movie>,
+        favoriteIds: Set<Long>,
+        loadPage: suspend (limit: Int, cursor: C?) -> List<MovieBrowseEntity>
+    ) {
+        var cursor: C? = null
+        val targetVisibleCount = query.offset + query.limit
+        while (collected.size < targetVisibleCount) {
+            val batch = loadPage(CURSOR_BATCH_SIZE, cursor)
+            if (batch.isEmpty()) {
+                return
+            }
+            val visibleBatch = if (parentalLevel == 2) {
+                batch.filterNot { it.isUserProtected }
+            } else {
+                batch
+            }
+            collected += visibleBatch.map { entity ->
+                val movie = entity.toDomain()
+                if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie
+            }
+            if (batch.size < CURSOR_BATCH_SIZE) {
+                return
+            }
+            @Suppress("UNCHECKED_CAST")
+            cursor = cursorFromQuery(query, batch.last()) as C
+        }
+    }
+
+    private fun cursorFromQuery(query: LibraryBrowseQuery, entity: MovieBrowseEntity): Any = when {
+        query.filterBy.type == LibraryFilterType.ALL &&
+            query.sortBy in setOf(LibrarySortBy.LIBRARY, LibrarySortBy.TITLE) -> NameCursor(entity.name, entity.id)
+        query.sortBy == LibrarySortBy.RATING || query.filterBy.type == LibraryFilterType.TOP_RATED ->
+            RatingCursor(entity.rating, entity.name, entity.id)
+        else ->
+            FreshCursor(entity.addedAt, entity.releaseDate.orEmpty(), entity.name, entity.id)
+    }
+
+    private suspend fun loadMovieNamePage(query: LibraryBrowseQuery, limit: Int, cursor: NameCursor?): List<MovieBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) movieDao.getByProviderCursorPage(query.providerId, limit)
+            else movieDao.getByProviderCursorPageAfter(query.providerId, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) movieDao.getByCategoryCursorPage(query.providerId, categoryId, limit)
+            else movieDao.getByCategoryCursorPageAfter(query.providerId, categoryId, cursor.name, cursor.id, limit)
+        }
+    }
+
+    private suspend fun loadMovieRatingPage(query: LibraryBrowseQuery, limit: Int, cursor: RatingCursor?): List<MovieBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) movieDao.getTopRatedCursorPage(query.providerId, limit)
+            else movieDao.getTopRatedCursorPageAfter(query.providerId, cursor.rating, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) movieDao.getTopRatedByCategoryCursorPage(query.providerId, categoryId, limit)
+            else movieDao.getTopRatedByCategoryCursorPageAfter(query.providerId, categoryId, cursor.rating, cursor.name, cursor.id, limit)
+        }
+    }
+
+    private suspend fun loadMovieFreshPage(query: LibraryBrowseQuery, limit: Int, cursor: FreshCursor?): List<MovieBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) movieDao.getFreshCursorPage(query.providerId, limit)
+            else movieDao.getFreshCursorPageAfter(query.providerId, cursor.addedAt, cursor.releaseDate, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) movieDao.getFreshByCategoryCursorPage(query.providerId, categoryId, limit)
+            else movieDao.getFreshByCategoryCursorPageAfter(
+                query.providerId,
+                categoryId,
+                cursor.addedAt,
+                cursor.releaseDate,
+                cursor.name,
+                cursor.id,
+                limit
+            )
+        }
+    }
+
+    private fun supportsCursorBrowse(query: LibraryBrowseQuery): Boolean {
+        if (query.searchQuery.isNotBlank()) return false
+        return when {
+            query.filterBy.type == LibraryFilterType.ALL &&
+                query.sortBy in setOf(
+                    LibrarySortBy.LIBRARY,
+                    LibrarySortBy.TITLE,
+                    LibrarySortBy.RELEASE,
+                    LibrarySortBy.UPDATED,
+                    LibrarySortBy.RATING
+                ) -> true
+            query.filterBy.type == LibraryFilterType.TOP_RATED -> true
+            query.filterBy.type == LibraryFilterType.RECENTLY_UPDATED -> true
+            else -> false
+        }
+    }
+
     private fun applyMovieBrowseQuery(
         movies: List<Movie>,
         query: LibraryBrowseQuery,
@@ -785,6 +950,15 @@ class MovieRepositoryImpl @Inject constructor(
             .filterNotNull()
             .any { value -> value.lowercase().contains(normalizedQuery) }
     }
+
+    private fun safeMovieSearchFlow(source: Flow<List<MovieBrowseEntity>>): Flow<List<MovieBrowseEntity>> =
+        source.catch { error ->
+            if (error is SQLiteException) {
+                emit(emptyList<MovieBrowseEntity>())
+            } else {
+                throw error
+            }
+        }
 
     private suspend fun ensureXtreamCategoryLoaded(
         providerId: Long,
@@ -931,9 +1105,8 @@ class MovieRepositoryImpl @Inject constructor(
     }
 
     private fun movieReleaseScore(movie: Movie): Long =
-        movie.releaseDate
-            ?.filter { it.isDigit() }
-            ?.toLongOrNull()
+        movie.addedAt.takeIf { it > 0L }
+            ?: movie.releaseDate?.filter { it.isDigit() }?.toLongOrNull()
             ?: movie.year?.toLongOrNull()
             ?: 0L
 

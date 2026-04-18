@@ -133,8 +133,8 @@ class MoviesViewModel @Inject constructor(
                 .flatMapLatest { provider ->
                     activeProviderId = provider.id
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
-                        getCustomCategories(ContentType.MOVIE),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.MOVIE),
+                        getCustomCategories(provider.id, ContentType.MOVIE),
                         movieRepository.getCategories(provider.id),
                         movieRepository.getCategoryItemCounts(provider.id),
                         movieRepository.getLibraryCount(provider.id),
@@ -272,8 +272,8 @@ class MoviesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
-                        getCustomCategories(ContentType.MOVIE),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.MOVIE),
+                        getCustomCategories(provider.id, ContentType.MOVIE),
                         movieRepository.getCategories(provider.id),
                         preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.MOVIE),
                         preferencesRepository.getCategorySortMode(provider.id, ContentType.MOVIE)
@@ -366,7 +366,7 @@ class MoviesViewModel @Inject constructor(
                 .filterNotNull()
                 .flatMapLatest { provider ->
                     combine(
-                        favoriteRepository.getAllFavorites(ContentType.MOVIE),
+                        favoriteRepository.getAllFavorites(provider.id, ContentType.MOVIE),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         movieRepository.getTopRatedPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
                         movieRepository.getFreshPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT)
@@ -456,9 +456,12 @@ class MoviesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            getCustomCategories(ContentType.MOVIE).collect { categories ->
-                _uiState.update { it.copy(categories = categories) }
-            }
+            providerRepository.getActiveProvider()
+                .filterNotNull()
+                .flatMapLatest { provider -> getCustomCategories(provider.id, ContentType.MOVIE) }
+                .collect { categories ->
+                    _uiState.update { it.copy(categories = categories) }
+                }
         }
     }
 
@@ -568,6 +571,7 @@ class MoviesViewModel @Inject constructor(
         viewModelScope.launch {
             val dialogSelection = loadVodDialogSelection(
                 item = movie,
+                providerId = movie.providerId,
                 itemId = movie.id,
                 contentType = ContentType.MOVIE,
                 favoriteRepository = favoriteRepository,
@@ -591,14 +595,14 @@ class MoviesViewModel @Inject constructor(
 
     fun addFavorite(movie: Movie) {
         viewModelScope.launch {
-            setVodFavorite(movie.id, ContentType.MOVIE, true, favoriteRepository)
+            setVodFavorite(movie.providerId, movie.id, ContentType.MOVIE, true, favoriteRepository)
             _uiState.update { it.copy(selectedMovieForDialog = movie.copy(isFavorite = true)) }
         }
     }
 
     fun removeFavorite(movie: Movie) {
         viewModelScope.launch {
-            setVodFavorite(movie.id, ContentType.MOVIE, false, favoriteRepository)
+            setVodFavorite(movie.providerId, movie.id, ContentType.MOVIE, false, favoriteRepository)
             _uiState.update { it.copy(selectedMovieForDialog = movie.copy(isFavorite = false)) }
         }
     }
@@ -606,6 +610,7 @@ class MoviesViewModel @Inject constructor(
     fun addToGroup(movie: Movie, group: Category) {
         viewModelScope.launch {
             val memberships = updateVodGroupMembership(
+                providerId = movie.providerId,
                 itemId = movie.id,
                 groupId = group.id,
                 contentType = ContentType.MOVIE,
@@ -619,6 +624,7 @@ class MoviesViewModel @Inject constructor(
     fun removeFromGroup(movie: Movie, group: Category) {
         viewModelScope.launch {
             val memberships = updateVodGroupMembership(
+                providerId = movie.providerId,
                 itemId = movie.id,
                 groupId = group.id,
                 contentType = ContentType.MOVIE,
@@ -638,11 +644,13 @@ class MoviesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            when (val result = createVodGroup(normalizedName, ContentType.MOVIE, favoriteRepository)) {
+            val providerId = activeProviderId ?: return@launch
+            when (val result = createVodGroup(providerId, normalizedName, ContentType.MOVIE, favoriteRepository)) {
                 is Result.Success -> {
                     val selectedMovie = _uiState.value.selectedMovieForDialog
                     val memberships = if (selectedMovie != null) {
                         updateVodGroupMembership(
+                            providerId = selectedMovie.providerId,
                             itemId = selectedMovie.id,
                             groupId = result.data.id,
                             contentType = ContentType.MOVIE,
@@ -843,6 +851,7 @@ class MoviesViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 saveVodReorder(
+                    providerId = activeProviderId ?: return@launch,
                     category = category,
                     currentItems = currentList,
                     contentType = ContentType.MOVIE,
@@ -856,6 +865,7 @@ class MoviesViewModel @Inject constructor(
 
     private suspend fun loadReorderMovies(category: Category): List<Movie> {
         return loadVodReorderItems(
+            providerId = activeProviderId ?: return emptyList(),
             category = category,
             contentType = ContentType.MOVIE,
             favoriteRepository = favoriteRepository,

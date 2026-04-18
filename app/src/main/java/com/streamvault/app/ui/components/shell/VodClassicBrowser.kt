@@ -143,6 +143,7 @@ fun VodClassicContentHeader(
     title: String,
     subtitle: String,
     actions: List<VodActionChip>,
+    selectedActionKey: String? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -177,7 +178,10 @@ fun VodClassicContentHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             actions.forEach { action ->
-                VodClassicHeaderActionButton(action = action)
+                VodClassicHeaderActionButton(
+                    action = action,
+                    isSelected = action.key == selectedActionKey
+                )
             }
         }
     }
@@ -186,6 +190,7 @@ fun VodClassicContentHeader(
 @Composable
 private fun VodClassicHeaderActionButton(
     action: VodActionChip,
+    isSelected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     TvClickableSurface(
@@ -193,9 +198,9 @@ private fun VodClassicHeaderActionButton(
         modifier = modifier,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(18.dp)),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = AppColors.SurfaceElevated,
+            containerColor = if (isSelected) AppColors.Brand.copy(alpha = 0.18f) else AppColors.SurfaceElevated,
             focusedContainerColor = AppColors.SurfaceEmphasis,
-            contentColor = AppColors.TextPrimary,
+            contentColor = if (isSelected) AppColors.BrandStrong else AppColors.TextPrimary,
             focusedContentColor = AppColors.TextPrimary
         ),
         border = ClickableSurfaceDefaults.border(
@@ -206,12 +211,25 @@ private fun VodClassicHeaderActionButton(
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f)
     ) {
-        Text(
-            text = action.label,
-            style = MaterialTheme.typography.titleSmall,
+        Column(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = action.label,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            action.detail?.takeIf { it.isNotBlank() }?.let { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) AppColors.Brand else AppColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }

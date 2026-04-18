@@ -88,8 +88,8 @@ import com.streamvault.app.ui.interaction.TvIconButton
 fun DashboardScreen(
     onNavigate: (String) -> Unit,
     onAddProvider: () -> Unit,
-    onChannelClick: (Channel) -> Unit,
-    onFavoriteChannelClick: (Channel) -> Unit,
+    onRecentChannelClick: (Channel, Long?) -> Unit,
+    onFavoriteChannelClick: (Channel, Long?) -> Unit,
     onMovieClick: (Movie) -> Unit,
     onSeriesClick: (Series) -> Unit,
     onPlaybackHistoryClick: (PlaybackHistory) -> Unit,
@@ -176,7 +176,9 @@ fun DashboardScreen(
                         title = stringResource(R.string.dashboard_favorite_channels),
                         channels = uiState.favoriteChannels,
                         onSeeAll = { onNavigate(Routes.liveTv(com.streamvault.domain.model.VirtualCategoryIds.FAVORITES)) },
-                        onChannelClick = onFavoriteChannelClick
+                        onChannelClick = { channel ->
+                            onFavoriteChannelClick(channel, uiState.currentCombinedProfileId)
+                        }
                     )
 
                     DashboardHomeSection.RECENT_CHANNELS -> CategoryRow(
@@ -187,7 +189,7 @@ fun DashboardScreen(
                     ) { channel ->
                         ChannelCard(
                             channel = channel,
-                            onClick = { onChannelClick(channel) }
+                            onClick = { onRecentChannelClick(channel, uiState.currentCombinedProfileId) }
                         )
                     }
 

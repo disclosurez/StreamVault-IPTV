@@ -120,22 +120,33 @@ class HlsLiveCaptureEngine @Inject constructor(
                         currentPlaylistUrl = playlist.bestVariantUrl
                     }
                     is ParsedHlsPlaylist.Media -> {
-                        if (playlist.key?.method?.equals("NONE", ignoreCase = true) == false &&
-                            !playlist.key.method.equals("AES-128", ignoreCase = true)
-                        ) {
-                            throw UnsupportedRecordingException(
-                                "This HLS stream uses unsupported DRM or encryption.",
-                                RecordingFailureCategory.DRM_UNSUPPORTED
-                            )
-                        }
-                        val keyBytes = playlist.key?.takeIf { it.method.equals("AES-128", ignoreCase = true) }
-                            ?.let { fetchBytes(it.uri, headers) }
+                        // Validate that all encryption methods are supported
+                        playlist.segments.mapNotNull { it.key }
+                            .distinctBy { it.uri }
+                            .forEach { key ->
+                                if (!key.method.equals("NONE", ignoreCase = true) &&
+                                    !key.method.equals("AES-128", ignoreCase = true)
+                                ) {
+                                    throw UnsupportedRecordingException(
+                                        "This HLS stream uses unsupported DRM or encryption.",
+                                        RecordingFailureCategory.DRM_UNSUPPORTED
+                                    )
+                                }
+                            }
+                        // Cache key bytes by URI so rotated keys are fetched once each
+                        val keyCache = mutableMapOf<String, ByteArray>()
                         playlist.segments.forEach { segment ->
                             kotlinx.coroutines.currentCoroutineContext().ensureActive()
                             if (segment.uri in seenSegments) return@forEach
                             seenSegments += segment.uri
                             val bytes = fetchBytes(segment.uri, headers)
-                            val payload = if (keyBytes != null) decryptAes128(bytes, keyBytes, segment.keyIv ?: playlist.key?.iv) else bytes
+                            val segKey = segment.key?.takeIf { it.method.equals("AES-128", ignoreCase = true) }
+                            val payload = if (segKey != null) {
+                                val keyBytes = keyCache.getOrPut(segKey.uri) { fetchBytes(segKey.uri, headers) }
+                                decryptAes128(bytes, keyBytes, segKey.iv)
+                            } else {
+                                bytes
+                            }
                             sink.write(payload)
                             bytesWritten += payload.size
                             val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
@@ -237,7 +248,7 @@ class HlsLiveCaptureEngine @Inject constructor(
                 else -> {
                     segments += HlsSegment(
                         uri = resolveRelativeUrl(baseUrl, line),
-                        keyIv = currentKey?.iv
+                        key = currentKey?.copy()
                     )
                 }
             }
@@ -245,7 +256,6 @@ class HlsLiveCaptureEngine @Inject constructor(
         return ParsedHlsPlaylist.Media(
             targetDurationSeconds = targetDuration,
             endList = endList,
-            key = currentKey,
             segments = segments
         )
     }
@@ -273,14 +283,13 @@ private sealed interface ParsedHlsPlaylist {
     data class Media(
         val targetDurationSeconds: Int,
         val endList: Boolean,
-        val key: HlsKey?,
         val segments: List<HlsSegment>
     ) : ParsedHlsPlaylist
 }
 
 private data class HlsSegment(
     val uri: String,
-    val keyIv: String? = null
+    val key: HlsKey? = null
 )
 
 private data class HlsKey(

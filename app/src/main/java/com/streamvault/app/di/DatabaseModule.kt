@@ -3,8 +3,11 @@ package com.streamvault.app.di
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import com.streamvault.app.BuildConfig
 import com.streamvault.data.local.StreamVaultDatabase
 import com.streamvault.data.local.dao.*
+import com.streamvault.data.local.dao.ChannelPreferenceDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,6 +18,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
+    private const val DEBUG_SLOW_QUERY_THRESHOLD_MS = 100L
 
     @Provides
     @Singleton
@@ -25,6 +29,16 @@ object DatabaseModule {
             "streamvault.db"
         )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+            .openHelperFactory(
+                if (BuildConfig.DEBUG) {
+                    SlowQueryLoggingOpenHelperFactory(
+                        delegate = FrameworkSQLiteOpenHelperFactory(),
+                        slowQueryThresholdMs = DEBUG_SLOW_QUERY_THRESHOLD_MS
+                    )
+                } else {
+                    FrameworkSQLiteOpenHelperFactory()
+                }
+            )
             .addMigrations(
                 StreamVaultDatabase.MIGRATION_1_2,
                 StreamVaultDatabase.MIGRATION_2_3,
@@ -54,7 +68,14 @@ object DatabaseModule {
                 StreamVaultDatabase.MIGRATION_26_27,
                 StreamVaultDatabase.MIGRATION_27_28,
                 StreamVaultDatabase.MIGRATION_28_29,
-                StreamVaultDatabase.MIGRATION_29_30
+                StreamVaultDatabase.MIGRATION_29_30,
+                StreamVaultDatabase.MIGRATION_30_31,
+                StreamVaultDatabase.MIGRATION_31_32,
+                StreamVaultDatabase.MIGRATION_32_33,
+                StreamVaultDatabase.MIGRATION_33_34,
+                StreamVaultDatabase.MIGRATION_34_35,
+                StreamVaultDatabase.MIGRATION_35_36,
+                StreamVaultDatabase.MIGRATION_36_37
             )
             // NOTE: fallbackToDestructiveMigration() intentionally removed.
             // All future schema changes MUST add a corresponding Migration in StreamVaultDatabase.
@@ -72,6 +93,8 @@ object DatabaseModule {
     @Provides fun provideFavoriteDao(db: StreamVaultDatabase): FavoriteDao = db.favoriteDao()
     @Provides fun provideVirtualGroupDao(db: StreamVaultDatabase): VirtualGroupDao = db.virtualGroupDao()
     @Provides fun providePlaybackHistoryDao(db: StreamVaultDatabase): PlaybackHistoryDao = db.playbackHistoryDao()
+    @Provides fun provideTmdbIdentityDao(db: StreamVaultDatabase): TmdbIdentityDao = db.tmdbIdentityDao()
+    @Provides fun provideSearchHistoryDao(db: StreamVaultDatabase): SearchHistoryDao = db.searchHistoryDao()
     @Provides fun provideSyncMetadataDao(db: StreamVaultDatabase): SyncMetadataDao = db.syncMetadataDao()
     @Provides fun provideMovieCategoryHydrationDao(db: StreamVaultDatabase): MovieCategoryHydrationDao = db.movieCategoryHydrationDao()
     @Provides fun provideSeriesCategoryHydrationDao(db: StreamVaultDatabase): SeriesCategoryHydrationDao = db.seriesCategoryHydrationDao()
@@ -84,5 +107,6 @@ object DatabaseModule {
     @Provides fun provideCombinedM3uProfileMemberDao(db: StreamVaultDatabase): CombinedM3uProfileMemberDao = db.combinedM3uProfileMemberDao()
     @Provides fun provideRecordingScheduleDao(db: StreamVaultDatabase): RecordingScheduleDao = db.recordingScheduleDao()
     @Provides fun provideRecordingRunDao(db: StreamVaultDatabase): RecordingRunDao = db.recordingRunDao()
+    @Provides fun provideProgramReminderDao(db: StreamVaultDatabase): ProgramReminderDao = db.programReminderDao()
     @Provides fun provideRecordingStorageDao(db: StreamVaultDatabase): RecordingStorageDao = db.recordingStorageDao()
 }

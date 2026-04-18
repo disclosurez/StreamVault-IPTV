@@ -12,6 +12,7 @@ object StreamTypeDetector {
             ResolvedStreamType.DASH -> StreamType.DASH
             ResolvedStreamType.MPEG_TS_LIVE -> StreamType.MPEG_TS
             ResolvedStreamType.PROGRESSIVE -> StreamType.PROGRESSIVE
+            ResolvedStreamType.RTSP -> StreamType.RTSP
             ResolvedStreamType.UNKNOWN -> StreamType.UNKNOWN
         }
     }

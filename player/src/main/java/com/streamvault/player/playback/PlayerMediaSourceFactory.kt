@@ -2,10 +2,13 @@ package com.streamvault.player.playback
 
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
@@ -36,7 +39,8 @@ class PlayerMediaSourceFactory(
         )
         val mediaItem = buildMediaItem(streamInfo)
         val mediaSource = when {
-            streamInfo.streamType == StreamType.RTSP -> RtspMediaSource.Factory().createMediaSource(mediaItem)
+            streamInfo.streamType == StreamType.RTSP || resolvedStreamType == ResolvedStreamType.RTSP ->
+                RtspMediaSource.Factory().createMediaSource(mediaItem)
             resolvedStreamType == ResolvedStreamType.HLS -> HlsMediaSource.Factory(dataSourceFactory)
                 .setAllowChunklessPreparation(true)
                 .setLoadErrorHandlingPolicy(retryPolicy)
@@ -48,7 +52,13 @@ class PlayerMediaSourceFactory(
 
             resolvedStreamType == ResolvedStreamType.MPEG_TS_LIVE -> ProgressiveMediaSource.Factory(
                 dataSourceFactory,
-                DefaultExtractorsFactory().setTsExtractorFlags(0)
+                DefaultExtractorsFactory()
+                    .setTsExtractorFlags(
+                        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
+                            or DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+                            or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
+                    )
+                    .setTsSubtitleFormats(TS_SUBTITLE_FORMATS)
             )
                 .setLoadErrorHandlingPolicy(retryPolicy)
                 .createMediaSource(mediaItem)
@@ -57,7 +67,16 @@ class PlayerMediaSourceFactory(
                 .setLoadErrorHandlingPolicy(retryPolicy)
                 .createMediaSource(mediaItem)
 
-            else -> DefaultMediaSourceFactory(dataSourceFactory)
+            else -> DefaultMediaSourceFactory(
+                dataSourceFactory,
+                DefaultExtractorsFactory()
+                    .setTsExtractorFlags(
+                        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
+                            or DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+                            or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
+                    )
+                    .setTsSubtitleFormats(TS_SUBTITLE_FORMATS)
+            )
                 .setLoadErrorHandlingPolicy(retryPolicy)
                 .createMediaSource(mediaItem)
         }
@@ -96,7 +115,7 @@ class PlayerMediaSourceFactory(
 
     fun mediaIdFor(streamInfo: StreamInfo): String {
         val drmKey = streamInfo.drmInfo?.let { "${it.scheme}:${it.licenseUrl}" }.orEmpty()
-        return "${streamInfo.url}|${streamInfo.title.orEmpty()}|$drmKey".hashCode().toString()
+        return stableHash("${streamInfo.url}|${streamInfo.title.orEmpty()}|$drmKey")
     }
 
     private fun DrmScheme.toUuid(): UUID = when (this) {
@@ -107,6 +126,16 @@ class PlayerMediaSourceFactory(
 
     companion object {
         private const val TAG = "PlayerMediaSourceFactory"
+
+        /** Explicit CEA-608 and CEA-708 closed caption formats for MPEG-TS streams. */
+        private val TS_SUBTITLE_FORMATS: List<Format> = listOf(
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_CEA608).build(),
+            Format.Builder()
+                .setSampleMimeType(MimeTypes.APPLICATION_CEA708)
+                .setCodecs("cea-708")
+                .setAccessibilityChannel(1)
+                .build()
+        )
     }
 }
 

@@ -133,6 +133,7 @@ class XtreamStreamUrlResolverTest {
         private val provider: ProviderEntity?
     ) : ProviderDao() {
         override fun getAll() = flowOf(listOfNotNull(provider))
+        override suspend fun getAllSync(): List<ProviderEntity> = listOfNotNull(provider)
         override fun getActive() = flowOf(provider)
         override suspend fun getByUrlAndUser(serverUrl: String, username: String): ProviderEntity? = null
         override suspend fun getById(id: Long): ProviderEntity? = provider?.takeIf { it.id == id }

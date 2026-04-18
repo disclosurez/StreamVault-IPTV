@@ -83,3 +83,29 @@ inline fun <State> setVodLibrarySortBy(
         state.updateState(sortBy, hasSelectedCategory(state))
     }
 }
+
+/**
+ * Returns a compact summary label for the currently active filter and/or sort
+ * (e.g. "Favorites · Rating"), or null when both are at their defaults.
+ * This is used to decorate the "Filter & Sort" action chip so the user can
+ * tell at a glance that a non-default browse mode is in effect.
+ */
+fun vodActiveFilterSortDetail(filter: LibraryFilterType, sort: LibrarySortBy): String? {
+    val filterLabel = when (filter) {
+        LibraryFilterType.ALL -> null
+        LibraryFilterType.FAVORITES -> "Favorites"
+        LibraryFilterType.IN_PROGRESS -> "Resume"
+        LibraryFilterType.UNWATCHED -> "Unwatched"
+        LibraryFilterType.RECENTLY_UPDATED -> "Recent"
+        LibraryFilterType.TOP_RATED -> "Top Rated"
+    }
+    val sortLabel = when (sort) {
+        LibrarySortBy.LIBRARY -> null
+        LibrarySortBy.TITLE -> "A-Z"
+        LibrarySortBy.RELEASE -> "Newest"
+        LibrarySortBy.UPDATED -> "Updated"
+        LibrarySortBy.RATING -> "Rating"
+        LibrarySortBy.WATCH_COUNT -> "Recent Activity"
+    }
+    return listOfNotNull(filterLabel, sortLabel).joinToString(" · ").ifEmpty { null }
+}

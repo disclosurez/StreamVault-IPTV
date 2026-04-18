@@ -136,7 +136,12 @@ class FavoritesViewModel @Inject constructor(
     val uiState: StateFlow<FavoritesUiState> = _uiState.asStateFlow()
 
     init {
-        val globalSectionFlow = observeFavoriteItems(favoriteRepository.getFavorites(null))
+        val providerIdsFlow = providerRepository.getProviders()
+            .map { providers -> providers.map { it.id } }
+
+        val globalSectionFlow = providerIdsFlow.flatMapLatest { providerIds ->
+            observeFavoriteItems(favoriteRepository.getFavorites(providerIds))
+        }
             .map { items ->
                 FavoriteSectionUiModel(
                     key = GLOBAL_SECTION_KEY,
@@ -147,52 +152,60 @@ class FavoritesViewModel @Inject constructor(
                 )
             }
 
-        val allGroupsFlow = combine(
-            favoriteRepository.getGroups(ContentType.LIVE),
-            favoriteRepository.getGroups(ContentType.MOVIE),
-            favoriteRepository.getGroups(ContentType.SERIES)
-        ) { liveGroups, movieGroups, seriesGroups ->
-            (liveGroups + movieGroups + seriesGroups)
-                .sortedWith(compareBy<VirtualGroup>({ it.contentType.ordinal }, { it.position }, { it.name.lowercase() }))
-        }
-
-        val liveGroupManagementFlow = combine(
-            favoriteRepository.getGroups(ContentType.LIVE),
-            favoriteRepository.getGroupFavoriteCounts(ContentType.LIVE),
-            preferencesRepository.promotedLiveGroupIds
-        ) { liveGroups, liveCounts, promotedLiveGroupIds ->
-            liveGroups.map { group ->
-                SavedGroupManagementUiModel(
-                    group = group,
-                    itemCount = liveCounts[group.id] ?: 0,
-                    isPromotedOnHome = group.id in promotedLiveGroupIds
-                )
+        val allGroupsFlow = providerIdsFlow.flatMapLatest { providerIds ->
+            combine(
+                favoriteRepository.getGroups(providerIds, ContentType.LIVE),
+                favoriteRepository.getGroups(providerIds, ContentType.MOVIE),
+                favoriteRepository.getGroups(providerIds, ContentType.SERIES)
+            ) { liveGroups, movieGroups, seriesGroups ->
+                (liveGroups + movieGroups + seriesGroups)
+                    .sortedWith(compareBy<VirtualGroup>({ it.contentType.ordinal }, { it.position }, { it.name.lowercase() }))
             }
         }
 
-        val movieGroupManagementFlow = combine(
-            favoriteRepository.getGroups(ContentType.MOVIE),
-            favoriteRepository.getGroupFavoriteCounts(ContentType.MOVIE)
-        ) { movieGroups, movieCounts ->
-            movieGroups.map { group ->
-                SavedGroupManagementUiModel(
-                    group = group,
-                    itemCount = movieCounts[group.id] ?: 0,
-                    isPromotedOnHome = false
-                )
+        val liveGroupManagementFlow = providerIdsFlow.flatMapLatest { providerIds ->
+            combine(
+                favoriteRepository.getGroups(providerIds, ContentType.LIVE),
+                favoriteRepository.getFavorites(providerIds, ContentType.LIVE).map(::countFavoritesByGroup),
+                preferencesRepository.promotedLiveGroupIds
+            ) { liveGroups, liveCounts, promotedLiveGroupIds ->
+                liveGroups.map { group ->
+                    SavedGroupManagementUiModel(
+                        group = group,
+                        itemCount = liveCounts[group.id] ?: 0,
+                        isPromotedOnHome = group.id in promotedLiveGroupIds
+                    )
+                }
             }
         }
 
-        val seriesGroupManagementFlow = combine(
-            favoriteRepository.getGroups(ContentType.SERIES),
-            favoriteRepository.getGroupFavoriteCounts(ContentType.SERIES)
-        ) { seriesGroups, seriesCounts ->
-            seriesGroups.map { group ->
-                SavedGroupManagementUiModel(
-                    group = group,
-                    itemCount = seriesCounts[group.id] ?: 0,
-                    isPromotedOnHome = false
-                )
+        val movieGroupManagementFlow = providerIdsFlow.flatMapLatest { providerIds ->
+            combine(
+                favoriteRepository.getGroups(providerIds, ContentType.MOVIE),
+                favoriteRepository.getFavorites(providerIds, ContentType.MOVIE).map(::countFavoritesByGroup)
+            ) { movieGroups, movieCounts ->
+                movieGroups.map { group ->
+                    SavedGroupManagementUiModel(
+                        group = group,
+                        itemCount = movieCounts[group.id] ?: 0,
+                        isPromotedOnHome = false
+                    )
+                }
+            }
+        }
+
+        val seriesGroupManagementFlow = providerIdsFlow.flatMapLatest { providerIds ->
+            combine(
+                favoriteRepository.getGroups(providerIds, ContentType.SERIES),
+                favoriteRepository.getFavorites(providerIds, ContentType.SERIES).map(::countFavoritesByGroup)
+            ) { seriesGroups, seriesCounts ->
+                seriesGroups.map { group ->
+                    SavedGroupManagementUiModel(
+                        group = group,
+                        itemCount = seriesCounts[group.id] ?: 0,
+                        isPromotedOnHome = false
+                    )
+                }
             }
         }
 
@@ -426,6 +439,7 @@ class FavoritesViewModel @Inject constructor(
         viewModelScope.launch {
             val targetGroups = _uiState.value.managedGroups
                 .filter { it.group.contentType == item.favorite.contentType }
+                .filter { it.group.providerId == item.favorite.providerId }
                 .filter { it.group.id != item.favorite.groupId }
             _uiState.update {
                 it.copy(
@@ -439,6 +453,7 @@ class FavoritesViewModel @Inject constructor(
     fun removeFromSavedContext(item: FavoriteUiModel) {
         viewModelScope.launch {
             favoriteRepository.removeFavorite(
+                providerId = item.favorite.providerId,
                 contentId = item.favorite.contentId,
                 contentType = item.favorite.contentType,
                 groupId = item.favorite.groupId
@@ -456,11 +471,13 @@ class FavoritesViewModel @Inject constructor(
     fun moveItemToGroup(item: FavoriteUiModel, targetGroupId: Long) {
         viewModelScope.launch {
             favoriteRepository.addFavorite(
+                providerId = item.favorite.providerId,
                 contentId = item.favorite.contentId,
                 contentType = item.favorite.contentType,
                 groupId = targetGroupId
             )
             favoriteRepository.removeFavorite(
+                providerId = item.favorite.providerId,
                 contentId = item.favorite.contentId,
                 contentType = item.favorite.contentType,
                 groupId = item.favorite.groupId
@@ -527,6 +544,7 @@ class FavoritesViewModel @Inject constructor(
     fun startMergeGroup(group: SavedGroupManagementUiModel) {
         val candidates = _uiState.value.managedGroups
             .filter { it.group.contentType == group.group.contentType && it.group.id != group.group.id }
+            .filter { it.group.providerId == group.group.providerId }
         _uiState.update {
             it.copy(
                 mergeSourceGroup = group,
@@ -541,11 +559,13 @@ class FavoritesViewModel @Inject constructor(
             val items = favoriteRepository.getFavoritesByGroup(source.group.id).first()
             items.forEach { favorite ->
                 favoriteRepository.addFavorite(
+                    providerId = favorite.providerId,
                     contentId = favorite.contentId,
                     contentType = favorite.contentType,
                     groupId = targetGroupId
                 )
                 favoriteRepository.removeFavorite(
+                    providerId = favorite.providerId,
                     contentId = favorite.contentId,
                     contentType = favorite.contentType,
                     groupId = source.group.id
@@ -695,6 +715,13 @@ class FavoritesViewModel @Inject constructor(
         private const val GLOBAL_SECTION_KEY = "global"
 
         private fun sectionKeyForGroup(groupId: Long): String = "group:$groupId"
+
+        private fun countFavoritesByGroup(favorites: List<Favorite>): Map<Long, Int> =
+            favorites
+                .asSequence()
+                .mapNotNull(Favorite::groupId)
+                .groupingBy { it }
+                .eachCount()
     }
 }
 

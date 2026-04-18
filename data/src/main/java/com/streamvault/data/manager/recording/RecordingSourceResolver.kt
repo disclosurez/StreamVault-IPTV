@@ -39,7 +39,10 @@ class RecordingSourceResolver @Inject constructor(
             url = logicalUrl,
             fallbackProviderId = providerId,
             fallbackStreamId = channelId,
-            fallbackContentType = ContentType.LIVE
+            fallbackContentType = ContentType.LIVE,
+            // Recording jobs can run for minutes or hours; prefer the stable
+            // portal URL over an expiring tokenized direct-source CDN URL.
+            preferStableUrl = true
         ) ?: throw IOException("Recording stream URL could not be resolved.")
 
         val providerLabel = providerDao.getById(providerId)?.let { provider ->

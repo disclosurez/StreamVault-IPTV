@@ -7,8 +7,12 @@ import com.streamvault.domain.model.DrmScheme
 import com.streamvault.domain.model.StreamInfo
 import com.streamvault.domain.model.VideoFormat
 import androidx.media3.common.PlaybackException
+import androidx.media3.datasource.HttpDataSource
 import com.streamvault.player.playback.PlaybackErrorCategory
 import com.streamvault.player.playback.PlayerErrorClassifier
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import com.streamvault.player.timeshift.LiveTimeshiftState
 import com.streamvault.player.timeshift.TimeshiftConfig
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +45,7 @@ interface PlayerEngine {
     val mediaTitle: StateFlow<String?>
 
     fun prepare(streamInfo: StreamInfo)
+    fun renewStreamUrl(streamInfo: StreamInfo)
     fun play()
     fun pause()
     fun stop()
@@ -68,6 +73,9 @@ interface PlayerEngine {
     /** Toggle mute without losing the remembered volume level. */
     fun toggleMute()
     val isMuted: StateFlow<Boolean>
+
+    /** Emits when audio focus is denied (e.g., device muted at OS level). */
+    val audioFocusDenied: Flow<Unit>
 
     /**
      * Enable scrubbing mode for rapid switching (channel zapping).
@@ -117,7 +125,8 @@ data class PlayerStats(
     val height: Int = 0,
     val bandwidthEstimate: Long = 0,
     val bufferedDurationMs: Long = 0,
-    val rebufferCount: Int = 0
+    val rebufferCount: Int = 0,
+    val ttffMs: Long = 0
 )
 
 sealed class PlayerError(val message: String) {
@@ -129,8 +138,27 @@ sealed class PlayerError(val message: String) {
 
     companion object {
         fun fromException(e: Throwable): PlayerError {
-            val msg = e.message ?: "Unknown playback error"
-            return when (PlayerErrorClassifier.classify(e)) {
+            val category = PlayerErrorClassifier.classify(e)
+            val chain = generateSequence(e) { it.cause }.toList()
+            val msg = when (category) {
+                PlaybackErrorCategory.DECODER,
+                PlaybackErrorCategory.FORMAT_UNSUPPORTED -> buildCodecErrorMessage(e)
+                PlaybackErrorCategory.NETWORK -> buildNetworkErrorMessage(chain)
+                PlaybackErrorCategory.HTTP_AUTH -> buildHttpErrorMessage(chain, "Access denied")
+                PlaybackErrorCategory.HTTP_SERVER -> buildHttpErrorMessage(chain, "Server error")
+                PlaybackErrorCategory.SSL -> "Secure connection failed (SSL/TLS error)."
+                PlaybackErrorCategory.CLEAR_TEXT_BLOCKED ->
+                    "This stream requires a secure (HTTPS) connection."
+                PlaybackErrorCategory.SOURCE_MALFORMED ->
+                    "Unable to parse this stream format."
+                PlaybackErrorCategory.LIVE_WINDOW ->
+                    "Live stream position expired."
+                PlaybackErrorCategory.DRM -> buildDrmErrorMessage(chain)
+                PlaybackErrorCategory.UNKNOWN ->
+                    chain.firstNotNullOfOrNull { it.takeIf { it !is PlaybackException }?.message }
+                        ?: "Unknown playback error"
+            }
+            return when (category) {
                 PlaybackErrorCategory.NETWORK,
                 PlaybackErrorCategory.HTTP_SERVER,
                 PlaybackErrorCategory.HTTP_AUTH,
@@ -145,6 +173,64 @@ sealed class PlayerError(val message: String) {
 
                 PlaybackErrorCategory.DRM -> DrmError(msg)
                 PlaybackErrorCategory.UNKNOWN -> UnknownError(msg)
+            }
+        }
+
+        private fun buildCodecErrorMessage(e: Throwable): String {
+            val chain = generateSequence(e) { it.cause }.toList()
+            val decoderEx = chain
+                .filterIsInstance<androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException>()
+                .firstOrNull()
+            if (decoderEx != null) {
+                val mime = decoderEx.mimeType
+                val codecLabel = when (mime) {
+                    "video/hevc" -> "H.265/HEVC"
+                    "video/av01" -> "AV1"
+                    "video/avc" -> "H.264/AVC"
+                    "video/x-vnd.on2.vp9", "video/vp9" -> "VP9"
+                    "audio/ac3" -> "AC-3 (Dolby Digital)"
+                    "audio/eac3" -> "E-AC-3 (Dolby Digital Plus)"
+                    "audio/mp4a-latm", "audio/mp4a" -> "AAC"
+                    else -> mime
+                }
+                val codecInfo = decoderEx.codecInfo
+                return if (codecInfo != null) {
+                    "Codec $codecLabel is not supported by decoder ${codecInfo.name} on this device."
+                } else {
+                    "No decoder available for codec $codecLabel on this device."
+                }
+            }
+            return e.message ?: "Unsupported media format."
+        }
+
+        private fun buildNetworkErrorMessage(chain: List<Throwable>): String = when {
+            chain.any { it is SocketTimeoutException } -> "Connection timed out."
+            chain.any { it is UnknownHostException } -> "Server not found — check your network connection."
+            chain.any { it is ConnectException } -> "Could not connect to server."
+            else -> "Network error — check your internet connection."
+        }
+
+        private fun buildHttpErrorMessage(chain: List<Throwable>, label: String): String {
+            val httpCode = chain
+                .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                .firstOrNull()?.responseCode
+            return if (httpCode != null) "$label (HTTP $httpCode)." else "$label."
+        }
+
+        private fun buildDrmErrorMessage(chain: List<Throwable>): String {
+            val playbackEx = chain.filterIsInstance<PlaybackException>().firstOrNull()
+            return when (playbackEx?.errorCode) {
+                PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED ->
+                    "DRM license could not be obtained."
+                PlaybackException.ERROR_CODE_DRM_LICENSE_EXPIRED ->
+                    "DRM license has expired."
+                PlaybackException.ERROR_CODE_DRM_SCHEME_UNSUPPORTED ->
+                    "DRM scheme is not supported on this device."
+                PlaybackException.ERROR_CODE_DRM_DEVICE_REVOKED ->
+                    "This device has been revoked for DRM playback."
+                PlaybackException.ERROR_CODE_DRM_PROVISIONING_FAILED ->
+                    "DRM provisioning failed."
+                else -> "DRM error — this content may require a license."
             }
         }
     }

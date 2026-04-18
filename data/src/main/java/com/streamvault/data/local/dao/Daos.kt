@@ -9,10 +9,17 @@ data class RemoteIdMapping(
     @ColumnInfo(name = "remote_id") val remoteId: Long
 )
 
+data class TmdbIdMapping(
+    @ColumnInfo(name = "tmdb_id") val tmdbId: Long
+)
+
 @Dao
 abstract class ProviderDao {
     @Query("SELECT * FROM providers ORDER BY created_at DESC")
     abstract fun getAll(): Flow<List<ProviderEntity>>
+
+    @Query("SELECT * FROM providers ORDER BY created_at DESC")
+    abstract suspend fun getAllSync(): List<ProviderEntity>
 
     @Query("SELECT * FROM providers WHERE is_active = 1 LIMIT 1")
     abstract fun getActive(): Flow<ProviderEntity?>
@@ -56,7 +63,7 @@ abstract class ProviderDao {
 }
 
 @Dao
-interface ChannelDao {
+abstract class ChannelDao {
     @Query(
         """
         SELECT id, stream_id, name, logo_url, group_title, category_id, category_name, stream_url,
@@ -67,7 +74,7 @@ interface ChannelDao {
         ORDER BY number ASC
         """
     )
-    fun getByProvider(providerId: Long): Flow<List<ChannelBrowseEntity>>
+    abstract fun getByProvider(providerId: Long): Flow<List<ChannelBrowseEntity>>
 
     @Query(
         """
@@ -79,10 +86,36 @@ interface ChannelDao {
         ORDER BY number ASC
         """
     )
-    fun getByProviderWithoutErrors(providerId: Long): Flow<List<ChannelBrowseEntity>>
+    abstract fun getByProviderWithoutErrors(providerId: Long): Flow<List<ChannelBrowseEntity>>
+
+    @Query(
+        """
+        SELECT id, stream_id, name, logo_url, group_title, category_id, category_name, stream_url,
+               epg_channel_id, number, catch_up_supported, catch_up_days, catchUpSource,
+               provider_id, is_adult, is_user_protected, logical_group_id, error_count
+        FROM channels
+        WHERE provider_id = :providerId
+        ORDER BY number ASC
+        LIMIT :limit
+        """
+    )
+    abstract fun getByProviderBrowsePage(providerId: Long, limit: Int): Flow<List<ChannelBrowseEntity>>
+
+    @Query(
+        """
+        SELECT id, stream_id, name, logo_url, group_title, category_id, category_name, stream_url,
+               epg_channel_id, number, catch_up_supported, catch_up_days, catchUpSource,
+               provider_id, is_adult, is_user_protected, logical_group_id, error_count
+        FROM channels
+        WHERE provider_id = :providerId AND category_id = :categoryId
+        ORDER BY number ASC
+        LIMIT :limit
+        """
+    )
+    abstract fun getByCategoryBrowsePage(providerId: Long, categoryId: Long, limit: Int): Flow<List<ChannelBrowseEntity>>
 
     @Query("SELECT * FROM channels WHERE provider_id = :providerId ORDER BY number ASC LIMIT :limit OFFSET :offset")
-    fun getByProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<ChannelEntity>>
+    abstract fun getByProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<ChannelEntity>>
 
     @Query(
         """
@@ -94,7 +127,7 @@ interface ChannelDao {
         ORDER BY number ASC
         """
     )
-    fun getByCategory(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>>
+    abstract fun getByCategory(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>>
 
     @Query(
         """
@@ -106,10 +139,10 @@ interface ChannelDao {
         ORDER BY number ASC
         """
     )
-    fun getByCategoryWithoutErrors(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>>
+    abstract fun getByCategoryWithoutErrors(providerId: Long, categoryId: Long): Flow<List<ChannelBrowseEntity>>
 
     @Query("SELECT * FROM channels WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY number ASC LIMIT :limit OFFSET :offset")
-    fun getByCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<ChannelEntity>>
+    abstract fun getByCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<ChannelEntity>>
 
     @Query(
         """
@@ -124,7 +157,7 @@ interface ChannelDao {
         LIMIT :limit
         """
     )
-    fun search(providerId: Long, query: String, limit: Int): Flow<List<ChannelBrowseEntity>>
+    abstract fun search(providerId: Long, query: String, limit: Int): Flow<List<ChannelBrowseEntity>>
 
     @Query(
         """
@@ -140,28 +173,31 @@ interface ChannelDao {
         LIMIT :limit
         """
     )
-    fun searchByCategory(providerId: Long, categoryId: Long, query: String, limit: Int): Flow<List<ChannelBrowseEntity>>
+    abstract fun searchByCategory(providerId: Long, categoryId: Long, query: String, limit: Int): Flow<List<ChannelBrowseEntity>>
 
     @Query("SELECT * FROM channels WHERE id = :id")
-    suspend fun getById(id: Long): ChannelEntity?
+    abstract suspend fun getById(id: Long): ChannelEntity?
 
     @Query("SELECT * FROM channels WHERE provider_id = :providerId")
-    suspend fun getByProviderSync(providerId: Long): List<ChannelEntity>
+    abstract suspend fun getByProviderSync(providerId: Long): List<ChannelEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(channels: List<ChannelEntity>)
+    abstract suspend fun insertAll(channels: List<ChannelEntity>)
+
+    @Update
+    abstract suspend fun updateAll(channels: List<ChannelEntity>)
 
     @Query("SELECT id, stream_id AS remote_id FROM channels WHERE provider_id = :providerId")
-    suspend fun getIdMappings(providerId: Long): List<RemoteIdMapping>
+    abstract suspend fun getIdMappings(providerId: Long): List<RemoteIdMapping>
 
     @Query("DELETE FROM channels WHERE provider_id = :providerId")
-    suspend fun deleteByProvider(providerId: Long)
+    abstract suspend fun deleteByProvider(providerId: Long)
 
     @Query("DELETE FROM channels WHERE id IN (:ids)")
-    suspend fun deleteByIds(ids: List<Long>)
+    abstract suspend fun deleteByIds(ids: List<Long>)
 
     @Transaction
-    suspend fun replaceAll(providerId: Long, channels: List<ChannelEntity>) {
+    open suspend fun replaceAll(providerId: Long, channels: List<ChannelEntity>) {
         val existingByRemoteId = getIdMappings(providerId).associate { it.remoteId to it.id }
         val remapped = channels
             .distinctBy { it.streamId }
@@ -179,10 +215,10 @@ interface ChannelDao {
         WHERE id IN (:ids)
         """
     )
-    fun getByIds(ids: List<Long>): Flow<List<ChannelBrowseEntity>>
+    abstract fun getByIds(ids: List<Long>): Flow<List<ChannelBrowseEntity>>
 
     @Query("SELECT category_id, COUNT(*) as item_count FROM channels WHERE provider_id = :providerId AND category_id IS NOT NULL GROUP BY category_id")
-    fun getCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
+    abstract fun getCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
 
     @Query(
         """
@@ -200,19 +236,25 @@ interface ChannelDao {
         GROUP BY category_id
         """
     )
-    fun getGroupedCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
+    abstract fun getGroupedCategoryCounts(providerId: Long): Flow<List<CategoryCount>>
 
     @Query("SELECT COUNT(*) FROM channels WHERE provider_id = :providerId")
-    fun getCount(providerId: Long): Flow<Int>
+    abstract fun getCount(providerId: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(MAX(catch_up_days), 0) FROM channels WHERE catch_up_supported = 1")
+    abstract suspend fun getMaxCatchUpDaysAcrossAllProviders(): Int
 
     @Query("UPDATE channels SET is_user_protected = :isProtected WHERE provider_id = :providerId AND category_id = :categoryId")
-    suspend fun updateProtectionStatus(providerId: Long, categoryId: Long, isProtected: Boolean)
+    abstract suspend fun updateProtectionStatus(providerId: Long, categoryId: Long, isProtected: Boolean)
+
+    @Query("UPDATE channels SET is_user_protected = 0 WHERE provider_id = :providerId AND category_id IN (:categoryIds)")
+    abstract suspend fun clearProtectionForCategories(providerId: Long, categoryIds: List<Long>)
 
     @Query("UPDATE channels SET error_count = error_count + 1 WHERE id = :id")
-    suspend fun incrementErrorCount(id: Long)
+    abstract suspend fun incrementErrorCount(id: Long)
 
     @Query("UPDATE channels SET error_count = 0 WHERE id = :id")
-    suspend fun resetErrorCount(id: Long)
+    abstract suspend fun resetErrorCount(id: Long)
 }
 
 @Dao
@@ -228,6 +270,36 @@ interface ChannelPreferenceDao {
 }
 
 @Dao
+interface TmdbIdentityDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(identities: List<TmdbIdentityEntity>)
+
+    @Query(
+        """
+        DELETE FROM tmdb_identity
+        WHERE content_type = 'MOVIE'
+          AND NOT EXISTS (
+              SELECT 1 FROM movies
+              WHERE movies.tmdb_id = tmdb_identity.tmdb_id
+          )
+        """
+    )
+    suspend fun pruneOrphanedMovieIdentities()
+
+    @Query(
+        """
+        DELETE FROM tmdb_identity
+        WHERE content_type = 'SERIES'
+          AND NOT EXISTS (
+              SELECT 1 FROM series
+              WHERE series.tmdb_id = tmdb_identity.tmdb_id
+          )
+        """
+    )
+    suspend fun pruneOrphanedSeriesIdentities()
+}
+
+@Dao
 @RewriteQueriesToDropUnusedColumns
 interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY name ASC")
@@ -240,6 +312,20 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY name ASC LIMIT :limit OFFSET :offset")
     fun getByProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<MovieBrowseEntity>>
 
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY name ASC, id ASC LIMIT :limit")
+    suspend fun getByProviderCursorPage(providerId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+        ORDER BY name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByProviderCursorPageAfter(providerId: Long, lastName: String, lastId: Long, limit: Int): List<MovieBrowseEntity>
+
     @Query(
         """
         SELECT movies.* FROM movies
@@ -247,6 +333,7 @@ interface MovieDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'MOVIE'
+                                AND favorites.provider_id = movies.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = movies.id
           )
@@ -264,6 +351,7 @@ interface MovieDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'MOVIE'
+                                AND favorites.provider_id = movies.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = movies.id
           )
@@ -316,35 +404,101 @@ interface MovieDao {
         """
         SELECT movies.* FROM movies
         WHERE movies.provider_id = :providerId
-          AND COALESCE(movies.watch_progress, 0) <= 0
+          AND NOT EXISTS (
+              SELECT 1 FROM playback_history
+              WHERE playback_history.provider_id = movies.provider_id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.content_id = movies.id
+                AND playback_history.resume_position_ms > 0
+          )
         ORDER BY movies.name ASC
         LIMIT :limit OFFSET :offset
         """
     )
     fun getUnwatchedByProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<MovieBrowseEntity>>
 
-    @Query("SELECT COUNT(*) FROM movies WHERE provider_id = :providerId AND COALESCE(watch_progress, 0) <= 0")
+    @Query(
+        """
+        SELECT COUNT(*)
+        FROM movies
+        WHERE movies.provider_id = :providerId
+          AND NOT EXISTS (
+              SELECT 1 FROM playback_history
+              WHERE playback_history.provider_id = movies.provider_id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.content_id = movies.id
+                AND playback_history.resume_position_ms > 0
+          )
+        """
+    )
     fun getUnwatchedCountByProvider(providerId: Long): Flow<Int>
 
     @Query(
         """
         SELECT movies.* FROM movies
         WHERE movies.provider_id = :providerId
-        ORDER BY COALESCE((
-            SELECT playback_history.watch_count
-            FROM playback_history
-            WHERE playback_history.provider_id = movies.provider_id
-              AND playback_history.content_type = 'MOVIE'
-              AND playback_history.content_id = movies.id
-            LIMIT 1
-        ), 0) DESC, movies.name ASC
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC
         LIMIT :limit OFFSET :offset
         """
     )
     fun getByWatchCountProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<MovieBrowseEntity>>
 
+    @Query(
+        """
+        SELECT movies.* FROM movies
+        WHERE movies.provider_id = :providerId
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC, movies.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountProviderCursorPage(providerId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT movies.* FROM movies
+        WHERE movies.provider_id = :providerId
+          AND (
+              COALESCE(movies.watch_count, 0) < :lastWatchCount
+              OR (
+                  COALESCE(movies.watch_count, 0) = :lastWatchCount
+                  AND (movies.name > :lastName OR (movies.name = :lastName AND movies.id > :lastId))
+              )
+          )
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC, movies.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountProviderCursorPageAfter(
+        providerId: Long,
+        lastWatchCount: Int,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
+
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC")
     fun getByCategory(providerId: Long, categoryId: Long): Flow<List<MovieBrowseEntity>>
+
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC, id ASC LIMIT :limit")
+    suspend fun getByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+        ORDER BY name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
 
     @Query(
         """
@@ -354,6 +508,7 @@ interface MovieDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'MOVIE'
+                                AND favorites.provider_id = movies.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = movies.id
           )
@@ -372,6 +527,7 @@ interface MovieDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'MOVIE'
+                                AND favorites.provider_id = movies.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = movies.id
           )
@@ -427,7 +583,13 @@ interface MovieDao {
         SELECT movies.* FROM movies
         WHERE movies.provider_id = :providerId
           AND movies.category_id = :categoryId
-          AND COALESCE(movies.watch_progress, 0) <= 0
+          AND NOT EXISTS (
+              SELECT 1 FROM playback_history
+              WHERE playback_history.provider_id = movies.provider_id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.content_id = movies.id
+                AND playback_history.resume_position_ms > 0
+          )
         ORDER BY movies.name ASC
         LIMIT :limit OFFSET :offset
         """
@@ -435,7 +597,19 @@ interface MovieDao {
     fun getUnwatchedByCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<MovieBrowseEntity>>
 
     @Query(
-        "SELECT COUNT(*) FROM movies WHERE provider_id = :providerId AND category_id = :categoryId AND COALESCE(watch_progress, 0) <= 0"
+        """
+        SELECT COUNT(*)
+        FROM movies
+        WHERE movies.provider_id = :providerId
+          AND movies.category_id = :categoryId
+          AND NOT EXISTS (
+              SELECT 1 FROM playback_history
+              WHERE playback_history.provider_id = movies.provider_id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.content_id = movies.id
+                AND playback_history.resume_position_ms > 0
+          )
+        """
     )
     fun getUnwatchedCountByCategory(providerId: Long, categoryId: Long): Flow<Int>
 
@@ -444,18 +618,47 @@ interface MovieDao {
         SELECT movies.* FROM movies
         WHERE movies.provider_id = :providerId
           AND movies.category_id = :categoryId
-        ORDER BY COALESCE((
-            SELECT playback_history.watch_count
-            FROM playback_history
-            WHERE playback_history.provider_id = movies.provider_id
-              AND playback_history.content_type = 'MOVIE'
-              AND playback_history.content_id = movies.id
-            LIMIT 1
-        ), 0) DESC, movies.name ASC
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC
         LIMIT :limit OFFSET :offset
         """
     )
     fun getByWatchCountCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<MovieBrowseEntity>>
+
+    @Query(
+        """
+        SELECT movies.* FROM movies
+        WHERE movies.provider_id = :providerId
+          AND movies.category_id = :categoryId
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC, movies.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT movies.* FROM movies
+        WHERE movies.provider_id = :providerId
+          AND movies.category_id = :categoryId
+          AND (
+              COALESCE(movies.watch_count, 0) < :lastWatchCount
+              OR (
+                  COALESCE(movies.watch_count, 0) = :lastWatchCount
+                  AND (movies.name > :lastName OR (movies.name = :lastName AND movies.id > :lastId))
+              )
+          )
+        ORDER BY COALESCE(movies.watch_count, 0) DESC, movies.name ASC, movies.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastWatchCount: Int,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
 
     /** SQL-level parental filter per category. */
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId AND is_user_protected = 0 ORDER BY name ASC")
@@ -470,14 +673,130 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY rating DESC, name ASC LIMIT :limit")
     fun getTopRatedPreview(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
 
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY rating DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getTopRatedCursorPage(providerId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND (
+              rating < :lastRating
+              OR (rating = :lastRating AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY rating DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getTopRatedCursorPageAfter(
+        providerId: Long,
+        lastRating: Float,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
+
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY rating DESC, name ASC LIMIT :limit")
     fun getTopRatedByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
 
-    @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY release_date DESC, name ASC LIMIT :limit")
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY rating DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getTopRatedByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (
+              rating < :lastRating
+              OR (rating = :lastRating AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY rating DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getTopRatedByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastRating: Float,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
+
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY added_at DESC, release_date DESC, name ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
 
-    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY release_date DESC, name ASC LIMIT :limit")
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId ORDER BY added_at DESC, release_date DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getFreshCursorPage(providerId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND (
+              added_at < :lastAddedAt
+              OR (
+                  added_at = :lastAddedAt
+                  AND (
+                      COALESCE(release_date, '') < :lastReleaseDate
+                      OR (
+                          COALESCE(release_date, '') = :lastReleaseDate
+                          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+                      )
+                  )
+              )
+          )
+        ORDER BY added_at DESC, release_date DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getFreshCursorPageAfter(
+        providerId: Long,
+        lastAddedAt: Long,
+        lastReleaseDate: String,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
+
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY added_at DESC, release_date DESC, name ASC LIMIT :limit")
     fun getFreshByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
+
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY added_at DESC, release_date DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getFreshByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<MovieBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (
+              added_at < :lastAddedAt
+              OR (
+                  added_at = :lastAddedAt
+                  AND (
+                      COALESCE(release_date, '') < :lastReleaseDate
+                      OR (
+                          COALESCE(release_date, '') = :lastReleaseDate
+                          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+                      )
+                  )
+              )
+          )
+        ORDER BY added_at DESC, release_date DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getFreshByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastAddedAt: Long,
+        lastReleaseDate: String,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<MovieBrowseEntity>
 
     @Query(
         """
@@ -510,6 +829,9 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId")
     suspend fun getByProviderSync(providerId: Long): List<MovieEntity>
 
+    @Query("SELECT tmdb_id FROM movies WHERE provider_id = :providerId AND tmdb_id IS NOT NULL")
+    suspend fun getTmdbIdsByProvider(providerId: Long): List<TmdbIdMapping>
+
     @Query("SELECT * FROM movies WHERE id IN (:ids)")
     fun getByIds(ids: List<Long>): Flow<List<MovieBrowseEntity>>
 
@@ -528,6 +850,9 @@ interface MovieDao {
     @Update
     suspend fun update(movie: MovieEntity)
 
+    @Update
+    suspend fun updateAll(movies: List<MovieEntity>)
+
     @Query("UPDATE movies SET watch_progress = :progress, last_watched_at = :timestamp WHERE id = :id")
     suspend fun updateWatchProgress(id: Long, progress: Long, timestamp: Long = System.currentTimeMillis())
 
@@ -540,6 +865,12 @@ interface MovieDao {
               AND playback_history.content_type = 'MOVIE'
               AND playback_history.provider_id = movies.provider_id
         ), 0),
+            watch_count = COALESCE((
+                SELECT watch_count FROM playback_history
+                WHERE playback_history.content_id = movies.id
+                  AND playback_history.content_type = 'MOVIE'
+                  AND playback_history.provider_id = movies.provider_id
+            ), 0),
             last_watched_at = COALESCE((
                 SELECT last_watched_at FROM playback_history
                 WHERE playback_history.content_id = movies.id
@@ -560,6 +891,12 @@ interface MovieDao {
               AND playback_history.content_type = 'MOVIE'
               AND playback_history.provider_id = movies.provider_id
         ), 0),
+            watch_count = COALESCE((
+                SELECT watch_count FROM playback_history
+                WHERE playback_history.content_id = movies.id
+                  AND playback_history.content_type = 'MOVIE'
+                  AND playback_history.provider_id = movies.provider_id
+            ), 0),
             last_watched_at = COALESCE((
                 SELECT last_watched_at FROM playback_history
                 WHERE playback_history.content_id = movies.id
@@ -580,6 +917,12 @@ interface MovieDao {
               AND playback_history.content_type = 'MOVIE'
               AND playback_history.provider_id = movies.provider_id
         ), 0),
+            watch_count = COALESCE((
+                SELECT watch_count FROM playback_history
+                WHERE playback_history.content_id = movies.id
+                  AND playback_history.content_type = 'MOVIE'
+                  AND playback_history.provider_id = movies.provider_id
+            ), 0),
             last_watched_at = COALESCE((
                 SELECT last_watched_at FROM playback_history
                 WHERE playback_history.content_id = movies.id
@@ -589,6 +932,9 @@ interface MovieDao {
         """
     )
     suspend fun syncAllWatchProgressFromHistory()
+
+    @Query("UPDATE movies SET watch_progress = 0, watch_count = 0, last_watched_at = 0")
+    suspend fun resetAllWatchProgress()
 
     @Query("DELETE FROM movies WHERE provider_id = :providerId")
     suspend fun deleteByProvider(providerId: Long)
@@ -609,7 +955,19 @@ interface MovieDao {
             WHERE playback_history.content_id = movies.id 
             AND playback_history.content_type = 'MOVIE'
             AND playback_history.provider_id = :providerId
-        )
+        ),
+            watch_count = COALESCE((
+                SELECT watch_count FROM playback_history
+                WHERE playback_history.content_id = movies.id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.provider_id = :providerId
+            ), 0),
+            last_watched_at = COALESCE((
+                SELECT last_watched_at FROM playback_history
+                WHERE playback_history.content_id = movies.id
+                AND playback_history.content_type = 'MOVIE'
+                AND playback_history.provider_id = :providerId
+            ), 0)
         WHERE provider_id = :providerId AND EXISTS (
             SELECT 1 FROM playback_history 
             WHERE playback_history.content_id = movies.id
@@ -658,6 +1016,9 @@ interface MovieDao {
 
     @Query("UPDATE movies SET is_user_protected = :isProtected WHERE provider_id = :providerId AND category_id = :categoryId")
     suspend fun updateProtectionStatus(providerId: Long, categoryId: Long, isProtected: Boolean)
+
+    @Query("UPDATE movies SET is_user_protected = 0 WHERE provider_id = :providerId AND category_id IN (:categoryIds)")
+    suspend fun clearProtectionForCategories(providerId: Long, categoryIds: List<Long>)
 }
 
 @Dao
@@ -669,6 +1030,20 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY name ASC LIMIT :limit OFFSET :offset")
     fun getByProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY name ASC, id ASC LIMIT :limit")
+    suspend fun getByProviderCursorPage(providerId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+        ORDER BY name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByProviderCursorPageAfter(providerId: Long, lastName: String, lastId: Long, limit: Int): List<SeriesBrowseEntity>
+
     @Query(
         """
         SELECT series.* FROM series
@@ -676,6 +1051,7 @@ interface SeriesDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'SERIES'
+                                AND favorites.provider_id = series.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = series.id
           )
@@ -693,6 +1069,7 @@ interface SeriesDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'SERIES'
+                                AND favorites.provider_id = series.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = series.id
           )
@@ -833,6 +1210,99 @@ interface SeriesDao {
     )
     fun getByWatchCountProviderPage(providerId: Long, limit: Int, offset: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query(
+        """
+        SELECT series.* FROM series
+        WHERE series.provider_id = :providerId
+        ORDER BY COALESCE((
+            SELECT MAX(playback_history.watch_count)
+            FROM playback_history
+            WHERE playback_history.provider_id = series.provider_id
+              AND (
+                  (playback_history.content_type = 'SERIES' AND playback_history.content_id = series.id)
+                  OR (
+                      playback_history.content_type = 'SERIES_EPISODE'
+                      AND EXISTS (
+                          SELECT 1 FROM episodes
+                          WHERE episodes.id = playback_history.content_id
+                            AND episodes.series_id = series.id
+                      )
+                  )
+              )
+        ), 0) DESC, series.name ASC, series.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountProviderCursorPage(providerId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT series.* FROM series
+        WHERE series.provider_id = :providerId
+          AND (
+              COALESCE((
+                  SELECT MAX(playback_history.watch_count)
+                  FROM playback_history
+                  WHERE playback_history.provider_id = series.provider_id
+                    AND (
+                        (playback_history.content_type = 'SERIES' AND playback_history.content_id = series.id)
+                        OR (
+                            playback_history.content_type = 'SERIES_EPISODE'
+                            AND EXISTS (
+                                SELECT 1 FROM episodes
+                                WHERE episodes.id = playback_history.content_id
+                                  AND episodes.series_id = series.id
+                            )
+                        )
+                    )
+              ), 0) < :lastWatchCount
+              OR (
+                  COALESCE((
+                      SELECT MAX(playback_history.watch_count)
+                      FROM playback_history
+                      WHERE playback_history.provider_id = series.provider_id
+                        AND (
+                            (playback_history.content_type = 'SERIES' AND playback_history.content_id = series.id)
+                            OR (
+                                playback_history.content_type = 'SERIES_EPISODE'
+                                AND EXISTS (
+                                    SELECT 1 FROM episodes
+                                    WHERE episodes.id = playback_history.content_id
+                                      AND episodes.series_id = series.id
+                                )
+                            )
+                        )
+                  ), 0) = :lastWatchCount
+                  AND (series.name > :lastName OR (series.name = :lastName AND series.id > :lastId))
+              )
+          )
+        ORDER BY COALESCE((
+            SELECT MAX(playback_history.watch_count)
+            FROM playback_history
+            WHERE playback_history.provider_id = series.provider_id
+              AND (
+                  (playback_history.content_type = 'SERIES' AND playback_history.content_id = series.id)
+                  OR (
+                      playback_history.content_type = 'SERIES_EPISODE'
+                      AND EXISTS (
+                          SELECT 1 FROM episodes
+                          WHERE episodes.id = playback_history.content_id
+                            AND episodes.series_id = series.id
+                      )
+                  )
+              )
+        ), 0) DESC, series.name ASC, series.id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByWatchCountProviderCursorPageAfter(
+        providerId: Long,
+        lastWatchCount: Int,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
+
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC")
     fun getByCategory(providerId: Long, categoryId: Long): Flow<List<SeriesBrowseEntity>>
 
@@ -844,6 +1314,7 @@ interface SeriesDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'SERIES'
+                                AND favorites.provider_id = series.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = series.id
           )
@@ -862,6 +1333,7 @@ interface SeriesDao {
           AND EXISTS (
               SELECT 1 FROM favorites
               WHERE favorites.content_type = 'SERIES'
+                                AND favorites.provider_id = series.provider_id
                 AND favorites.group_id IS NULL
                 AND favorites.content_id = series.id
           )
@@ -1010,20 +1482,137 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC LIMIT :limit OFFSET :offset")
     fun getByCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC, id ASC LIMIT :limit")
+    suspend fun getByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (name > :lastName OR (name = :lastName AND id > :lastId))
+        ORDER BY name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
+
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC LIMIT :limit")
     fun getByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY rating DESC, name ASC LIMIT :limit")
     fun getTopRatedPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY rating DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getTopRatedCursorPage(providerId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND (
+              rating < :lastRating
+              OR (rating = :lastRating AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY rating DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getTopRatedCursorPageAfter(
+        providerId: Long,
+        lastRating: Float,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
+
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY rating DESC, name ASC LIMIT :limit")
     fun getTopRatedByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
+
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY rating DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getTopRatedByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (
+              rating < :lastRating
+              OR (rating = :lastRating AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY rating DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getTopRatedByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastRating: Float,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY last_modified DESC, name ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY last_modified DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getFreshCursorPage(providerId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND (
+              last_modified < :lastModified
+              OR (last_modified = :lastModified AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY last_modified DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getFreshCursorPageAfter(
+        providerId: Long,
+        lastModified: Long,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
+
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY last_modified DESC, name ASC LIMIT :limit")
     fun getFreshByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
+
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY last_modified DESC, name ASC, id ASC LIMIT :limit")
+    suspend fun getFreshByCategoryCursorPage(providerId: Long, categoryId: Long, limit: Int): List<SeriesBrowseEntity>
+
+    @Query(
+        """
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+          AND category_id = :categoryId
+          AND (
+              last_modified < :lastModified
+              OR (last_modified = :lastModified AND (name > :lastName OR (name = :lastName AND id > :lastId)))
+          )
+        ORDER BY last_modified DESC, name ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getFreshByCategoryCursorPageAfter(
+        providerId: Long,
+        categoryId: Long,
+        lastModified: Long,
+        lastName: String,
+        lastId: Long,
+        limit: Int
+    ): List<SeriesBrowseEntity>
 
     @Query(
         """
@@ -1056,6 +1645,9 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE provider_id = :providerId")
     suspend fun getByProviderSync(providerId: Long): List<SeriesEntity>
 
+    @Query("SELECT tmdb_id FROM series WHERE provider_id = :providerId AND tmdb_id IS NOT NULL")
+    suspend fun getTmdbIdsByProvider(providerId: Long): List<TmdbIdMapping>
+
     @Query("SELECT * FROM series WHERE id IN (:ids)")
     fun getByIds(ids: List<Long>): Flow<List<SeriesBrowseEntity>>
 
@@ -1067,6 +1659,9 @@ interface SeriesDao {
 
     @Update
     suspend fun update(series: SeriesEntity)
+
+    @Update
+    suspend fun updateAll(series: List<SeriesEntity>)
 
     @Query("SELECT id, series_id AS remote_id FROM series WHERE provider_id = :providerId")
     suspend fun getIdMappings(providerId: Long): List<RemoteIdMapping>
@@ -1122,6 +1717,9 @@ interface SeriesDao {
 
     @Query("UPDATE series SET is_user_protected = :isProtected WHERE provider_id = :providerId AND category_id = :categoryId")
     suspend fun updateProtectionStatus(providerId: Long, categoryId: Long, isProtected: Boolean)
+
+    @Query("UPDATE series SET is_user_protected = 0 WHERE provider_id = :providerId AND category_id IN (:categoryIds)")
+    suspend fun clearProtectionForCategories(providerId: Long, categoryIds: List<Long>)
 }
 
 
@@ -1226,6 +1824,9 @@ interface EpisodeDao {
     )
     suspend fun syncAllWatchProgressFromHistory()
 
+    @Query("UPDATE episodes SET watch_progress = 0, last_watched_at = 0")
+    suspend fun resetAllWatchProgress()
+
     @Query("DELETE FROM episodes WHERE series_id = :seriesId")
     suspend fun deleteBySeries(seriesId: Long)
 
@@ -1271,6 +1872,9 @@ interface CategoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(categories: List<CategoryEntity>)
+
+    @Update
+    suspend fun updateAll(categories: List<CategoryEntity>)
 
     @Query("DELETE FROM categories WHERE provider_id = :providerId AND type = :type")
     suspend fun deleteByProviderAndType(providerId: Long, type: String)
@@ -1571,32 +2175,38 @@ interface ProgramDao {
 
 @Dao
 interface FavoriteDao {
-    @Query("SELECT * FROM favorites WHERE group_id IS NULL ORDER BY position ASC")
-    fun getAllGlobal(): Flow<List<FavoriteEntity>>
+    @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND group_id IS NULL ORDER BY position ASC")
+    fun getAllGlobal(providerId: Long): Flow<List<FavoriteEntity>>
 
-    @Query("SELECT * FROM favorites WHERE content_type = :contentType AND group_id IS NULL ORDER BY position ASC")
-    fun getGlobalByType(contentType: String): Flow<List<FavoriteEntity>>
+    @Query("SELECT * FROM favorites WHERE provider_id IN (:providerIds) AND group_id IS NULL ORDER BY provider_id ASC, position ASC")
+    fun getAllGlobalByProviders(providerIds: List<Long>): Flow<List<FavoriteEntity>>
 
-    @Query("SELECT * FROM favorites WHERE content_type = :contentType ORDER BY position ASC")
-    fun getAllByType(contentType: String): Flow<List<FavoriteEntity>>
+    @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND content_type = :contentType AND group_id IS NULL ORDER BY position ASC")
+    fun getGlobalByType(providerId: Long, contentType: String): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM favorites WHERE provider_id IN (:providerIds) AND content_type = :contentType AND group_id IS NULL ORDER BY provider_id ASC, position ASC")
+    fun getGlobalByTypeForProviders(providerIds: List<Long>, contentType: String): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND content_type = :contentType ORDER BY position ASC")
+    fun getAllByType(providerId: Long, contentType: String): Flow<List<FavoriteEntity>>
 
     @Query("SELECT * FROM favorites WHERE group_id = :groupId ORDER BY position ASC")
     fun getByGroup(groupId: Long): Flow<List<FavoriteEntity>>
 
-    @Query("SELECT * FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId) LIMIT 1")
-    suspend fun get(contentId: Long, contentType: String, groupId: Long?): FavoriteEntity?
+    @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId) LIMIT 1")
+    suspend fun get(providerId: Long, contentId: Long, contentType: String, groupId: Long?): FavoriteEntity?
 
-    @Query("SELECT COUNT(*) FROM favorites WHERE group_id IS NULL AND content_type = :contentType")
-    fun getGlobalFavoriteCount(contentType: String): Flow<Int>
+    @Query("SELECT COUNT(*) FROM favorites WHERE provider_id = :providerId AND group_id IS NULL AND content_type = :contentType")
+    fun getGlobalFavoriteCount(providerId: Long, contentType: String): Flow<Int>
 
-    @Query("SELECT group_id as category_id, COUNT(*) as item_count FROM favorites WHERE group_id IS NOT NULL AND content_type = :contentType GROUP BY group_id")
-    fun getGroupFavoriteCounts(contentType: String): Flow<List<CategoryCount>>
+    @Query("SELECT group_id as category_id, COUNT(*) as item_count FROM favorites WHERE provider_id = :providerId AND group_id IS NOT NULL AND content_type = :contentType GROUP BY group_id")
+    fun getGroupFavoriteCounts(providerId: Long, contentType: String): Flow<List<CategoryCount>>
 
-    @Query("SELECT group_id FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND group_id IS NOT NULL")
-    suspend fun getGroupMemberships(contentId: Long, contentType: String): List<Long>
+    @Query("SELECT group_id FROM favorites WHERE provider_id = :providerId AND content_id = :contentId AND content_type = :contentType AND group_id IS NOT NULL")
+    suspend fun getGroupMemberships(providerId: Long, contentId: Long, contentType: String): List<Long>
 
-    @Query("SELECT MAX(position) FROM favorites WHERE (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
-    suspend fun getMaxPosition(groupId: Long?): Int?
+    @Query("SELECT MAX(position) FROM favorites WHERE provider_id = :providerId AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
+    suspend fun getMaxPosition(providerId: Long, groupId: Long?): Int?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(favorite: FavoriteEntity)
@@ -1604,8 +2214,8 @@ interface FavoriteDao {
     @Update
     suspend fun updateAll(favorites: List<FavoriteEntity>)
 
-    @Query("DELETE FROM favorites WHERE content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
-    suspend fun delete(contentId: Long, contentType: String, groupId: Long?)
+    @Query("DELETE FROM favorites WHERE provider_id = :providerId AND content_id = :contentId AND content_type = :contentType AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
+    suspend fun delete(providerId: Long, contentId: Long, contentType: String, groupId: Long?)
 
     @Query("DELETE FROM favorites WHERE content_type = 'LIVE' AND content_id NOT IN (SELECT id FROM channels)")
     suspend fun deleteMissingLiveFavorites(): Int
@@ -1622,8 +2232,11 @@ interface FavoriteDao {
 
 @Dao
 interface VirtualGroupDao {
-    @Query("SELECT * FROM virtual_groups WHERE content_type = :contentType ORDER BY position ASC")
-    fun getByType(contentType: String): Flow<List<VirtualGroupEntity>>
+    @Query("SELECT * FROM virtual_groups WHERE provider_id = :providerId AND content_type = :contentType ORDER BY position ASC")
+    fun getByType(providerId: Long, contentType: String): Flow<List<VirtualGroupEntity>>
+
+    @Query("SELECT * FROM virtual_groups WHERE provider_id IN (:providerIds) AND content_type = :contentType ORDER BY provider_id ASC, position ASC")
+    fun getByTypeForProviders(providerIds: List<Long>, contentType: String): Flow<List<VirtualGroupEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(group: VirtualGroupEntity): Long
@@ -1653,6 +2266,53 @@ interface PlaybackHistoryDao {
     @Query("SELECT * FROM playback_history WHERE content_id = :contentId AND content_type = :contentType AND provider_id = :providerId")
     suspend fun get(contentId: Long, contentType: String, providerId: Long): PlaybackHistoryEntity?
 
+    @Query(
+        """
+        SELECT ph.* FROM playback_history ph
+        JOIN movies current_movie
+          ON current_movie.id = :contentId
+         AND current_movie.provider_id = :providerId
+        JOIN tmdb_identity identity
+          ON identity.tmdb_id = current_movie.tmdb_id
+         AND identity.content_type = 'MOVIE'
+        JOIN movies candidate_movie
+          ON candidate_movie.tmdb_id = identity.tmdb_id
+        WHERE current_movie.tmdb_id IS NOT NULL
+          AND ph.content_type = 'MOVIE'
+          AND ph.provider_id = candidate_movie.provider_id
+          AND ph.content_id = candidate_movie.id
+        ORDER BY ph.last_watched_at DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestMovieHistoryBySharedTmdb(contentId: Long, providerId: Long): PlaybackHistoryEntity?
+
+    @Query(
+        """
+        SELECT ph.* FROM playback_history ph
+        JOIN series current_series
+          ON current_series.id = :seriesId
+         AND current_series.provider_id = :providerId
+        JOIN tmdb_identity identity
+          ON identity.tmdb_id = current_series.tmdb_id
+         AND identity.content_type = 'SERIES'
+        JOIN series candidate_series
+          ON candidate_series.tmdb_id = identity.tmdb_id
+        WHERE current_series.tmdb_id IS NOT NULL
+          AND (
+              (ph.content_type = 'SERIES' AND ph.content_id = candidate_series.id)
+              OR (
+                  ph.content_type = 'SERIES_EPISODE'
+                  AND ph.series_id = candidate_series.id
+              )
+          )
+          AND ph.provider_id = candidate_series.provider_id
+        ORDER BY ph.last_watched_at DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestSeriesHistoryBySharedTmdb(seriesId: Long, providerId: Long): PlaybackHistoryEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(history: PlaybackHistoryEntity)
 
@@ -1664,6 +2324,43 @@ interface PlaybackHistoryDao {
 
     @Query("DELETE FROM playback_history WHERE provider_id = :providerId")
     suspend fun deleteByProvider(providerId: Long)
+
+    @Query("DELETE FROM playback_history WHERE provider_id = :providerId AND content_type = :contentType")
+    suspend fun deleteByProviderAndType(providerId: Long, contentType: String)
+}
+
+@Dao
+interface SearchHistoryDao {
+    @Query(
+        """
+        SELECT * FROM search_history
+        WHERE content_scope = :contentScope
+          AND provider_id = :providerId
+        ORDER BY used_at DESC
+        LIMIT :limit
+        """
+    )
+    fun observeRecent(contentScope: String, providerId: Long, limit: Int): Flow<List<SearchHistoryEntity>>
+
+    @Query(
+        """
+        INSERT INTO search_history(query, content_scope, provider_id, used_at, use_count)
+        VALUES (:query, :contentScope, :providerId, :usedAt, 1)
+        ON CONFLICT(query, content_scope, provider_id) DO UPDATE SET
+            used_at = excluded.used_at,
+            use_count = search_history.use_count + 1
+        """
+    )
+    suspend fun record(query: String, contentScope: String, providerId: Long, usedAt: Long)
+
+    @Query("DELETE FROM search_history WHERE content_scope = :contentScope AND provider_id = :providerId")
+    suspend fun deleteByScope(contentScope: String, providerId: Long)
+
+    @Query("DELETE FROM search_history WHERE used_at < :minUsedAt")
+    suspend fun pruneOlderThan(minUsedAt: Long)
+
+    @Query("DELETE FROM search_history")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -1750,7 +2447,7 @@ interface EpgSourceDao {
 }
 
 @Dao
-interface ProviderEpgSourceDao {
+abstract class ProviderEpgSourceDao {
     @Query("""
         SELECT pes.*, es.name AS epg_source_name, es.url AS epg_source_url
         FROM provider_epg_sources pes
@@ -1758,7 +2455,7 @@ interface ProviderEpgSourceDao {
         WHERE pes.provider_id = :providerId
         ORDER BY pes.priority ASC
     """)
-    fun getForProvider(providerId: Long): Flow<List<ProviderEpgSourceWithDetails>>
+    abstract fun getForProvider(providerId: Long): Flow<List<ProviderEpgSourceWithDetails>>
 
     @Query("""
         SELECT pes.*
@@ -1767,7 +2464,7 @@ interface ProviderEpgSourceDao {
         WHERE pes.provider_id = :providerId AND pes.enabled = 1 AND es.enabled = 1
         ORDER BY pes.priority ASC
     """)
-    suspend fun getEnabledForProviderSync(providerId: Long): List<ProviderEpgSourceEntity>
+    abstract suspend fun getEnabledForProviderSync(providerId: Long): List<ProviderEpgSourceEntity>
 
     @Query("""
         SELECT pes.*
@@ -1775,22 +2472,32 @@ interface ProviderEpgSourceDao {
         WHERE pes.provider_id = :providerId
         ORDER BY pes.priority ASC
     """)
-    suspend fun getForProviderSync(providerId: Long): List<ProviderEpgSourceEntity>
+    abstract suspend fun getForProviderSync(providerId: Long): List<ProviderEpgSourceEntity>
 
     @Query("SELECT DISTINCT provider_id FROM provider_epg_sources WHERE epg_source_id = :epgSourceId")
-    suspend fun getProviderIdsForSourceSync(epgSourceId: Long): List<Long>
+    abstract suspend fun getProviderIdsForSourceSync(epgSourceId: Long): List<Long>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(assignment: ProviderEpgSourceEntity): Long
+    abstract suspend fun insert(assignment: ProviderEpgSourceEntity): Long
 
     @Update
-    suspend fun update(assignment: ProviderEpgSourceEntity)
+    abstract suspend fun update(assignment: ProviderEpgSourceEntity)
 
     @Query("DELETE FROM provider_epg_sources WHERE provider_id = :providerId AND epg_source_id = :epgSourceId")
-    suspend fun delete(providerId: Long, epgSourceId: Long)
+    abstract suspend fun delete(providerId: Long, epgSourceId: Long)
 
     @Query("DELETE FROM provider_epg_sources WHERE provider_id = :providerId")
-    suspend fun deleteByProvider(providerId: Long)
+    abstract suspend fun deleteByProvider(providerId: Long)
+
+    /** Atomically swaps the priority of two assignment rows within a single transaction. */
+    @Transaction
+    open suspend fun swapPriorities(
+        entity1: ProviderEpgSourceEntity,
+        entity2: ProviderEpgSourceEntity
+    ) {
+        update(entity1)
+        update(entity2)
+    }
 }
 
 data class ProviderEpgSourceWithDetails(
@@ -1885,6 +2592,9 @@ abstract class ChannelEpgMappingDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun upsert(mapping: ChannelEpgMappingEntity)
 
+    @Query("DELETE FROM channel_epg_mappings WHERE provider_id = :providerId AND provider_channel_id = :channelId")
+    abstract suspend fun deleteForChannel(providerId: Long, channelId: Long)
+
     @Query("DELETE FROM channel_epg_mappings WHERE provider_id = :providerId")
     abstract suspend fun deleteByProvider(providerId: Long)
 
@@ -1903,6 +2613,49 @@ abstract class ChannelEpgMappingDao {
         GROUP BY source_type, match_type
     """)
     abstract suspend fun getResolutionStats(providerId: Long): List<EpgResolutionStatRow>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM channel_epg_mappings
+        WHERE provider_id = :providerId
+          AND confidence > 0
+          AND confidence < :minConfidence
+        """
+    )
+    abstract suspend fun countLowConfidence(providerId: Long, minConfidence: Float): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM channel_epg_mappings
+        WHERE provider_id = :providerId
+          AND failed_attempts < :maxAttempts
+          AND (
+              source_type = 'NONE'
+              OR (confidence > 0 AND confidence < :minConfidence)
+          )
+        """
+    )
+    abstract suspend fun countRematchCandidates(providerId: Long, minConfidence: Float, maxAttempts: Int): Int
+
+    @Query(
+        """
+        SELECT * FROM channel_epg_mappings
+        WHERE provider_id = :providerId
+          AND failed_attempts < :maxAttempts
+          AND (
+              source_type = 'NONE'
+              OR (confidence > 0 AND confidence < :minConfidence)
+          )
+        ORDER BY confidence ASC, failed_attempts ASC, provider_channel_id ASC
+        LIMIT :limit
+        """
+    )
+    abstract suspend fun getChannelsNeedingRematch(
+        providerId: Long,
+        minConfidence: Float,
+        maxAttempts: Int,
+        limit: Int
+    ): List<ChannelEpgMappingEntity>
 }
 
 data class EpgResolutionStatRow(

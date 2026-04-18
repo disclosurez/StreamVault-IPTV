@@ -1,15 +1,20 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.google.common.truth.Truth.assertThat
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.ChannelDao
+import com.streamvault.data.local.dao.FavoriteDao
 import com.streamvault.data.local.entity.CategoryCount
+import com.streamvault.data.local.entity.ChannelBrowseEntity
 import com.streamvault.data.local.entity.CategoryEntity
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
 import com.streamvault.domain.manager.ParentalControlManager
+import com.streamvault.domain.model.ChannelNumberingMode
 import com.streamvault.domain.model.ContentType
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -24,6 +29,7 @@ class ChannelRepositoryImplTest {
 
     private val channelDao: ChannelDao = mock()
     private val categoryDao: CategoryDao = mock()
+    private val favoriteDao: FavoriteDao = mock()
     private val preferencesRepository: PreferencesRepository = mock()
     private val parentalControlManager: ParentalControlManager = mock()
     private val xtreamStreamUrlResolver: XtreamStreamUrlResolver = mock()
@@ -95,9 +101,57 @@ class ChannelRepositoryImplTest {
         assertThat(result.first { it.id == 20L }.isUserProtected).isFalse()
     }
 
+    @Test
+    fun `getChannelsByCategory hides numbering with zero instead of negative sentinel`() = runTest {
+        whenever(channelDao.getByCategory(7L, 10L)).thenReturn(
+            flowOf(
+                listOf(
+                    ChannelBrowseEntity(
+                        id = 1L,
+                        streamId = 101L,
+                        name = "News",
+                        categoryId = 10L,
+                        categoryName = "News",
+                        streamUrl = "https://stream",
+                        number = 42,
+                        providerId = 7L
+                    )
+                )
+            )
+        )
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(parentalControlManager.unlockedCategoriesForProvider(7L)).thenReturn(flowOf(emptySet()))
+        whenever(preferencesRepository.liveChannelNumberingMode).thenReturn(flowOf(ChannelNumberingMode.HIDDEN))
+
+        val repository = createRepository()
+
+        val result = repository.getChannelsByCategory(7L, 10L).first()
+
+        assertThat(result).hasSize(1)
+        assertThat(result.first().number).isEqualTo(0)
+    }
+
+    @Test
+    fun `searchChannels returns empty list when sqlite throws for malformed fts query`() = runTest {
+        whenever(channelDao.search(eq(7L), any(), any())).thenReturn(
+            flow { throw SQLiteException("malformed MATCH expression") }
+        )
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.liveChannelNumberingMode).thenReturn(flowOf(ChannelNumberingMode.PROVIDER))
+        whenever(parentalControlManager.unlockedCategoriesForProvider(7L)).thenReturn(flowOf(emptySet()))
+        whenever(favoriteDao.getAllByType(7L, ContentType.LIVE.name)).thenReturn(flowOf(emptyList()))
+
+        val repository = createRepository()
+
+        val result = repository.searchChannels(7L, "news").first()
+
+        assertThat(result).isEmpty()
+    }
+
     private fun createRepository() = ChannelRepositoryImpl(
         channelDao = channelDao,
         categoryDao = categoryDao,
+        favoriteDao = favoriteDao,
         preferencesRepository = preferencesRepository,
         parentalControlManager = parentalControlManager,
         xtreamStreamUrlResolver = xtreamStreamUrlResolver

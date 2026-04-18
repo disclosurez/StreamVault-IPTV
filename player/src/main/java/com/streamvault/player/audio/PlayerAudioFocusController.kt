@@ -11,7 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 class PlayerAudioFocusController(
     context: Context,
     private val applyVolume: (Float) -> Unit,
-    private val setPlayWhenReady: (Boolean) -> Unit
+    private val setPlayWhenReady: (Boolean) -> Unit,
+    private val onAudioFocusDenied: (() -> Unit)? = null
 ) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -20,10 +21,15 @@ class PlayerAudioFocusController(
     private var isDucked = false
     private var currentVolume = 1f
     private var volumeBeforeMute = 1f
+    private var currentOsContentType = android.media.AudioAttributes.CONTENT_TYPE_MOVIE
 
     private val _isMuted = MutableStateFlow(false)
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
 
+    // Volatile for visibility: set from the engine constructor (Main) and read by
+    // audioFocusChangeListener (also delivered on Main). @Volatile is defensive; the
+    // current call-site guarantees Main-thread-only access via Hilt constructor sequencing.
+    @Volatile
     var bypassAudioFocus: Boolean = false
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
@@ -61,11 +67,19 @@ class PlayerAudioFocusController(
         }
     }
 
-    fun requestAudioFocusIfNeeded(): Boolean {
+    fun requestAudioFocusIfNeeded(
+        osContentType: Int = currentOsContentType
+    ): Boolean {
         if (bypassAudioFocus || hasAudioFocus) {
             isDucked = false
             dispatchVolume()
             return true
+        }
+        if (osContentType != currentOsContentType) {
+            currentOsContentType = osContentType
+            audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
+            audioFocusRequest = null
+            hasAudioFocus = false
         }
         val request = audioFocusRequest ?: buildAudioFocusRequest().also { audioFocusRequest = it }
         val granted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -112,6 +126,14 @@ class PlayerAudioFocusController(
             if (currentVolume <= 0f) {
                 currentVolume = volumeBeforeMute.coerceIn(0.1f, 1f)
             }
+            // Re-request audio focus on unmute to unblock playback if focus was previously denied
+            if (!hasAudioFocus && !bypassAudioFocus) {
+                if (requestAudioFocusIfNeeded()) {
+                    setPlayWhenReady(true)
+                } else {
+                    onAudioFocusDenied?.invoke()
+                }
+            }
         }
         dispatchVolume()
     }
@@ -149,7 +171,7 @@ class PlayerAudioFocusController(
     private fun buildAudioFocusRequest(): AudioFocusRequest {
         val attributes = android.media.AudioAttributes.Builder()
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+            .setContentType(currentOsContentType)
             .build()
         return AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attributes)

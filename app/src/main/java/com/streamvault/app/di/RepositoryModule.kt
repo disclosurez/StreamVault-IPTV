@@ -70,6 +70,9 @@ abstract class RepositoryModule {
     abstract fun bindRecordingManager(impl: com.streamvault.data.manager.RecordingManagerImpl): com.streamvault.domain.manager.RecordingManager
 
     @Binds @Singleton
+    abstract fun bindProgramReminderManager(impl: com.streamvault.data.manager.ProgramReminderManagerImpl): com.streamvault.domain.manager.ProgramReminderManager
+
+    @Binds @Singleton
     abstract fun bindParentalControlSessionStore(impl: PreferencesRepository): ParentalControlSessionStore
 
     @Binds @Singleton

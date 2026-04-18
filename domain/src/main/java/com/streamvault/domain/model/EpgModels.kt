@@ -81,6 +81,9 @@ data class ChannelEpgMapping(
     val xmltvChannelId: String? = null,
     val matchType: EpgMatchType? = null,
     val confidence: Float = 0f,
+    val matchedAt: Long = 0L,
+    val failedAttempts: Int = 0,
+    val source: String? = null,
     val isManualOverride: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -101,5 +104,8 @@ data class EpgResolutionSummary(
     val exactIdMatches: Int = 0,
     val normalizedNameMatches: Int = 0,
     val providerNativeMatches: Int = 0,
-    val unresolvedChannels: Int = 0
+    val manualMatches: Int = 0,
+    val unresolvedChannels: Int = 0,
+    val lowConfidenceChannels: Int = 0,
+    val rematchCandidateChannels: Int = 0
 )

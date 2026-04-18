@@ -95,6 +95,7 @@ internal fun LazyListScope.providerSection(
                 isActive = selectedProvider.id == uiState.activeProviderId,
                 isSyncing = uiState.isSyncing,
                 diagnostics = uiState.diagnosticsByProvider[selectedProvider.id],
+                databaseMaintenance = uiState.databaseMaintenance,
                 syncWarnings = uiState.syncWarningsByProvider[selectedProvider.id].orEmpty(),
                 onRetryWarningAction = { action -> viewModel.retryWarningAction(selectedProvider.id, action) },
                 onConnect = { viewModel.setActiveProvider(selectedProvider.id) },

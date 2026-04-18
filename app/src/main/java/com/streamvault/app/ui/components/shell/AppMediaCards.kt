@@ -160,9 +160,13 @@ fun LiveChannelRowCard(
                 }
                 Text(
                     text = buildString {
-                        val numberLabel = channel.number.takeIf { it > 0 }?.toString()?.padStart(2, '0') ?: "--"
-                        append(numberLabel)
-                        append("  ")
+                        val numberLabel = channel.number.takeIf { it > 0 }?.toString()?.padStart(2, '0')
+                        if (numberLabel != null) {
+                            append(numberLabel)
+                            append("  ")
+                        } else if (channel.number == 0) {
+                            append("--  ")
+                        }
                         append(channel.name)
                     },
                     style = if (isDense) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleSmall,

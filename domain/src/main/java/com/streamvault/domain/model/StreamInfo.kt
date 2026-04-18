@@ -47,7 +47,19 @@ enum class StreamType {
     MPEG_TS,
     PROGRESSIVE,
     RTSP,    // PE-H03: native RTSP via Media3 RtspMediaSource
-    UNKNOWN
+    UNKNOWN;
+
+    companion object {
+        fun fromContainerExtension(ext: String?): StreamType {
+            return when (ext?.trim()?.removePrefix(".")?.lowercase()) {
+                "ts" -> MPEG_TS
+                "m3u8" -> HLS
+                "mpd" -> DASH
+                "mp4", "mkv", "avi", "mov", "mp3", "aac", "m4a", "flv", "webm" -> PROGRESSIVE
+                else -> UNKNOWN
+            }
+        }
+    }
 }
 
 enum class DecoderMode {

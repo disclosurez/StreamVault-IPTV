@@ -54,7 +54,7 @@ internal fun HomeDialogsHost(
     onShowAddQuickFilterDialogChange: (Boolean) -> Unit,
     onShowSplitManagerDialogChange: (Boolean) -> Unit,
     onPendingSplitPlannerChannelChange: (Channel?) -> Unit,
-    onChannelClick: (Channel, Category?, Provider?) -> Unit,
+    onChannelClick: (Channel, Category?, Provider?, Long?, Long?) -> Unit,
     resolveProviderForChannel: (Channel) -> Provider?,
     onNavigate: (String) -> Unit,
     scope: CoroutineScope
@@ -99,7 +99,7 @@ internal fun HomeDialogsHost(
 
                         pendingUnlockChannel?.let { channel ->
                             viewModel.clearPreview()
-                            onChannelClick(channel, uiState.selectedCategory, resolveProviderForChannel(channel))
+                            onChannelClick(channel, uiState.selectedCategory, resolveProviderForChannel(channel), null, null)
                             onPendingUnlockChannelChange(null)
                         }
 
@@ -140,6 +140,21 @@ internal fun HomeDialogsHost(
             } else null,
             onHide = if (!isCategoryLocked && !category.isVirtual && category.id != ChannelRepository.ALL_CHANNELS_ID) {
                 { viewModel.hideCategory(category) }
+            } else null,
+            onHideFromLiveTV = if (!isCategoryLocked && category.id in setOf(VirtualCategoryIds.RECENT, ChannelRepository.ALL_CHANNELS_ID)) {
+                {
+                    when (category.id) {
+                        VirtualCategoryIds.RECENT -> viewModel.setShowRecentChannelsCategory(false)
+                        ChannelRepository.ALL_CHANNELS_ID -> viewModel.setShowAllChannelsCategory(false)
+                    }
+                    viewModel.dismissCategoryOptions()
+                }
+            } else null,
+            onClearAll = if (!isCategoryLocked && category.id == VirtualCategoryIds.RECENT) {
+                {
+                    viewModel.clearRecentChannels()
+                    viewModel.dismissCategoryOptions()
+                }
             } else null,
             onRename = if (!isCategoryLocked && category.isVirtual && category.id !in setOf(VirtualCategoryIds.FAVORITES, VirtualCategoryIds.RECENT)) {
                 { viewModel.requestRenameGroup(category) }
@@ -228,7 +243,13 @@ internal fun HomeDialogsHost(
             onRemoveFromGroup = { group -> viewModel.removeFromGroup(channel, group) },
             onCreateGroup = { name -> viewModel.createCustomGroup(name) },
             isQueuedForSplitScreen = multiViewViewModel.isQueued(channel.id),
-            onOpenSplitScreenPlanner = { onPendingSplitPlannerChannelChange(channel) }
+            onOpenSplitScreenPlanner = { onPendingSplitPlannerChannelChange(channel) },
+            onRemoveFromRecent = if (uiState.selectedCategory?.id == VirtualCategoryIds.RECENT) {
+                {
+                    viewModel.removeChannelFromRecent(channel)
+                    viewModel.onDismissDialog()
+                }
+            } else null
         )
     }
 

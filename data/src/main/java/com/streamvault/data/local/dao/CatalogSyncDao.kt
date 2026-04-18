@@ -47,6 +47,18 @@ interface CatalogSyncDao {
     @Query("DELETE FROM category_import_stage WHERE provider_id = :providerId")
     suspend fun clearProviderCategoryStages(providerId: Long)
 
+    @Query("SELECT * FROM category_import_stage WHERE provider_id = :providerId AND session_id = :sessionId AND type = :type")
+    suspend fun getCategoryStages(providerId: Long, sessionId: Long, type: String): List<CategoryImportStageEntity>
+
+    @Query("SELECT * FROM channel_import_stage WHERE provider_id = :providerId AND session_id = :sessionId")
+    suspend fun getChannelStages(providerId: Long, sessionId: Long): List<ChannelImportStageEntity>
+
+    @Query("SELECT * FROM movie_import_stage WHERE provider_id = :providerId AND session_id = :sessionId")
+    suspend fun getMovieStages(providerId: Long, sessionId: Long): List<MovieImportStageEntity>
+
+    @Query("SELECT * FROM series_import_stage WHERE provider_id = :providerId AND session_id = :sessionId")
+    suspend fun getSeriesStages(providerId: Long, sessionId: Long): List<SeriesImportStageEntity>
+
     @Query(
         """
         UPDATE categories
@@ -523,7 +535,8 @@ interface CatalogSyncDao {
             last_watched_at,
             is_adult,
             is_user_protected,
-            sync_fingerprint
+            sync_fingerprint,
+            added_at
         )
         SELECT
             stage.stream_id,
@@ -550,7 +563,8 @@ interface CatalogSyncDao {
             0,
             stage.is_adult,
             0,
-            stage.sync_fingerprint
+            stage.sync_fingerprint,
+            stage.added_at
         FROM movie_import_stage AS stage
         WHERE stage.session_id = :sessionId
           AND stage.provider_id = :providerId

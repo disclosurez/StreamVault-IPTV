@@ -38,6 +38,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.FilterInputStream
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
+import com.streamvault.data.remote.NetworkTimeoutConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -65,6 +68,14 @@ class EpgSourceRepositoryImpl @Inject constructor(
 
     private val sourceRefreshMutexes = ConcurrentHashMap<Long, Mutex>()
 
+    // Dedicated client for EPG downloads: longer read timeout for large/slow feeds,
+    // and no automatic Accept-Encoding: gzip (we handle gzip manually via maybeDecompressGzip).
+    private val epgHttpClient: OkHttpClient by lazy {
+        okHttpClient.newBuilder()
+            .readTimeout(NetworkTimeoutConfig.EPG_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     // ── EPG Source CRUD ────────────────────────────────────────────
 
     override fun getAllSources(): Flow<List<EpgSource>> =
@@ -75,9 +86,9 @@ class EpgSourceRepositoryImpl @Inject constructor(
 
     override suspend fun addSource(name: String, url: String): Result<EpgSource> {
         val trimmedUrl = url.trim()
+        if (trimmedUrl.isBlank()) return Result.error("URL cannot be empty")
         val validationError = UrlSecurityPolicy.validateOptionalEpgUrl(trimmedUrl)
         if (validationError != null) return Result.error(validationError)
-        if (trimmedUrl.isBlank()) return Result.error("URL cannot be empty")
 
         val existing = epgSourceDao.getByUrl(trimmedUrl)
         if (existing != null) return Result.error("A source with this URL already exists")
@@ -126,6 +137,9 @@ class EpgSourceRepositoryImpl @Inject constructor(
         resolveAffectedProviders(providerEpgSourceDao.getProviderIdsForSourceSync(id))
     }
 
+    override suspend fun getProviderIdsForSource(sourceId: Long): List<Long> =
+        providerEpgSourceDao.getProviderIdsForSourceSync(sourceId)
+
     // ── Provider ↔ Source assignment ───────────────────────────────
 
     override fun getAssignmentsForProvider(providerId: Long): Flow<List<ProviderEpgSourceAssignment>> =
@@ -161,6 +175,23 @@ class EpgSourceRepositoryImpl @Inject constructor(
         resolveForProvider(providerId, emptySet())
     }
 
+    override suspend fun swapAssignmentPriorities(
+        providerId: Long,
+        epgSourceId1: Long,
+        newPriority1: Int,
+        epgSourceId2: Long,
+        newPriority2: Int
+    ) {
+        val assignments = providerEpgSourceDao.getForProviderSync(providerId)
+        val target1 = assignments.find { it.epgSourceId == epgSourceId1 } ?: return
+        val target2 = assignments.find { it.epgSourceId == epgSourceId2 } ?: return
+        providerEpgSourceDao.swapPriorities(
+            target1.copy(priority = newPriority1),
+            target2.copy(priority = newPriority2)
+        )
+        resolveForProvider(providerId, emptySet())
+    }
+
     // ── Refresh / Ingestion ────────────────────────────────────────
 
     override suspend fun refreshSource(sourceId: Long): Result<Unit> =
@@ -187,8 +218,15 @@ class EpgSourceRepositoryImpl @Inject constructor(
                             return@withLock Result.error(err)
                         }
                 } else {
-                    val request = Request.Builder().url(source.url).build()
-                    val response = okHttpClient.newCall(request).execute()
+                    // Disable OkHttp's transparent gzip by requesting identity encoding.
+                    // This prevents double-decompression when the URL ends in .gz:
+                    // OkHttp would silently decompress gzip responses, and then
+                    // maybeDecompressGzip() would try again — corrupting the stream.
+                    val request = Request.Builder()
+                        .url(source.url)
+                        .header("Accept-Encoding", "identity")
+                        .build()
+                    val response = epgHttpClient.newCall(request).execute()
 
                     if (!response.isSuccessful) {
                         val err = "HTTP ${response.code}"
@@ -205,9 +243,18 @@ class EpgSourceRepositoryImpl @Inject constructor(
                         return@withLock Result.error(err)
                     }
 
-                    response.body?.byteStream() ?: run {
+                    val bodyStream = response.body?.byteStream() ?: run {
                         epgSourceDao.updateRefreshStatus(sourceId, now, "Empty response")
                         return@withLock Result.error("Empty EPG response")
+                    }
+                    // Some servers send Content-Encoding: gzip even when identity was requested.
+                    // Since OkHttp no longer decompresses (we set Accept-Encoding manually),
+                    // we must handle it here.
+                    val contentEncoding = response.header("Content-Encoding")
+                    if (contentEncoding?.contains("gzip", ignoreCase = true) == true) {
+                        GZIPInputStream(bodyStream)
+                    } else {
+                        bodyStream
                     }
                 }
 
@@ -294,8 +341,18 @@ class EpgSourceRepositoryImpl @Inject constructor(
                 Result.success(Unit)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to refresh source $sourceId", e)
-                epgSourceDao.updateRefreshStatus(sourceId, now, e.message ?: "Unknown error")
-                Result.error("Failed to refresh EPG source: ${e.message}", e)
+                val isOversizeError = e is IOException && e.message?.contains("too large", ignoreCase = true) == true
+                val statusMessage = if (isOversizeError) {
+                    "EPG response exceeded 200 MB limit"
+                } else {
+                    e.message ?: "Unknown error"
+                }
+                epgSourceDao.updateRefreshStatus(sourceId, now, statusMessage)
+                if (isOversizeError) {
+                    Result.error("EPG response exceeded 200 MB limit", e)
+                } else {
+                    Result.error("Failed to refresh EPG source: ${e.message}", e)
+                }
             }
         }
     }
@@ -406,6 +463,8 @@ class EpgSourceRepositoryImpl @Inject constructor(
         if (!existing.isManualOverride) {
             return Result.success(Unit)
         }
+        // Delete the pinned row so the next resolution pass can auto-assign via ID/name match.
+        channelEpgMappingDao.deleteForChannel(providerId, channelId)
         resolveForProvider(providerId, emptySet())
         return Result.success(Unit)
     }

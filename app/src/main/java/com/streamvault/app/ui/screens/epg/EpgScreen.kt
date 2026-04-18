@@ -109,6 +109,7 @@ import com.streamvault.domain.model.EpgMatchType
 import com.streamvault.domain.model.EpgOverrideCandidate
 import com.streamvault.domain.model.EpgSourceType
 import com.streamvault.domain.model.Program
+import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.repository.ChannelRepository
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -134,13 +135,14 @@ fun FullEpgScreen(
     initialCategoryId: Long? = null,
     initialAnchorTime: Long? = null,
     initialFavoritesOnly: Boolean = false,
-    onPlayChannel: (Channel, String) -> Unit,
-    onPlayArchive: (Channel, Program, String) -> Unit,
+    onPlayChannel: (Channel, Long, Boolean, Long?, String) -> Unit,
+    onPlayArchive: (Channel, Program, Long, Boolean, Long?, String) -> Unit,
     onNavigate: (String) -> Unit,
     viewModel: EpgViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val overrideUiState by viewModel.overrideUiState.collectAsStateWithLifecycle()
+    val programReminderUiState by viewModel.programReminderUiState.collectAsStateWithLifecycle()
     var selectedProgram by remember { mutableStateOf<Pair<Channel, Program>?>(null) }
     var focusedChannel by remember { mutableStateOf<Channel?>(null) }
     var focusedProgram by remember { mutableStateOf<Program?>(null) }
@@ -163,13 +165,38 @@ fun FullEpgScreen(
     val categoriesById = remember(uiState.categories) {
         uiState.categories.associateBy { it.id }
     }
+    val playerCategoryId = remember(uiState.selectedCategoryId, uiState.showFavoritesOnly) {
+        if (uiState.showFavoritesOnly && uiState.selectedCategoryId == ChannelRepository.ALL_CHANNELS_ID) {
+            VirtualCategoryIds.FAVORITES
+        } else {
+            uiState.selectedCategoryId
+        }
+    }
+    val playerIsVirtualCategory = playerCategoryId == VirtualCategoryIds.FAVORITES ||
+        playerCategoryId == VirtualCategoryIds.RECENT ||
+        playerCategoryId < 0L
 
     fun executeLockedGuideAction(action: LockedGuideAction) {
         when (action) {
             is LockedGuideAction.SelectCategory -> viewModel.selectCategory(action.category.id)
             is LockedGuideAction.OpenProgram -> selectedProgram = action.channel to action.program
-            is LockedGuideAction.PlayChannel -> onPlayChannel(action.channel, action.returnRoute)
-            is LockedGuideAction.PlayArchive -> onPlayArchive(action.channel, action.program, action.returnRoute)
+            is LockedGuideAction.PlayChannel ->
+                onPlayChannel(
+                    action.channel,
+                    playerCategoryId,
+                    playerIsVirtualCategory,
+                    uiState.combinedProfileId,
+                    action.returnRoute
+                )
+            is LockedGuideAction.PlayArchive ->
+                onPlayArchive(
+                    action.channel,
+                    action.program,
+                    playerCategoryId,
+                    playerIsVirtualCategory,
+                    uiState.combinedProfileId,
+                    action.returnRoute
+                )
         }
     }
 
@@ -350,7 +377,13 @@ fun FullEpgScreen(
                                 if (isGuideChannelLocked(channel, categoriesById, uiState.parentalControlLevel)) {
                                     requestLockedGuideAction(LockedGuideAction.PlayChannel(channel, returnRoute))
                                 } else {
-                                    onPlayChannel(channel, returnRoute)
+                                    onPlayChannel(
+                                        channel,
+                                        playerCategoryId,
+                                        playerIsVirtualCategory,
+                                        uiState.combinedProfileId,
+                                        returnRoute
+                                    )
                                 }
                             },
                             onProgramClick = { channel, program ->
@@ -470,6 +503,31 @@ fun FullEpgScreen(
     if (dialogState != null) {
         GuideNowProvider {
             val (channel, program) = dialogState
+            val reminderProviderId = program.providerId.takeIf { it > 0L } ?: channel.providerId
+            LaunchedEffect(channel.id, reminderProviderId, program.channelId, program.title, program.startTime) {
+                viewModel.loadProgramReminderState(channel, program)
+            }
+            val reminderStateMatches = programReminderUiState.matches(
+                providerId = reminderProviderId,
+                channelId = program.channelId,
+                programTitle = program.title,
+                programStartTime = program.startTime
+            )
+            val reminderButtonLabel = if (
+                reminderProviderId > 0L &&
+                program.channelId.isNotBlank() &&
+                program.startTime > currentGuideNow() + 60_000L
+            ) {
+                when {
+                    reminderStateMatches && programReminderUiState.isLoading ->
+                        stringResource(R.string.epg_program_reminder_loading)
+                    reminderStateMatches && programReminderUiState.isScheduled ->
+                        stringResource(R.string.epg_program_reminder_cancel)
+                    else -> stringResource(R.string.epg_program_reminder_set)
+                }
+            } else {
+                null
+            }
             CompactGuideProgramDialog(
                 channel = channel,
                 program = program,
@@ -481,7 +539,13 @@ fun FullEpgScreen(
                     if (isGuideChannelLocked(channel, categoriesById, uiState.parentalControlLevel)) {
                         requestLockedGuideAction(LockedGuideAction.PlayChannel(channel, returnRoute))
                     } else {
-                        onPlayChannel(channel, returnRoute)
+                        onPlayChannel(
+                            channel,
+                            playerCategoryId,
+                            playerIsVirtualCategory,
+                            uiState.combinedProfileId,
+                            returnRoute
+                        )
                     }
                 },
                 onWatchArchive = if (program.hasArchive || channel.catchUpSupported) {
@@ -490,7 +554,14 @@ fun FullEpgScreen(
                         if (isGuideChannelLocked(channel, categoriesById, uiState.parentalControlLevel)) {
                             requestLockedGuideAction(LockedGuideAction.PlayArchive(channel, program, returnRoute))
                         } else {
-                            onPlayArchive(channel, program, returnRoute)
+                            onPlayArchive(
+                                channel,
+                                program,
+                                playerCategoryId,
+                                playerIsVirtualCategory,
+                                uiState.combinedProfileId,
+                                returnRoute
+                            )
                         }
                     }
                 } else {
@@ -503,6 +574,10 @@ fun FullEpgScreen(
                     }
                 } else {
                     null
+                },
+                reminderButtonLabel = reminderButtonLabel,
+                onToggleReminder = reminderButtonLabel?.let {
+                    { viewModel.toggleProgramReminder(channel, program) }
                 }
             )
         }

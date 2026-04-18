@@ -26,6 +26,8 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.streamvault.data.manager.recording.RecordingReconcileWorker
+import com.streamvault.data.sync.ProviderSyncWorker
+import com.streamvault.player.timeshift.TimeshiftDiskManager
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -42,6 +44,11 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         runtimeDiagnosticsManager.start()
+        applicationScope.launch {
+            // Clean up any timeshift temp directories left behind by crashes, OOM kills, or
+            // force-stops from the previous run. activeSessionDir = null means wipe everything.
+            TimeshiftDiskManager(applicationContext).cleanupStaleDirectories(activeSessionDir = null)
+        }
         applicationScope.launch {
             refreshCachedAppUpdateIfNeeded()
         }
@@ -64,6 +71,7 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
             gcWorkRequest
         )
 
+        ProviderSyncWorker.enqueuePeriodic(this)
         RecordingReconcileWorker.enqueuePeriodic(this)
         RecordingReconcileWorker.enqueueOneShot(this)
     }

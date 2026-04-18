@@ -12,9 +12,12 @@ enum class VodSyncMode {
 data class SyncMetadata(
     val providerId: Long,
     val lastLiveSync: Long = 0,
+    val lastLiveSuccess: Long = 0,
     val lastMovieSync: Long = 0,
     val lastSeriesSync: Long = 0,
+    val lastSeriesSuccess: Long = 0,
     val lastEpgSync: Long = 0,
+    val lastEpgSuccess: Long = 0,
     val lastMovieAttempt: Long = 0,
     val lastMovieSuccess: Long = 0,
     val lastMoviePartial: Long = 0,

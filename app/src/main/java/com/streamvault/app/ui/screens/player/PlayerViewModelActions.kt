@@ -146,7 +146,10 @@ internal suspend fun PlayerViewModel.buildCastRequest(): CastMediaRequest? {
     return when (currentContentType) {
         ContentType.LIVE -> {
             val channel = currentChannel.value ?: return null
-            val streamInfo = channelRepository.getStreamInfo(channel).getOrNull() ?: return null
+            // Use preferStableUrl = true for Cast: the credential-based portal URL
+            // does not expire, unlike the tokenized direct-source CDN URL.
+            val streamInfo = channelRepository.getStreamInfo(channel, preferStableUrl = true)
+                .getOrNull() ?: return null
             streamInfo.toCastRequest(
                 title = mediaTitle.value ?: channel.name,
                 subtitle = currentProgram.value?.title,

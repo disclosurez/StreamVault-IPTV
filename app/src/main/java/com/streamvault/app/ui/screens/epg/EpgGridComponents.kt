@@ -397,7 +397,7 @@ fun EpgRow(
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     Text(
-                        text = "${channel.number}. ${channel.name}",
+                        text = if (channel.number > 0) "${channel.number}. ${channel.name}" else channel.name,
                         style = MaterialTheme.typography.labelLarge,
                         color = if (isFocused) TextPrimary else OnSurface,
                         maxLines = 1,

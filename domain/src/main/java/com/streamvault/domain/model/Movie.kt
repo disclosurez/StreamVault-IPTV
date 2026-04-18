@@ -26,7 +26,8 @@ data class Movie(
     val lastWatchedAt: Long = 0L,
     val isAdult: Boolean = false,
     val isUserProtected: Boolean = false,
-    val streamId: Long = 0L
+    val streamId: Long = 0L,
+    val addedAt: Long = 0L
 ) {
     init {
         require(durationSeconds >= 0) { "durationSeconds must be non-negative" }

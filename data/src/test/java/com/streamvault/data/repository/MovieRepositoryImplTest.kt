@@ -1,5 +1,6 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.google.common.truth.Truth.assertThat
 import com.streamvault.data.local.dao.CategoryDao
 import com.streamvault.data.local.dao.FavoriteDao
@@ -24,6 +25,7 @@ import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.repository.SyncMetadataRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -81,7 +83,7 @@ class MovieRepositoryImplTest {
     whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
         whenever(movieDao.getTopRatedPreview(7L, 48)).thenReturn(flowOf(listOf(recommendedMovie, unrelatedMovie, watchedMovie)))
         whenever(movieDao.getFreshPreview(7L, 48)).thenReturn(flowOf(listOf(recommendedMovie, unrelatedMovie, watchedMovie)))
-        whenever(favoriteDao.getAllByType(ContentType.MOVIE.name)).thenReturn(flowOf(emptyList()))
+        whenever(favoriteDao.getAllByType(7L, ContentType.MOVIE.name)).thenReturn(flowOf(emptyList()))
         whenever(playbackHistoryDao.getRecentlyWatchedByProvider(eq(7L), eq(24))).thenReturn(
             flowOf(
                 listOf(
@@ -189,6 +191,21 @@ class MovieRepositoryImplTest {
         repository.getMoviesByCategory(7L, 42L).first()
 
         verify(movieDao).replaceCategory(eq(7L), eq(42L), any())
+    }
+
+    @Test
+    fun `searchMovies returns empty list when sqlite throws for malformed fts query`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(movieDao.search(eq(7L), any(), any())).thenReturn(
+            flow { throw SQLiteException("malformed MATCH expression") }
+        )
+        whenever(favoriteDao.getAllByType(7L, ContentType.MOVIE.name)).thenReturn(flowOf(emptyList()))
+
+        val repository = createRepository()
+
+        val result = repository.searchMovies(7L, "matrix").first()
+
+        assertThat(result).isEmpty()
     }
 
     private fun createRepository() = MovieRepositoryImpl(

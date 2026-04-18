@@ -9,6 +9,7 @@ import com.streamvault.app.ui.model.VodViewMode
 import com.streamvault.app.update.AppUpdateDownloadState
 import com.streamvault.app.update.AppUpdateDownloadStatus
 import com.streamvault.app.update.GitHubReleaseInfo
+import com.streamvault.data.preferences.DatabaseMaintenanceSnapshot
 import com.streamvault.domain.manager.BackupImportPlan
 import com.streamvault.domain.manager.BackupPreview
 import com.streamvault.domain.model.ActiveLiveSource
@@ -71,6 +72,8 @@ internal data class SettingsPreferenceSnapshot(
     val xtreamBase64TextCompatibility: Boolean,
     val liveTvChannelMode: LiveTvChannelMode,
     val showLiveSourceSwitcher: Boolean,
+    val showAllChannelsCategory: Boolean,
+    val showRecentChannelsCategory: Boolean,
     val liveTvCategoryFilters: List<String>,
     val liveTvQuickFilterVisibilityMode: LiveTvQuickFilterVisibilityMode,
     val liveChannelNumberingMode: ChannelNumberingMode,
@@ -78,7 +81,9 @@ internal data class SettingsPreferenceSnapshot(
     val guideDefaultCategoryId: Long,
     val guideDefaultCategoryOptions: List<Category>,
     val preventStandbyDuringPlayback: Boolean,
+    val zapAutoRevert: Boolean,
     val autoCheckAppUpdates: Boolean,
+    val autoDownloadAppUpdates: Boolean,
     val lastAppUpdateCheckAt: Long?,
     val cachedAppUpdateVersionName: String?,
     val cachedAppUpdateVersionCode: Int?,
@@ -118,12 +123,66 @@ data class ProviderDiagnosticsUiModel(
     val movieSyncMode: VodSyncMode = VodSyncMode.UNKNOWN,
     val movieWarningsCount: Int = 0,
     val movieCatalogStale: Boolean = false,
+    val liveSequentialFailuresRemembered: Boolean = false,
+    val liveHealthySyncStreak: Int = 0,
+    val movieParallelFailuresRemembered: Boolean = false,
+    val movieHealthySyncStreak: Int = 0,
+    val seriesSequentialFailuresRemembered: Boolean = false,
+    val seriesHealthySyncStreak: Int = 0,
     val capabilitySummary: String = "",
     val sourceLabel: String = "",
     val expirySummary: String = "",
     val connectionSummary: String = "",
     val archiveSummary: String = ""
+) {
+    val hasHealthWarning: Boolean
+        get() = liveSequentialFailuresRemembered ||
+            movieParallelFailuresRemembered ||
+            seriesSequentialFailuresRemembered ||
+            movieCatalogStale ||
+            movieWarningsCount > 0
+}
+
+data class DatabaseMaintenanceUiModel(
+    val ranAt: Long,
+    val deletedPrograms: Int,
+    val deletedExternalProgrammes: Int,
+    val deletedOrphanEpisodes: Int,
+    val deletedStaleFavorites: Int,
+    val vacuumRan: Boolean,
+    val mainDbBytes: Long,
+    val walBytes: Long,
+    val reclaimableBytes: Long,
+    val channelRows: Long,
+    val movieRows: Long,
+    val seriesRows: Long,
+    val episodeRows: Long,
+    val programRows: Long,
+    val epgProgrammeRows: Long,
+    val playbackHistoryRows: Long,
+    val favoriteRows: Long
 )
+
+internal fun DatabaseMaintenanceSnapshot.toUiModel(): DatabaseMaintenanceUiModel =
+    DatabaseMaintenanceUiModel(
+        ranAt = ranAt,
+        deletedPrograms = deletedPrograms,
+        deletedExternalProgrammes = deletedExternalProgrammes,
+        deletedOrphanEpisodes = deletedOrphanEpisodes,
+        deletedStaleFavorites = deletedStaleFavorites,
+        vacuumRan = vacuumRan,
+        mainDbBytes = mainDbBytes,
+        walBytes = walBytes,
+        reclaimableBytes = reclaimableBytes,
+        channelRows = channelRows,
+        movieRows = movieRows,
+        seriesRows = seriesRows,
+        episodeRows = episodeRows,
+        programRows = programRows,
+        epgProgrammeRows = epgProgrammeRows,
+        playbackHistoryRows = playbackHistoryRows,
+        favoriteRows = favoriteRows
+    )
 
 data class SettingsUiState(
     val providers: List<Provider> = emptyList(),
@@ -137,6 +196,7 @@ data class SettingsUiState(
     val userMessage: String? = null,
     val syncWarningsByProvider: Map<Long, List<String>> = emptyMap(),
     val diagnosticsByProvider: Map<Long, ProviderDiagnosticsUiModel> = emptyMap(),
+    val databaseMaintenance: DatabaseMaintenanceUiModel? = null,
     val parentalControlLevel: Int = 0,
     val hasParentalPin: Boolean = false,
     val appLanguage: String = "system",
@@ -167,6 +227,8 @@ data class SettingsUiState(
     val xtreamBase64TextCompatibility: Boolean = false,
     val liveTvChannelMode: LiveTvChannelMode = LiveTvChannelMode.PRO,
     val showLiveSourceSwitcher: Boolean = false,
+    val showAllChannelsCategory: Boolean = true,
+    val showRecentChannelsCategory: Boolean = true,
     val liveTvCategoryFilters: List<String> = emptyList(),
     val liveTvQuickFilterVisibilityMode: LiveTvQuickFilterVisibilityMode = LiveTvQuickFilterVisibilityMode.ALWAYS_VISIBLE,
     val liveChannelNumberingMode: ChannelNumberingMode = ChannelNumberingMode.GROUP,
@@ -174,12 +236,16 @@ data class SettingsUiState(
     val guideDefaultCategoryId: Long = com.streamvault.domain.model.VirtualCategoryIds.FAVORITES,
     val guideDefaultCategoryOptions: List<Category> = emptyList(),
     val preventStandbyDuringPlayback: Boolean = true,
+    val zapAutoRevert: Boolean = true,
     val categorySortModes: Map<ContentType, CategorySortMode> = emptyMap(),
     val hiddenCategories: List<Category> = emptyList(),
     val epgSources: List<com.streamvault.domain.model.EpgSource> = emptyList(),
     val epgSourceAssignments: Map<Long, List<com.streamvault.domain.model.ProviderEpgSourceAssignment>> = emptyMap(),
     val epgResolutionSummaries: Map<Long, EpgResolutionSummary> = emptyMap(),
+    val refreshingEpgSourceIds: Set<Long> = emptySet(),
+    val epgPendingDeleteSourceId: Long? = null,
     val autoCheckAppUpdates: Boolean = true,
+    val autoDownloadAppUpdates: Boolean = false,
     val isCheckingForUpdates: Boolean = false,
     val appUpdate: AppUpdateUiModel = AppUpdateUiModel()
 )

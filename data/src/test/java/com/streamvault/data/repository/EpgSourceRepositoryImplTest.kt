@@ -19,6 +19,7 @@ import com.streamvault.domain.model.EpgMatchType
 import com.streamvault.domain.model.EpgSourceType
 import com.streamvault.domain.model.Result
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Before
@@ -195,6 +196,26 @@ class EpgSourceRepositoryImplTest {
 
         assertThat(result is Result.Success).isTrue()
         assertThat(decompressedStream.closed).isTrue()
+    }
+
+    @Test
+    fun `refreshSource returns typed error when parser hits oversized chunked response`() = runTest {
+        val source = EpgSourceEntity(
+            id = 10L,
+            name = "Primary",
+            url = "content://epg/source.xml"
+        )
+
+        whenever(epgSourceDao.getById(10L)).thenReturn(source)
+        whenever(contentResolver.openInputStream(Uri.parse(source.url))).thenReturn(ByteArrayInputStream("<tv/>".toByteArray()))
+        whenever(xmltvParser.maybeDecompressGzip(eq(source.url), any())).thenAnswer { it.arguments[1] }
+        whenever(xmltvParser.parseStreamingWithChannels(any(), any(), any())).thenThrow(IOException("EPG response too large (>200 MB)"))
+
+        val result = repository.refreshSource(10L)
+
+        assertThat(result is Result.Error).isTrue()
+        assertThat((result as Result.Error).message).isEqualTo("EPG response exceeded 200 MB limit")
+        verify(epgSourceDao).updateRefreshStatus(eq(10L), any(), eq("EPG response exceeded 200 MB limit"))
     }
 
     private class CloseTrackingInputStream : ByteArrayInputStream(byteArrayOf()) {

@@ -4,6 +4,8 @@ object NetworkTimeoutConfig {
     const val CONNECT_TIMEOUT_SECONDS = 30L
     const val READ_TIMEOUT_SECONDS = 30L
     const val WRITE_TIMEOUT_SECONDS = 30L
+    // EPG files can be large and served from slow hosts — allow more time per read.
+    const val EPG_READ_TIMEOUT_SECONDS = 120L
     const val XTREAM_HEAVY_READ_TIMEOUT_SECONDS = 300L
     const val XTREAM_HEAVY_WRITE_TIMEOUT_SECONDS = 60L
     const val XTREAM_HEAVY_CALL_TIMEOUT_SECONDS = 330L

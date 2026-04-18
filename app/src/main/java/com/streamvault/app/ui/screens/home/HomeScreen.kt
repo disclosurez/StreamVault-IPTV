@@ -68,11 +68,13 @@ import com.streamvault.app.ui.design.requestFocusSafely
 import androidx.activity.compose.BackHandler
 import com.streamvault.app.ui.model.LiveTvQuickFilterVisibilityMode
 import com.streamvault.app.ui.theme.*
+import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Provider
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import androidx.compose.ui.res.stringResource
 import com.streamvault.app.R
 import com.streamvault.app.ui.model.LiveTvChannelMode
@@ -129,7 +131,7 @@ private fun HomeLoadingPane(
 
 @Composable
 fun HomeScreen(
-    onChannelClick: (Channel, Category?, Provider?) -> Unit,
+    onChannelClick: (Channel, Category?, Provider?, Long?, Long?) -> Unit,
     onNavigate: (String) -> Unit,
     currentRoute: String,
     initialCategoryId: Long? = null,
@@ -1045,6 +1047,19 @@ fun HomeScreen(
                                     }
                             }
 
+                            // Load more channels when the user scrolls near the end of the list
+                            LaunchedEffect(channelListState) {
+                                snapshotFlow {
+                                    val info = channelListState.layoutInfo
+                                    val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                                    val total = info.totalItemsCount
+                                    uiState.hasMoreChannels && total > 0 && lastVisible >= total - 5
+                                }
+                                    .distinctUntilChanged()
+                                    .filter { it }
+                                    .collect { viewModel.loadMoreChannels() }
+                            }
+
                             DisposableEffect(Unit) {
                                 onDispose {
                                     viewModel.updateVisibleChannelWindow(emptyList(), null)
@@ -1106,12 +1121,24 @@ fun HomeScreen(
                                                 } else if (isProMode) {
                                                     if (uiState.previewChannelId == channel.id) {
                                                         viewModel.clearPreview()
-                                                        onChannelClick(channel, uiState.selectedCategory, resolveProviderForChannel(channel))
+                                                        onChannelClick(
+                                                            channel,
+                                                            uiState.selectedCategory,
+                                                            resolveProviderForChannel(channel),
+                                                            (uiState.activeLiveSource as? ActiveLiveSource.CombinedM3uSource)?.profileId,
+                                                            uiState.selectedCombinedSourceProviderId
+                                                        )
                                                     } else {
                                                         viewModel.previewChannel(channel)
                                                     }
                                                 } else {
-                                                    onChannelClick(channel, uiState.selectedCategory, resolveProviderForChannel(channel))
+                                                    onChannelClick(
+                                                        channel,
+                                                        uiState.selectedCategory,
+                                                        resolveProviderForChannel(channel),
+                                                        (uiState.activeLiveSource as? ActiveLiveSource.CombinedM3uSource)?.profileId,
+                                                        uiState.selectedCombinedSourceProviderId
+                                                    )
                                                 }
                                             }
                                         },

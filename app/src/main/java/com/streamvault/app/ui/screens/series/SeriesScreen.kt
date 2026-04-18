@@ -88,6 +88,7 @@ import com.streamvault.app.ui.model.VodViewMode
 import com.streamvault.app.ui.screens.vod.HandleVodUserMessage
 import com.streamvault.app.ui.screens.vod.ProtectedVodPinDialog
 import com.streamvault.app.ui.screens.vod.VodBrowseDefaults
+import com.streamvault.app.ui.screens.vod.vodActiveFilterSortDetail
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -722,6 +723,8 @@ private fun SeriesVodContent(
 
         if (!uiState.isReorderMode) {
             item(span = { GridItemSpan(maxLineSpan) }) {
+                val browseOptionsDetail = vodActiveFilterSortDetail(selectedFilterType, selectedSortBy)
+                val hasActiveFilterSort = selectedFilterType != LibraryFilterType.ALL || selectedSortBy != LibrarySortBy.LIBRARY
                 VodActionChipRow(
                     actions = buildList {
                         add(
@@ -751,6 +754,7 @@ private fun SeriesVodContent(
                             VodActionChip(
                                 key = "browse_options",
                                 label = stringResource(R.string.library_action_filters_sort),
+                                detail = browseOptionsDetail,
                                 onClick = { showBrowseOptions = true }
                             )
                         )
@@ -764,6 +768,7 @@ private fun SeriesVodContent(
                             )
                         }
                     },
+                    selectedKey = if (hasActiveFilterSort) "browse_options" else null,
                     modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
                 )
             }
@@ -1047,6 +1052,7 @@ private fun SeriesVodClassicContent(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            val hasActiveFilterSortClassic = selectedFilterType != LibraryFilterType.ALL || selectedSortBy != LibrarySortBy.LIBRARY
             VodClassicContentHeader(
                 title = when {
                     selectedKey == "all" -> allLabel
@@ -1072,10 +1078,12 @@ private fun SeriesVodClassicContent(
                         VodActionChip(
                             key = "browse_options",
                             label = stringResource(R.string.library_action_filters_sort),
+                            detail = vodActiveFilterSortDetail(selectedFilterType, selectedSortBy),
                             onClick = { showBrowseOptions = true }
                         )
                     )
-                }
+                },
+                selectedActionKey = if (hasActiveFilterSortClassic) "browse_options" else null
             )
 
             if (showSearchBar) {

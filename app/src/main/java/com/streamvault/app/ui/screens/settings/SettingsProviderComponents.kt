@@ -28,6 +28,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
@@ -619,6 +620,7 @@ internal fun ProviderSettingsCard(
     isActive: Boolean,
     isSyncing: Boolean,
     diagnostics: ProviderDiagnosticsUiModel?,
+    databaseMaintenance: DatabaseMaintenanceUiModel?,
     syncWarnings: List<String>,
     onRetryWarningAction: (ProviderWarningAction) -> Unit,
     onConnect: () -> Unit,
@@ -712,7 +714,8 @@ internal fun ProviderSettingsCard(
 
             ProviderDiagnosticsPanel(
                 provider = provider,
-                diagnostics = model
+                diagnostics = model,
+                databaseMaintenance = databaseMaintenance
             )
         }
 
@@ -1145,7 +1148,8 @@ internal fun SettingsOverviewCard(
 @Composable
 private fun ProviderDiagnosticsPanel(
     provider: Provider,
-    diagnostics: ProviderDiagnosticsUiModel
+    diagnostics: ProviderDiagnosticsUiModel,
+    databaseMaintenance: DatabaseMaintenanceUiModel?
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -1202,6 +1206,96 @@ private fun ProviderDiagnosticsPanel(
             style = MaterialTheme.typography.labelSmall,
             color = OnSurface
         )
+        diagnostics.healthSummary(provider.type)?.let { summary ->
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = ErrorColor,
+                fontWeight = FontWeight.Medium
+            )
+        }
+        databaseMaintenance?.let { report ->
+            DatabaseMaintenancePanel(report = report)
+        }
+    }
+}
+
+@Composable
+private fun DatabaseMaintenancePanel(report: DatabaseMaintenanceUiModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(10.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "Database Health",
+            style = MaterialTheme.typography.titleSmall,
+            color = Primary
+        )
+        Text(
+            text = "Last maintenance ${formatDiagnosticTimestamp(report.ranAt)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurface
+        )
+        Text(
+            text = buildString {
+                append("Pruned ")
+                append(report.deletedPrograms)
+                append(" internal programs, ")
+                append(report.deletedExternalProgrammes)
+                append(" external programs, ")
+                append(report.deletedOrphanEpisodes)
+                append(" orphan episodes, and ")
+                append(report.deletedStaleFavorites)
+                append(" stale favorites.")
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceDim
+        )
+        Text(
+            text = buildString {
+                append("Main DB ")
+                append(formatMaintenanceBytes(report.mainDbBytes))
+                append(" • WAL ")
+                append(formatMaintenanceBytes(report.walBytes))
+                append(" • Reclaimable ")
+                append(formatMaintenanceBytes(report.reclaimableBytes))
+                append(" • VACUUM ")
+                append(if (report.vacuumRan) "ran" else "not needed or skipped")
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurface
+        )
+        Text(
+            text = buildString {
+                append("Rows: channels ")
+                append(formatMaintenanceCount(report.channelRows))
+                append(", movies ")
+                append(formatMaintenanceCount(report.movieRows))
+                append(", series ")
+                append(formatMaintenanceCount(report.seriesRows))
+                append(", episodes ")
+                append(formatMaintenanceCount(report.episodeRows))
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceDim
+        )
+        Text(
+            text = buildString {
+                append("Programs ")
+                append(formatMaintenanceCount(report.programRows))
+                append(", external EPG ")
+                append(formatMaintenanceCount(report.epgProgrammeRows))
+                append(", history ")
+                append(formatMaintenanceCount(report.playbackHistoryRows))
+                append(", favorites ")
+                append(formatMaintenanceCount(report.favoriteRows))
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceDim
+        )
     }
 }
 
@@ -1211,13 +1305,7 @@ private fun ProviderDiagnosticPill(
     count: Int,
     timestamp: Long
 ) {
-    val syncLabel = remember(timestamp) {
-        if (timestamp <= 0L) {
-            null
-        } else {
-            java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
-        }
-    }
+    val syncLabel = remember(timestamp) { formatDiagnosticTimestamp(timestamp) }
     Surface(
         shape = RoundedCornerShape(10.dp),
         colors = SurfaceDefaults.colors(
@@ -1245,6 +1333,70 @@ private fun ProviderDiagnosticPill(
             )
         }
     }
+}
+
+private fun ProviderDiagnosticsUiModel.healthSummary(providerType: ProviderType): String? {
+    val warnings = buildList {
+        if (liveSequentialFailuresRemembered) {
+            add("Live sync needs attention")
+        }
+        if (movieParallelFailuresRemembered) {
+            add(
+                if (movieWarningsCount > 0) {
+                    "Movies have $movieWarningsCount remembered warning(s)"
+                } else {
+                    "Movie sync still has remembered warnings"
+                }
+            )
+        }
+        if (movieCatalogStale) {
+            add("Movie catalog is running stale")
+        }
+        if (providerType == ProviderType.XTREAM_CODES && seriesSequentialFailuresRemembered) {
+            add("Series sync needs attention")
+        }
+    }
+    if (warnings.isEmpty()) {
+        val streakParts = buildList {
+            if (liveHealthySyncStreak > 0) add("Live streak $liveHealthySyncStreak")
+            if (movieHealthySyncStreak > 0) add("Movies streak $movieHealthySyncStreak")
+            if (providerType == ProviderType.XTREAM_CODES && seriesHealthySyncStreak > 0) {
+                add("Series streak $seriesHealthySyncStreak")
+            }
+        }
+        return streakParts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
+    }
+    return warnings.joinToString(" • ")
+}
+
+private fun formatDiagnosticTimestamp(timestamp: Long): String? =
+    if (timestamp <= 0L) {
+        null
+    } else {
+        java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
+    }
+
+private fun formatMaintenanceBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var unitIndex = 0
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex++
+    }
+    val formatted = if (value >= 10 || unitIndex == 0) {
+        value.toInt().toString()
+    } else {
+        String.format(Locale.US, "%.1f", value)
+    }
+    return "$formatted ${units[unitIndex]}"
+}
+
+private fun formatMaintenanceCount(value: Long): String = when {
+    value >= 1_000_000L -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
+    value >= 1_000L -> String.format(Locale.US, "%.1fk", value / 1_000.0)
+    else -> value.toString()
 }
 
 @Composable
@@ -1332,6 +1484,16 @@ internal fun EpgSourceTextField(
         mutableStateOf(TextFieldValue(text = value, selection = TextRange(value.length)))
     }
     val isFocused = hasContainerFocus || hasInputFocus
+
+    // Re-call bringIntoView on every frame of the keyboard animation so the
+    // LazyColumn keeps scrolling the focused field into view as imePadding shrinks.
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    LaunchedEffect(imeBottom) {
+        if ((hasInputFocus || hasContainerFocus) && imeBottom > 0) {
+            runCatching { bringIntoViewRequester.bringIntoView() }
+        }
+    }
 
     fun requestBringIntoView(delayMillis: Long = 0L) {
         coroutineScope.launch {

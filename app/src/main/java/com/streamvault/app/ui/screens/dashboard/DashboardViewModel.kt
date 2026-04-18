@@ -6,9 +6,11 @@ import com.streamvault.app.BuildConfig
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.data.sync.SyncManager
 import com.streamvault.app.update.AppUpdateInstaller
+import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.ContentType
+import com.streamvault.domain.model.Favorite
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.PlaybackHistory
 import com.streamvault.domain.model.Provider
@@ -18,6 +20,7 @@ import com.streamvault.domain.model.Series
 import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.repository.ChannelRepository
+import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.FavoriteRepository
 import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
@@ -40,7 +43,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -51,6 +57,7 @@ import kotlinx.coroutines.launch
 class DashboardViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val providerRepository: ProviderRepository,
+    private val combinedM3uRepository: CombinedM3uRepository,
     private val favoriteRepository: FavoriteRepository,
     private val channelRepository: ChannelRepository,
     private val playbackHistoryRepository: PlaybackHistoryRepository,
@@ -76,96 +83,50 @@ class DashboardViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            providerRepository.getActiveProvider()
-                .flatMapLatest { provider ->
-                    if (provider == null) {
-                        flowOf(DashboardUiState(isLoading = false))
-                    } else {
-                        val contentShelves = combine(
-                            observeFavoriteChannels(provider.id).onStart { emit(emptyList()) },
-                            observeRecentChannels(provider.id).onStart { emit(emptyList()) },
-                            observeContinueWatching(provider.id).onStart { emit(emptyList()) },
-                            movieRepository.getMovies(provider.id).map { movies ->
-                                movies
-                                    .filterNot(::shouldHideVodFromHome)
-                                    .sortedByDescending(::movieFreshnessScore)
-                                    .take(MOVIE_SHELF_LIMIT)
-                            }.onStart { emit(emptyList()) },
-                            seriesRepository.getSeries(provider.id).map { series ->
-                                series
-                                    .filterNot(::shouldHideVodFromHome)
-                                    .sortedByDescending(::seriesFreshnessScore)
-                                    .take(SERIES_SHELF_LIMIT)
-                            }.onStart { emit(emptyList()) }
-                        ) { favoriteChannels, recentChannels, continueWatching, recentMovies, recentSeries ->
-                            DashboardContentShelves(
-                                favoriteChannels = favoriteChannels,
-                                recentChannels = recentChannels,
-                                continueWatching = continueWatching,
-                                recentMovies = recentMovies,
-                                recentSeries = recentSeries
-                            )
+            combine(
+                combinedM3uRepository.getActiveLiveSource(),
+                providerRepository.getActiveProvider()
+            ) { activeSource, activeProvider ->
+                Pair(activeSource ?: activeProvider?.id?.let { ActiveLiveSource.ProviderSource(it) }, activeProvider)
+            }
+                .distinctUntilChanged { old, new ->
+                    old.first == new.first && old.second?.id == new.second?.id
+                }
+                .flatMapLatest { (activeSource, activeProvider) ->
+                    flow {
+                        if (activeSource == null && activeProvider == null) {
+                            emit(DashboardUiState(isLoading = false))
+                            return@flow
                         }
 
-                        combine(
-                            contentShelves,
-                            buildLiveContext(provider.id).onStart {
-                                emit(DashboardLiveContext(lastVisitedCategory = null, shortcuts = emptyList()))
-                            },
-                            channelRepository.getChannels(provider.id).map { it.size }.onStart { emit(0) },
-                            movieRepository.getLibraryCount(provider.id).onStart { emit(0) },
-                            seriesRepository.getLibraryCount(provider.id).onStart { emit(0) }
-                        ) { shelves, liveContext, liveChannelCount, movieCount, seriesCount ->
-                            DashboardSnapshot(
-                                shelves = shelves,
-                                liveContext = liveContext,
-                                liveChannelCount = liveChannelCount,
-                                movieCount = movieCount,
-                                seriesCount = seriesCount,
-                                updateNotice = null
-                            )
-                        }.combine(observeUpdateNotice().onStart { emit(null) }) { snapshot, updateNotice ->
-                            snapshot.copy(updateNotice = updateNotice)
-                        }.combine(syncManager.syncStateForProvider(provider.id).onStart { emit(SyncState.Idle) }) { snapshot, syncState ->
-                            DashboardUiState(
-                                provider = provider,
-                                favoriteChannels = snapshot.shelves.favoriteChannels,
-                                recentChannels = snapshot.shelves.recentChannels,
-                                continueWatching = snapshot.shelves.continueWatching,
-                                recentMovies = snapshot.shelves.recentMovies,
-                                recentSeries = snapshot.shelves.recentSeries,
-                                lastLiveCategory = snapshot.liveContext.lastVisitedCategory,
-                                liveShortcuts = snapshot.liveContext.shortcuts,
-                                stats = DashboardStats(
-                                    liveChannelCount = snapshot.liveChannelCount,
-                                    favoriteChannelCount = snapshot.shelves.favoriteChannels.size,
-                                    recentChannelCount = snapshot.shelves.recentChannels.size,
-                                    continueWatchingCount = snapshot.shelves.continueWatching.size,
-                                    movieLibraryCount = snapshot.movieCount,
-                                    seriesLibraryCount = snapshot.seriesCount
-                                ),
-                                feature = buildFeature(
-                                    providerName = provider.name,
-                                    recentChannels = snapshot.shelves.recentChannels,
-                                    continueWatching = snapshot.shelves.continueWatching,
-                                    recentMovies = snapshot.shelves.recentMovies,
-                                    recentSeries = snapshot.shelves.recentSeries
-                                ),
-                                providerHealth = DashboardProviderHealth(
-                                    status = provider.status,
-                                    type = provider.type,
-                                    lastSyncedAt = provider.lastSyncedAt,
-                                    expirationDate = provider.expirationDate,
-                                    maxConnections = provider.maxConnections
-                                ),
-                                providerWarnings = when (syncState) {
-                                    is SyncState.Partial -> syncState.warnings
-                                    is SyncState.Error -> listOf(syncState.message)
-                                    else -> emptyList()
-                                },
-                                updateNotice = snapshot.updateNotice,
-                                isLoading = false
-                            )
+                        when (activeSource) {
+                            is ActiveLiveSource.ProviderSource -> {
+                                val provider = activeProvider?.takeIf { it.id == activeSource.providerId }
+                                    ?: providerRepository.getProvider(activeSource.providerId)
+                                    ?: run {
+                                        emit(DashboardUiState(isLoading = false))
+                                        return@flow
+                                    }
+                                emitAll(observeDashboard(provider, listOf(provider.id), combinedProfileId = null))
+                            }
+
+                            is ActiveLiveSource.CombinedM3uSource -> {
+                                val liveProviderIds = combinedM3uRepository.getProfile(activeSource.profileId)
+                                    ?.members
+                                    .orEmpty()
+                                    .filter { it.enabled }
+                                    .map { it.providerId }
+                                    .distinct()
+                                val provider = activeProvider
+                                    ?: liveProviderIds.firstOrNull()?.let { providerRepository.getProvider(it) }
+                                    ?: run {
+                                        emit(DashboardUiState(isLoading = false, currentCombinedProfileId = activeSource.profileId))
+                                        return@flow
+                                    }
+                                emitAll(observeDashboard(provider, liveProviderIds, combinedProfileId = activeSource.profileId))
+                            }
+
+                            null -> emit(DashboardUiState(isLoading = false))
                         }
                     }
                 }
@@ -175,8 +136,105 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
-    private fun observeFavoriteChannels(providerId: Long): Flow<List<Channel>> =
-        favoriteRepository.getFavorites(ContentType.LIVE)
+    private fun observeDashboard(
+        provider: Provider,
+        liveProviderIds: List<Long>,
+        combinedProfileId: Long?
+    ): Flow<DashboardUiState> {
+        val contentShelves = combine(
+            observeFavoriteChannels(liveProviderIds).onStart { emit(emptyList()) },
+            observeRecentChannels(liveProviderIds).onStart { emit(emptyList()) },
+            observeContinueWatching(provider.id).onStart { emit(emptyList()) },
+            movieRepository.getMovies(provider.id).map { movies ->
+                movies
+                    .filterNot(::shouldHideVodFromHome)
+                    .sortedByDescending(::movieFreshnessScore)
+                    .take(MOVIE_SHELF_LIMIT)
+            }.onStart { emit(emptyList()) },
+            seriesRepository.getSeries(provider.id).map { series ->
+                series
+                    .filterNot(::shouldHideVodFromHome)
+                    .sortedByDescending(::seriesFreshnessScore)
+                    .take(SERIES_SHELF_LIMIT)
+            }.onStart { emit(emptyList()) }
+        ) { favoriteChannels, recentChannels, continueWatching, recentMovies, recentSeries ->
+            DashboardContentShelves(
+                favoriteChannels = favoriteChannels,
+                recentChannels = recentChannels,
+                continueWatching = continueWatching,
+                recentMovies = recentMovies,
+                recentSeries = recentSeries
+            )
+        }
+
+        return combine(
+            contentShelves,
+            buildLiveContext(
+                providerIds = liveProviderIds,
+                lastVisitedProviderId = provider.id.takeIf { combinedProfileId == null }
+            ).onStart {
+                emit(DashboardLiveContext(lastVisitedCategory = null, shortcuts = emptyList()))
+            },
+            observeLiveChannelCount(liveProviderIds).onStart { emit(0) },
+            movieRepository.getLibraryCount(provider.id).onStart { emit(0) },
+            seriesRepository.getLibraryCount(provider.id).onStart { emit(0) }
+        ) { shelves, liveContext, liveChannelCount, movieCount, seriesCount ->
+            DashboardSnapshot(
+                shelves = shelves,
+                liveContext = liveContext,
+                liveChannelCount = liveChannelCount,
+                movieCount = movieCount,
+                seriesCount = seriesCount,
+                updateNotice = null
+            )
+        }.combine(observeUpdateNotice().onStart { emit(null) }) { snapshot, updateNotice ->
+            snapshot.copy(updateNotice = updateNotice)
+        }.combine(syncManager.syncStateForProvider(provider.id).onStart { emit(SyncState.Idle) }) { snapshot, syncState ->
+            DashboardUiState(
+                provider = provider,
+                favoriteChannels = snapshot.shelves.favoriteChannels,
+                recentChannels = snapshot.shelves.recentChannels,
+                continueWatching = snapshot.shelves.continueWatching,
+                recentMovies = snapshot.shelves.recentMovies,
+                recentSeries = snapshot.shelves.recentSeries,
+                lastLiveCategory = snapshot.liveContext.lastVisitedCategory,
+                liveShortcuts = snapshot.liveContext.shortcuts,
+                currentCombinedProfileId = combinedProfileId,
+                stats = DashboardStats(
+                    liveChannelCount = snapshot.liveChannelCount,
+                    favoriteChannelCount = snapshot.shelves.favoriteChannels.size,
+                    recentChannelCount = snapshot.shelves.recentChannels.size,
+                    continueWatchingCount = snapshot.shelves.continueWatching.size,
+                    movieLibraryCount = snapshot.movieCount,
+                    seriesLibraryCount = snapshot.seriesCount
+                ),
+                feature = buildFeature(
+                    providerName = provider.name,
+                    recentChannels = snapshot.shelves.recentChannels,
+                    continueWatching = snapshot.shelves.continueWatching,
+                    recentMovies = snapshot.shelves.recentMovies,
+                    recentSeries = snapshot.shelves.recentSeries
+                ),
+                providerHealth = DashboardProviderHealth(
+                    status = provider.status,
+                    type = provider.type,
+                    lastSyncedAt = provider.lastSyncedAt,
+                    expirationDate = provider.expirationDate,
+                    maxConnections = provider.maxConnections
+                ),
+                providerWarnings = when (syncState) {
+                    is SyncState.Partial -> syncState.warnings
+                    is SyncState.Error -> listOf(syncState.message)
+                    else -> emptyList()
+                },
+                updateNotice = snapshot.updateNotice,
+                isLoading = false
+            )
+        }
+    }
+
+    private fun observeFavoriteChannels(providerIds: List<Long>): Flow<List<Channel>> =
+        observeLiveFavorites(providerIds)
             .map { favorites ->
                 favorites
                     .filter { it.groupId == null }
@@ -186,17 +244,15 @@ class DashboardViewModel @Inject constructor(
             }
             .flatMapLatest(::loadChannelsByOrderedIds)
 
-    private fun observeRecentChannels(providerId: Long): Flow<List<Channel>> =
-        playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, RECENT_CHANNEL_LIMIT)
-            .map { history ->
-                history
-                    .filter { it.contentType == ContentType.LIVE }
-                    .sortedByDescending { it.lastWatchedAt }
-                    .distinctBy { it.contentId }
-                    .map { it.contentId }
-                    .take(RECENT_CHANNEL_LIMIT)
+    private fun observeRecentChannels(providerIds: List<Long>): Flow<List<Channel>> =
+        preferencesRepository.showRecentChannelsCategory.flatMapLatest { show ->
+            if (!show) {
+                flowOf(emptyList())
+            } else {
+                observeRecentLiveIds(providerIds, RECENT_CHANNEL_LIMIT)
+                    .flatMapLatest(::loadChannelsByOrderedIds)
             }
-            .flatMapLatest(::loadChannelsByOrderedIds)
+        }
 
     private fun observeContinueWatching(providerId: Long): Flow<List<PlaybackHistory>> =
         getContinueWatching(
@@ -205,10 +261,17 @@ class DashboardViewModel @Inject constructor(
             scope = ContinueWatchingScope.ALL_VOD
         )
 
-    private fun buildLiveContext(providerId: Long): Flow<DashboardLiveContext> =
-        combine(
-            getCustomCategories(ContentType.LIVE),
-            preferencesRepository.getLastLiveCategoryId(providerId),
+    private fun buildLiveContext(
+        providerIds: List<Long>,
+        lastVisitedProviderId: Long?
+    ): Flow<DashboardLiveContext> {
+        if (providerIds.isEmpty()) {
+            return flowOf(DashboardLiveContext(lastVisitedCategory = null, shortcuts = emptyList()))
+        }
+
+        return combine(
+            getCustomCategories(providerIds, ContentType.LIVE),
+            lastVisitedProviderId?.let(preferencesRepository::getLastLiveCategoryId) ?: flowOf(null),
             preferencesRepository.promotedLiveGroupIds
         ) { customCategories, lastVisitedCategoryId, promotedGroupIds ->
             val lastVisitedCategory = customCategories.firstOrNull { it.id == lastVisitedCategoryId }
@@ -259,6 +322,49 @@ class DashboardViewModel @Inject constructor(
                 shortcuts = shortcuts
             )
         }
+    }
+
+    private fun observeLiveChannelCount(providerIds: List<Long>): Flow<Int> = when (providerIds.size) {
+        0 -> flowOf(0)
+        1 -> channelRepository.getChannels(providerIds.first()).map { it.size }
+        else -> combine(providerIds.map { providerId ->
+            channelRepository.getChannels(providerId).map { channels -> channels.size }
+        }) { counts ->
+            counts.sum()
+        }
+    }
+
+    private fun observeLiveFavorites(providerIds: List<Long>): Flow<List<Favorite>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> favoriteRepository.getFavorites(providerIds.first(), ContentType.LIVE)
+        else -> favoriteRepository.getFavorites(providerIds, ContentType.LIVE)
+    }
+
+    private fun observeRecentLiveIds(providerIds: List<Long>, limit: Int): Flow<List<Long>> = when (providerIds.size) {
+        0 -> flowOf(emptyList())
+        1 -> playbackHistoryRepository.getRecentlyWatchedByProvider(providerIds.first(), limit)
+            .map { history ->
+                history
+                    .filter { it.contentType == ContentType.LIVE }
+                    .sortedByDescending { it.lastWatchedAt }
+                    .distinctBy { it.contentId }
+                    .map { it.contentId }
+                    .take(limit)
+            }
+        else -> combine(providerIds.map { providerId ->
+            playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit)
+        }) { histories ->
+            histories.toList()
+                .flatMap { it }
+                .asSequence()
+                .filter { it.contentType == ContentType.LIVE }
+                .sortedByDescending { it.lastWatchedAt }
+                .distinctBy { it.providerId to it.contentId }
+                .map { it.contentId }
+                .take(limit)
+                .toList()
+        }
+    }
 
     private fun loadChannelsByOrderedIds(ids: List<Long>): Flow<List<Channel>> {
         if (ids.isEmpty()) return flowOf(emptyList())
@@ -474,6 +580,7 @@ data class DashboardUiState(
     val feature: DashboardFeature = DashboardFeature(),
     val providerHealth: DashboardProviderHealth = DashboardProviderHealth(),
     val providerWarnings: List<String> = emptyList(),
+    val currentCombinedProfileId: Long? = null,
     val updateNotice: DashboardUpdateNotice? = null,
     val stats: DashboardStats = DashboardStats(),
     val userMessage: String? = null,

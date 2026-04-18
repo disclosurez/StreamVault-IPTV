@@ -5,9 +5,12 @@ import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.SearchHistoryScope
 import com.streamvault.domain.model.Series
 import com.streamvault.data.preferences.PreferencesRepository
 import com.streamvault.domain.manager.ParentalControlManager
+import com.streamvault.domain.repository.CategoryRepository
+import com.streamvault.domain.repository.FavoriteRepository
 import com.streamvault.domain.repository.ProviderRepository
 import com.streamvault.domain.usecase.SearchContent
 import com.streamvault.domain.usecase.SearchContentResult
@@ -23,8 +26,11 @@ import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -34,6 +40,8 @@ class SearchViewModelTest {
     private val searchContent: SearchContent = mock()
     private val preferencesRepository: PreferencesRepository = mock()
     private val parentalControlManager: ParentalControlManager = mock()
+    private val favoriteRepository: FavoriteRepository = mock()
+    private val categoryRepository: CategoryRepository = mock()
 
     private lateinit var viewModel: SearchViewModel
 
@@ -42,7 +50,7 @@ class SearchViewModelTest {
         Dispatchers.setMain(StandardTestDispatcher())
         whenever(providerRepository.getActiveProvider()).thenReturn(flowOf(null))
         whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
-        whenever(preferencesRepository.recentSearchQueries).thenReturn(flowOf(emptyList()))
+        whenever(preferencesRepository.getRecentSearchQueries(any(), anyOrNull(), any())).thenReturn(flowOf(emptyList()))
         whenever(parentalControlManager.unlockedCategoriesForProvider(any())).thenReturn(flowOf(emptySet()))
         whenever(searchContent.invoke(any(), any(), any(), any())).thenReturn(flowOf(SearchContentResult()))
 
@@ -50,7 +58,9 @@ class SearchViewModelTest {
             providerRepository,
             searchContent,
             preferencesRepository,
-            parentalControlManager
+            parentalControlManager,
+            favoriteRepository,
+            categoryRepository
         )
     }
 
@@ -63,37 +73,25 @@ class SearchViewModelTest {
     fun `submitted queries are stored trimmed deduplicated and capped`() = runTest {
         viewModel.onQueryChange(" news ")
         viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("sports")
-        viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("NEWS")
-        viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("movies")
-        viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("series")
-        viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("kids")
-        viewModel.onSearchSubmitted()
-        viewModel.onQueryChange("music")
-        viewModel.onSearchSubmitted()
+        advanceUntilIdle()
 
-        assertThat(viewModel.recentQueries.value).containsExactly(
-            "music",
-            "kids",
-            "series",
-            "movies",
-            "NEWS",
-            "sports"
-        ).inOrder()
+        verify(preferencesRepository).recordRecentSearchQuery(
+            query = eq("news"),
+            scope = eq(SearchHistoryScope.ALL),
+            providerId = eq(null),
+            usedAt = any()
+        )
     }
 
     @Test
     fun `clearRecentQueries removes all stored search shortcuts`() = runTest {
-        viewModel.onQueryChange("news")
-        viewModel.onSearchSubmitted()
-
         viewModel.clearRecentQueries()
+        advanceUntilIdle()
 
-        assertThat(viewModel.recentQueries.value).isEmpty()
+        verify(preferencesRepository).clearRecentSearchQueries(
+            scope = eq(SearchHistoryScope.ALL),
+            providerId = eq(null)
+        )
     }
 
     @Test
@@ -113,7 +111,9 @@ class SearchViewModelTest {
             providerRepository,
             searchContent,
             preferencesRepository,
-            parentalControlManager
+            parentalControlManager,
+            favoriteRepository,
+            categoryRepository
         )
 
         val collectorJob = backgroundScope.launch { viewModel.uiState.collect { } }
@@ -154,7 +154,9 @@ class SearchViewModelTest {
             providerRepository,
             searchContent,
             preferencesRepository,
-            parentalControlManager
+            parentalControlManager,
+            favoriteRepository,
+            categoryRepository
         )
 
         val collectorJob = backgroundScope.launch { viewModel.uiState.collect { } }

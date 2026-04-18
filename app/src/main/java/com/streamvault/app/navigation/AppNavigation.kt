@@ -40,6 +40,8 @@ data class PlayerNavigationRequest(
     val categoryId: Long? = null,
     val providerId: Long? = null,
     val isVirtual: Boolean = false,
+    val combinedProfileId: Long? = null,
+    val combinedSourceFilterProviderId: Long? = null,
     val contentType: String = "LIVE",
     val artworkUrl: String? = null,
     val archiveStartMs: Long? = null,
@@ -88,6 +90,8 @@ object Routes {
         categoryId: Long? = channel.categoryId,
         providerId: Long? = channel.providerId,
         isVirtual: Boolean = false,
+        combinedProfileId: Long? = null,
+        combinedSourceFilterProviderId: Long? = null,
         returnRoute: String? = null
     ): PlayerNavigationRequest {
         val effectiveCategoryId = categoryId ?: ChannelRepository.ALL_CHANNELS_ID
@@ -99,6 +103,8 @@ object Routes {
             categoryId = effectiveCategoryId,
             providerId = providerId,
             isVirtual = isVirtual,
+            combinedProfileId = combinedProfileId,
+            combinedSourceFilterProviderId = combinedSourceFilterProviderId,
             contentType = "LIVE",
             returnRoute = returnRoute
         )
@@ -141,6 +147,8 @@ object Routes {
         categoryId: Long? = null,
         providerId: Long? = null,
         isVirtual: Boolean = false,
+        combinedProfileId: Long? = null,
+        combinedSourceFilterProviderId: Long? = null,
         contentType: String = "LIVE",
         artworkUrl: String? = null,
         archiveStartMs: Long? = null,
@@ -159,6 +167,8 @@ object Routes {
             categoryId = categoryId,
             providerId = providerId,
             isVirtual = isVirtual,
+            combinedProfileId = combinedProfileId,
+            combinedSourceFilterProviderId = combinedSourceFilterProviderId,
             contentType = contentType,
             artworkUrl = artworkUrl,
             archiveStartMs = archiveStartMs,
@@ -298,24 +308,26 @@ fun AppNavigation(mainActivity: MainActivity) {
                 onAddProvider = dropUnlessResumed {
                     navController.navigate(Routes.providerSetup(null))
                 },
-                onChannelClick = { channel ->
+                onRecentChannelClick = { channel, combinedProfileId ->
                     navController.navigateToPlayer(
                         Routes.livePlayer(
                             channel = channel,
-                            categoryId = channel.categoryId ?: ChannelRepository.ALL_CHANNELS_ID,
+                            categoryId = com.streamvault.domain.model.VirtualCategoryIds.RECENT,
                             providerId = channel.providerId,
-                            isVirtual = false,
+                            isVirtual = true,
+                            combinedProfileId = combinedProfileId,
                             returnRoute = Routes.HOME
                         )
                     )
                 },
-                onFavoriteChannelClick = { channel ->
+                onFavoriteChannelClick = { channel, combinedProfileId ->
                     navController.navigateToPlayer(
                         Routes.livePlayer(
                             channel = channel,
                             categoryId = com.streamvault.domain.model.VirtualCategoryIds.FAVORITES,
                             providerId = channel.providerId,
                             isVirtual = true,
+                            combinedProfileId = combinedProfileId,
                             returnRoute = Routes.HOME
                         )
                     )
@@ -383,13 +395,15 @@ fun AppNavigation(mainActivity: MainActivity) {
         ) { backStackEntry ->
             val initialCategoryId = backStackEntry.arguments?.getLong("categoryId")?.takeIf { it != -1L }
             HomeScreen(
-                onChannelClick = { channel, category, provider ->
+                onChannelClick = { channel, category, provider, combinedProfileId, combinedSourceFilterProviderId ->
                     navController.navigateToPlayer(
                         Routes.livePlayer(
                             channel = channel,
                             categoryId = category?.id,
                             providerId = provider?.id,
                             isVirtual = category?.isVirtual == true,
+                            combinedProfileId = combinedProfileId,
+                            combinedSourceFilterProviderId = combinedSourceFilterProviderId,
                             returnRoute = Routes.liveTv(category?.id)
                         )
                     )
@@ -437,27 +451,29 @@ fun AppNavigation(mainActivity: MainActivity) {
                 initialCategoryId = epgCategoryId,
                 initialAnchorTime = epgAnchorTime,
                 initialFavoritesOnly = epgFavoritesOnly,
-                onPlayChannel = { channel, returnRoute ->
+                onPlayChannel = { channel, categoryId, isVirtual, combinedProfileId, returnRoute ->
                     navController.navigateToPlayer(
                         Routes.livePlayer(
                             channel = channel,
-                            categoryId = channel.categoryId ?: ChannelRepository.ALL_CHANNELS_ID,
+                            categoryId = categoryId,
                             providerId = channel.providerId,
-                            isVirtual = false,
+                            isVirtual = isVirtual,
+                            combinedProfileId = combinedProfileId,
                             returnRoute = returnRoute
                         )
                     )
                 },
-                onPlayArchive = { channel, program, returnRoute ->
+                onPlayArchive = { channel, program, categoryId, isVirtual, combinedProfileId, returnRoute ->
                     navController.navigateToPlayer(
                         Routes.player(
                             streamUrl = channel.streamUrl,
                             title = channel.name,
                             channelId = channel.epgChannelId,
                             internalId = channel.id,
-                            categoryId = channel.categoryId ?: ChannelRepository.ALL_CHANNELS_ID,
+                            categoryId = categoryId,
                             providerId = channel.providerId,
-                            isVirtual = false,
+                            isVirtual = isVirtual,
+                            combinedProfileId = combinedProfileId,
                             contentType = "LIVE",
                             archiveStartMs = program.startTime,
                             archiveEndMs = program.endTime,
@@ -547,6 +563,8 @@ fun AppNavigation(mainActivity: MainActivity) {
                 categoryId = playerRequest?.categoryId,
                 providerId = playerRequest?.providerId,
                 isVirtual = playerRequest?.isVirtual ?: false,
+                combinedProfileId = playerRequest?.combinedProfileId,
+                combinedSourceFilterProviderId = playerRequest?.combinedSourceFilterProviderId,
                 contentType = playerRequest?.contentType ?: "LIVE",
                 artworkUrl = playerRequest?.artworkUrl,
                 archiveStartMs = playerRequest?.archiveStartMs,

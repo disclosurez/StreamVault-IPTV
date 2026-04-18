@@ -6,6 +6,8 @@ object ContentCachePolicy {
     const val EPG_TTL_MILLIS = 6L * 60 * 60 * 1000L
 
     fun shouldRefresh(lastSyncAt: Long, ttlMillis: Long, now: Long = System.currentTimeMillis()): Boolean {
-        return lastSyncAt <= 0L || now - lastSyncAt >= ttlMillis
+        if (lastSyncAt <= 0L) return true
+        val elapsed = now - lastSyncAt
+        return elapsed < 0L || elapsed >= ttlMillis
     }
 }

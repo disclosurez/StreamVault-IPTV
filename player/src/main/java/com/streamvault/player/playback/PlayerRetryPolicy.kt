@@ -17,7 +17,7 @@ data class PlaybackRetryContext(
     val timeoutProfile: PlayerTimeoutProfile
 ) {
     val isLive: Boolean
-        get() = resolvedStreamType == ResolvedStreamType.HLS || resolvedStreamType == ResolvedStreamType.MPEG_TS_LIVE
+        get() = resolvedStreamType == ResolvedStreamType.HLS || resolvedStreamType == ResolvedStreamType.MPEG_TS_LIVE || resolvedStreamType == ResolvedStreamType.RTSP
 }
 
 @UnstableApi

@@ -5,6 +5,7 @@ import com.streamvault.app.ui.interaction.TvClickableSurface
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -17,7 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -29,9 +32,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Star
 import androidx.tv.material3.*
 import com.streamvault.app.R
 import com.streamvault.app.ui.components.CategoryRow
@@ -42,18 +51,25 @@ import com.streamvault.app.ui.components.SeriesCard
 import com.streamvault.app.ui.components.TvEmptyState
 import com.streamvault.app.ui.components.shell.AppNavigationChrome
 import com.streamvault.app.ui.components.shell.AppScreenScaffold
+import com.streamvault.app.ui.design.AppColors
 import com.streamvault.app.ui.design.requestFocusSafely
+import com.streamvault.app.ui.interaction.mouseClickable
 import com.streamvault.app.ui.theme.*
 import com.streamvault.domain.manager.ParentalControlManager
 import com.streamvault.domain.model.Channel
+import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.Movie
+import com.streamvault.domain.model.SearchHistoryScope
 import com.streamvault.domain.model.Series
+import com.streamvault.domain.repository.CategoryRepository
+import com.streamvault.domain.repository.FavoriteRepository
 import com.streamvault.domain.repository.ProviderRepository
 import com.streamvault.domain.usecase.SearchContent
 import com.streamvault.domain.usecase.SearchContentScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -64,7 +80,9 @@ class SearchViewModel @Inject constructor(
     private val providerRepository: ProviderRepository,
     private val searchContent: SearchContent,
     private val preferencesRepository: com.streamvault.data.preferences.PreferencesRepository,
-    private val parentalControlManager: ParentalControlManager
+    private val parentalControlManager: ParentalControlManager,
+    private val favoriteRepository: FavoriteRepository,
+    private val categoryRepository: CategoryRepository
 ) : ViewModel() {
     private companion object {
         const val MAX_RESULTS_PER_SECTION = 120
@@ -76,8 +94,6 @@ class SearchViewModel @Inject constructor(
 
     private val _selectedTab = MutableStateFlow(SearchTab.ALL)
     val selectedTab: StateFlow<SearchTab> = _selectedTab.asStateFlow()
-    private val _recentQueries = MutableStateFlow<List<String>>(emptyList())
-    val recentQueries: StateFlow<List<String>> = _recentQueries.asStateFlow()
 
     private val _parentalControlLevel = MutableStateFlow(0)
     private val _activeProviderId = MutableStateFlow<Long?>(null)
@@ -93,12 +109,20 @@ class SearchViewModel @Inject constructor(
                 _parentalControlLevel.value = level
             }
         }
-        viewModelScope.launch {
-            preferencesRepository.recentSearchQueries.collect { queries ->
-                _recentQueries.value = queries
-            }
-        }
     }
+
+    val recentQueries: StateFlow<List<String>> = combine(
+        _selectedTab,
+        _activeProviderId
+    ) { tab, providerId ->
+        tab.toSearchHistoryScope() to providerId
+    }.flatMapLatest { (scope, providerId) ->
+        preferencesRepository.getRecentSearchQueries(
+            scope = scope,
+            providerId = providerId,
+            limit = MAX_RECENT_QUERIES
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(FlowPreview::class)
     val uiState: StateFlow<SearchUiState> = combine(
@@ -156,12 +180,12 @@ class SearchViewModel @Inject constructor(
         if (normalizedQuery.length < 2) return
 
         _query.value = normalizedQuery
-        val updatedQueries = _recentQueries.updateAndGet { existing ->
-            (listOf(normalizedQuery) + existing.filterNot { it.equals(normalizedQuery, ignoreCase = true) })
-                .take(MAX_RECENT_QUERIES)
-        }
         viewModelScope.launch {
-            preferencesRepository.setRecentSearchQueries(updatedQueries)
+            preferencesRepository.recordRecentSearchQuery(
+                query = normalizedQuery,
+                scope = _selectedTab.value.toSearchHistoryScope(),
+                providerId = _activeProviderId.value
+            )
         }
     }
 
@@ -179,9 +203,11 @@ class SearchViewModel @Inject constructor(
     }
 
     fun clearRecentQueries() {
-        _recentQueries.value = emptyList()
         viewModelScope.launch {
-            preferencesRepository.setRecentSearchQueries(emptyList())
+            preferencesRepository.clearRecentSearchQueries(
+                scope = _selectedTab.value.toSearchHistoryScope(),
+                providerId = _activeProviderId.value
+            )
         }
     }
 
@@ -197,6 +223,43 @@ class SearchViewModel @Inject constructor(
         val providerId = _activeProviderId.value ?: return
         val resolvedCategoryId = categoryId ?: return
         parentalControlManager.unlockCategory(providerId, resolvedCategoryId)
+    }
+
+    // ── Search item long-press actions ────────────────────────────────
+
+    fun toggleFavorite(contentId: Long, contentType: ContentType, currentlyFavorite: Boolean) {
+        viewModelScope.launch {
+            val providerId = _activeProviderId.value ?: return@launch
+            if (currentlyFavorite) {
+                favoriteRepository.removeFavorite(providerId, contentId, contentType)
+            } else {
+                favoriteRepository.addFavorite(providerId, contentId, contentType)
+            }
+        }
+    }
+
+    fun hideItemCategory(categoryId: Long, contentType: ContentType) {
+        val providerId = _activeProviderId.value ?: return
+        viewModelScope.launch {
+            preferencesRepository.setCategoryHidden(
+                providerId = providerId,
+                type = contentType,
+                categoryId = categoryId,
+                hidden = true
+            )
+        }
+    }
+
+    fun toggleCategoryProtection(categoryId: Long, contentType: ContentType, currentlyProtected: Boolean) {
+        val providerId = _activeProviderId.value ?: return
+        viewModelScope.launch {
+            categoryRepository.setCategoryProtection(
+                providerId = providerId,
+                categoryId = categoryId,
+                type = contentType,
+                isProtected = !currentlyProtected
+            )
+        }
     }
 }
 
@@ -220,6 +283,13 @@ private fun SearchTab.toSearchScope(): SearchContentScope = when (this) {
     SearchTab.LIVE -> SearchContentScope.LIVE
     SearchTab.MOVIES -> SearchContentScope.MOVIES
     SearchTab.SERIES -> SearchContentScope.SERIES
+}
+
+private fun SearchTab.toSearchHistoryScope(): SearchHistoryScope = when (this) {
+    SearchTab.ALL -> SearchHistoryScope.ALL
+    SearchTab.LIVE -> SearchHistoryScope.LIVE
+    SearchTab.MOVIES -> SearchHistoryScope.MOVIE
+    SearchTab.SERIES -> SearchHistoryScope.SERIES
 }
 
 data class SearchUiState(
@@ -262,6 +332,34 @@ fun SearchScreen(
     var pendingSeries by remember { mutableStateOf<Series?>(null) }
     val scope = rememberCoroutineScope()
     val selectedStateLabel = stringResource(R.string.a11y_selected)
+
+    // ── Long-press actions dialog state ───────────────────────────────
+    var showActionsDialog by remember { mutableStateOf(false) }
+    var actionsChannel by remember { mutableStateOf<Channel?>(null) }
+    var actionsMovie by remember { mutableStateOf<Movie?>(null) }
+    var actionsSeries by remember { mutableStateOf<Series?>(null) }
+    var actionsIsFavorite by remember { mutableStateOf(false) }
+    // Separate PIN purpose: unlock-to-play vs toggle-parental-protection
+    var pinIsForProtectionToggle by remember { mutableStateOf(false) }
+    var pendingProtectionCategoryId by remember { mutableStateOf<Long?>(null) }
+    var pendingProtectionContentType by remember { mutableStateOf<ContentType?>(null) }
+    var pendingProtectionCurrentlyProtected by remember { mutableStateOf(false) }
+
+    fun showChannelActions(channel: Channel) {
+        actionsChannel = channel; actionsMovie = null; actionsSeries = null
+        actionsIsFavorite = channel.isFavorite
+        showActionsDialog = true
+    }
+    fun showMovieActions(movie: Movie) {
+        actionsChannel = null; actionsMovie = movie; actionsSeries = null
+        actionsIsFavorite = movie.isFavorite
+        showActionsDialog = true
+    }
+    fun showSeriesActions(series: Series) {
+        actionsChannel = null; actionsMovie = null; actionsSeries = series
+        actionsIsFavorite = series.isFavorite
+        showActionsDialog = true
+    }
     val channelRows = remember(uiState.channels) { uiState.channels.chunked(4) }
     val movieRows = remember(uiState.movies) { uiState.movies.chunked(6) }
     val seriesRows = remember(uiState.series) { uiState.series.chunked(6) }
@@ -301,21 +399,37 @@ fun SearchScreen(
                 pendingChannel = null
                 pendingMovie = null
                 pendingSeries = null
+                pinIsForProtectionToggle = false
+                pendingProtectionCategoryId = null
+                pendingProtectionContentType = null
             },
             onPinEntered = { pin ->
                 scope.launch {
                     if (viewModel.verifyPin(pin)) {
-                        pendingChannel?.categoryId?.let(viewModel::unlockCategory)
-                        pendingMovie?.categoryId?.let(viewModel::unlockCategory)
-                        pendingSeries?.categoryId?.let(viewModel::unlockCategory)
-                        showPinDialog = false
-                        pinError = null
-                        pendingChannel?.let { onChannelClick(it) }
-                        pendingMovie?.let { onMovieClick(it) }
-                        pendingSeries?.let { onSeriesClick(it) }
-                        pendingChannel = null
-                        pendingMovie = null
-                        pendingSeries = null
+                        if (pinIsForProtectionToggle) {
+                            val catId = pendingProtectionCategoryId
+                            val ct = pendingProtectionContentType
+                            if (catId != null && ct != null) {
+                                viewModel.toggleCategoryProtection(catId, ct, pendingProtectionCurrentlyProtected)
+                            }
+                            showPinDialog = false
+                            pinError = null
+                            pinIsForProtectionToggle = false
+                            pendingProtectionCategoryId = null
+                            pendingProtectionContentType = null
+                        } else {
+                            pendingChannel?.categoryId?.let(viewModel::unlockCategory)
+                            pendingMovie?.categoryId?.let(viewModel::unlockCategory)
+                            pendingSeries?.categoryId?.let(viewModel::unlockCategory)
+                            showPinDialog = false
+                            pinError = null
+                            pendingChannel?.let { onChannelClick(it) }
+                            pendingMovie?.let { onMovieClick(it) }
+                            pendingSeries?.let { onSeriesClick(it) }
+                            pendingChannel = null
+                            pendingMovie = null
+                            pendingSeries = null
+                        }
                     } else {
                         pinError = context.getString(R.string.search_incorrect_pin)
                     }
@@ -326,6 +440,46 @@ fun SearchScreen(
     }
 
     val selectedTabDescription = selectedStateLabel
+
+    // ── Long-press actions dialog ─────────────────────────────────────
+    if (showActionsDialog) {
+        val actionsTitle = actionsChannel?.name ?: actionsMovie?.name ?: actionsSeries?.name ?: ""
+        val actionsCategoryId = actionsChannel?.categoryId ?: actionsMovie?.categoryId ?: actionsSeries?.categoryId
+        val actionsIsProtected = actionsChannel?.isUserProtected ?: actionsMovie?.isUserProtected ?: actionsSeries?.isUserProtected ?: false
+        val actionsContentType = when {
+            actionsChannel != null -> ContentType.LIVE
+            actionsMovie != null -> ContentType.MOVIE
+            else -> ContentType.SERIES
+        }
+        val actionsItemId = actionsChannel?.id ?: actionsMovie?.id ?: actionsSeries?.id ?: 0L
+        SearchItemActionsDialog(
+            title = actionsTitle,
+            isFavorite = actionsIsFavorite,
+            isProtected = actionsIsProtected,
+            hasCategoryId = actionsCategoryId != null,
+            onDismiss = { showActionsDialog = false },
+            onToggleFavorite = {
+                viewModel.toggleFavorite(actionsItemId, actionsContentType, actionsIsFavorite)
+                actionsIsFavorite = !actionsIsFavorite
+            },
+            onHide = if (actionsCategoryId != null) {
+                {
+                    viewModel.hideItemCategory(actionsCategoryId, actionsContentType)
+                    showActionsDialog = false
+                }
+            } else null,
+            onToggleLock = if (actionsCategoryId != null) {
+                {
+                    showActionsDialog = false
+                    pendingProtectionCategoryId = actionsCategoryId
+                    pendingProtectionContentType = actionsContentType
+                    pendingProtectionCurrentlyProtected = actionsIsProtected
+                    pinIsForProtectionToggle = true
+                    showPinDialog = true
+                }
+            } else null
+        )
+    }
 
     AppScreenScaffold(
         currentRoute = currentRoute,
@@ -419,7 +573,8 @@ fun SearchScreen(
                                             } else {
                                                 onChannelClick(channel)
                                             }
-                                        }
+                                        },
+                                        onLongClick = { showChannelActions(channel) }
                                     )
                                 }
                             }
@@ -447,7 +602,8 @@ fun SearchScreen(
                                             } else {
                                                 onMovieClick(movie)
                                             }
-                                        }
+                                        },
+                                        onLongClick = { showMovieActions(movie) }
                                     )
                                 }
                             }
@@ -475,7 +631,8 @@ fun SearchScreen(
                                             } else {
                                                 onSeriesClick(seriesItem)
                                             }
-                                        }
+                                        },
+                                        onLongClick = { showSeriesActions(seriesItem) }
                                     )
                                 }
                             }
@@ -513,7 +670,8 @@ fun SearchScreen(
                                         } else {
                                             onChannelClick(channel)
                                         }
-                                    }
+                                    },
+                                    onChannelLongClick = { channel -> showChannelActions(channel) }
                                 )
                             }
 
@@ -536,7 +694,8 @@ fun SearchScreen(
                                         } else {
                                             onMovieClick(movie)
                                         }
-                                    }
+                                    },
+                                    onMovieLongClick = { movie -> showMovieActions(movie) }
                                 )
                             }
 
@@ -559,7 +718,8 @@ fun SearchScreen(
                                         } else {
                                             onSeriesClick(seriesItem)
                                         }
-                                    }
+                                    },
+                                    onSeriesLongClick = { seriesItem -> showSeriesActions(seriesItem) }
                                 )
                             }
                         }
@@ -803,7 +963,8 @@ private fun <T : Any> SearchResultRail(
 private fun SearchChannelGridRow(
     channels: List<Channel>,
     isLocked: (Channel) -> Boolean,
-    onChannelClick: (Channel, Boolean) -> Unit
+    onChannelClick: (Channel, Boolean) -> Unit,
+    onChannelLongClick: (Channel) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -814,7 +975,8 @@ private fun SearchChannelGridRow(
             ChannelCard(
                 channel = channel,
                 isLocked = locked,
-                onClick = { onChannelClick(channel, locked) }
+                onClick = { onChannelClick(channel, locked) },
+                onLongClick = { onChannelLongClick(channel) }
             )
         }
     }
@@ -824,7 +986,8 @@ private fun SearchChannelGridRow(
 private fun SearchMovieGridRow(
     movies: List<Movie>,
     isLocked: (Movie) -> Boolean,
-    onMovieClick: (Movie, Boolean) -> Unit
+    onMovieClick: (Movie, Boolean) -> Unit,
+    onMovieLongClick: (Movie) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -835,7 +998,8 @@ private fun SearchMovieGridRow(
             MovieCard(
                 movie = movie,
                 isLocked = locked,
-                onClick = { onMovieClick(movie, locked) }
+                onClick = { onMovieClick(movie, locked) },
+                onLongClick = { onMovieLongClick(movie) }
             )
         }
     }
@@ -845,7 +1009,8 @@ private fun SearchMovieGridRow(
 private fun SearchSeriesGridRow(
     seriesItems: List<Series>,
     isLocked: (Series) -> Boolean,
-    onSeriesClick: (Series, Boolean) -> Unit
+    onSeriesClick: (Series, Boolean) -> Unit,
+    onSeriesLongClick: (Series) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -856,7 +1021,8 @@ private fun SearchSeriesGridRow(
             SeriesCard(
                 series = seriesItem,
                 isLocked = locked,
-                onClick = { onSeriesClick(seriesItem, locked) }
+                onClick = { onSeriesClick(seriesItem, locked) },
+                onLongClick = { onSeriesLongClick(seriesItem) }
             )
         }
     }
@@ -919,3 +1085,173 @@ private fun SearchMessageState(
     )
 }
 
+// ── Long-press actions dialog ─────────────────────────────────────────────
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SearchItemActionsDialog(
+    title: String,
+    isFavorite: Boolean,
+    isProtected: Boolean,
+    hasCategoryId: Boolean,
+    onDismiss: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onHide: (() -> Unit)?,
+    onToggleLock: (() -> Unit)?
+) {
+    // Ghost-click debounce: ignore select key-up inherited from the long-press gesture
+    var canInteract by remember { mutableStateOf(false) }
+    val firstFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        runCatching { firstFocusRequester.requestFocus() }
+        delay(500)
+        canInteract = true
+    }
+
+    val safeDismiss = { if (canInteract) onDismiss() }
+
+    Dialog(
+        onDismissRequest = safeDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            colors = SurfaceDefaults.colors(containerColor = AppColors.SurfaceElevated),
+            modifier = Modifier
+                .width(360.dp)
+                .padding(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = AppColors.TextPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = safeDismiss,
+                        modifier = Modifier.mouseClickable(onClick = safeDismiss)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.search_actions_dismiss))
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // ── Favorite toggle ──────────────────────────────
+                    SearchActionButton(
+                        icon = Icons.Default.Star,
+                        label = if (isFavorite) stringResource(R.string.search_actions_remove_favorite)
+                                else stringResource(R.string.search_actions_add_favorite),
+                        isActive = isFavorite,
+                        focusRequester = firstFocusRequester,
+                        onClick = { if (canInteract) onToggleFavorite() }
+                    )
+
+                    // ── Hide category ────────────────────────────────
+                    if (onHide != null) {
+                        SearchActionButton(
+                            icon = Icons.Default.Close,
+                            label = stringResource(R.string.search_actions_hide_category),
+                            isActive = false,
+                            onClick = { if (canInteract) onHide() }
+                        )
+                    } else {
+                        SearchActionButton(
+                            icon = Icons.Default.Close,
+                            label = stringResource(R.string.search_actions_hide_no_category),
+                            isActive = false,
+                            enabled = false,
+                            onClick = {}
+                        )
+                    }
+
+                    // ── Parental lock toggle ─────────────────────────
+                    if (onToggleLock != null) {
+                        SearchActionButton(
+                            icon = Icons.Default.Lock,
+                            label = if (isProtected) stringResource(R.string.search_actions_unlock)
+                                    else stringResource(R.string.search_actions_lock),
+                            isActive = isProtected,
+                            onClick = { if (canInteract) onToggleLock() }
+                        )
+                    } else {
+                        SearchActionButton(
+                            icon = Icons.Default.Lock,
+                            label = stringResource(R.string.search_actions_lock_no_category),
+                            isActive = false,
+                            enabled = false,
+                            onClick = {}
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SearchActionButton(
+    icon: ImageVector,
+    label: String,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    enabled: Boolean = true
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    val baseModifier = modifier
+        .fillMaxWidth()
+        .onFocusChanged { isFocused = it.isFocused }
+        .then(
+            if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
+        )
+        .border(
+            width = if (isFocused) 2.dp else 0.dp,
+            color = if (isFocused) AppColors.Focus else Color.Transparent,
+            shape = RoundedCornerShape(12.dp)
+        )
+        .mouseClickable(onClick = onClick)
+
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = baseModifier,
+        colors = ButtonDefaults.colors(
+            containerColor = when {
+                !enabled -> AppColors.Surface.copy(alpha = 0.3f)
+                isFocused -> AppColors.Focus
+                isActive -> AppColors.Warning.copy(alpha = 0.85f)
+                else -> AppColors.Brand.copy(alpha = 0.70f)
+            },
+            contentColor = if (!enabled) AppColors.TextSecondary else Color.Black,
+            disabledContainerColor = AppColors.Surface.copy(alpha = 0.3f),
+            disabledContentColor = AppColors.TextSecondary
+        ),
+        shape = ButtonDefaults.shape(shape = RoundedCornerShape(12.dp))
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}

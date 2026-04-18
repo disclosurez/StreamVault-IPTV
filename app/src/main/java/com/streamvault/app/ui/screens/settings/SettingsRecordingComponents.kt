@@ -2,6 +2,8 @@ package com.streamvault.app.ui.screens.settings
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -15,14 +17,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.*
 import com.streamvault.app.R
+import com.streamvault.app.ui.components.TvEmptyState
 import com.streamvault.app.ui.components.dialogs.PremiumDialog
 import com.streamvault.app.ui.components.dialogs.PremiumDialogActionButton
 import com.streamvault.app.ui.components.dialogs.PremiumDialogFooterButton
@@ -328,6 +334,7 @@ internal fun RecordingOverviewCard(
     onChangePattern: () -> Unit,
     onChangeRetention: () -> Unit,
     onChangeConcurrency: () -> Unit,
+    onOpenBrowser: () -> Unit,
     onRepairSchedule: () -> Unit
 ) {
     Surface(
@@ -337,25 +344,48 @@ internal fun RecordingOverviewCard(
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                text = stringResource(R.string.settings_recording_storage_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = Primary
-            )
-            treeLabel?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Secondary
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_recording_storage_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Primary
+                    )
+                    treeLabel?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Secondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = outputDirectory ?: stringResource(R.string.settings_recording_storage_unknown),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceDim,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                StatusTonePill(
+                    label = if (isWritable) {
+                        stringResource(R.string.settings_recording_storage_ready)
+                    } else {
+                        stringResource(R.string.settings_recording_storage_unavailable)
+                    },
+                    accent = if (isWritable) OnSurface else ErrorColor
                 )
             }
-            Text(
-                text = outputDirectory ?: stringResource(R.string.settings_recording_storage_unknown),
-                style = MaterialTheme.typography.bodySmall,
-                color = OnSurfaceDim
-            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -376,11 +406,6 @@ internal fun RecordingOverviewCard(
                     modifier = Modifier.weight(1f)
                 )
             }
-            Text(
-                text = if (isWritable) stringResource(R.string.settings_recording_storage_ready) else stringResource(R.string.settings_recording_storage_unavailable),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isWritable) Primary else ErrorColor
-            )
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -400,21 +425,621 @@ internal fun RecordingOverviewCard(
                     value = maxSimultaneousRecordings.toString()
                 )
             }
-            FlowRow(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                maxItemsInEachRow = 3
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                RecordingActionButton(stringResource(R.string.settings_recording_choose_folder), Primary, onChooseFolder)
-                RecordingActionButton(stringResource(R.string.settings_recording_use_app_storage), Secondary, onUseAppStorage)
-                RecordingActionButton(stringResource(R.string.settings_recording_pattern_title), OnBackground, onChangePattern)
-                RecordingActionButton(stringResource(R.string.settings_recording_retention_title), OnBackground, onChangeRetention)
-                RecordingActionButton(stringResource(R.string.settings_recording_concurrency_title), OnBackground, onChangeConcurrency)
-                RecordingActionButton(stringResource(R.string.settings_recording_reconcile), Secondary, onRepairSchedule)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_choose_folder),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onChooseFolder
+                    )
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_use_app_storage),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onUseAppStorage
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_pattern_title),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onChangePattern
+                    )
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_retention_title),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onChangeRetention
+                    )
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_concurrency_title),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onChangeConcurrency
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_open_browser),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenBrowser
+                    )
+                    RecordingActionButton(
+                        label = stringResource(R.string.settings_recording_reconcile),
+                        accent = OnBackground,
+                        modifier = Modifier.weight(1f),
+                        onClick = onRepairSchedule
+                    )
+                }
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun RecordingDashboardSection(
+    treeLabel: String?,
+    outputDirectory: String?,
+    availableBytes: Long?,
+    isWritable: Boolean,
+    activeCount: Int,
+    scheduledCount: Int,
+    fileNamePattern: String,
+    retentionDays: Int?,
+    maxSimultaneousRecordings: Int,
+    onChooseFolder: () -> Unit,
+    onUseAppStorage: () -> Unit,
+    onChangePattern: () -> Unit,
+    onChangeRetention: () -> Unit,
+    onChangeConcurrency: () -> Unit,
+    onRepairSchedule: () -> Unit,
+    onOpenBrowser: () -> Unit
+) {
+    RecordingOverviewCard(
+        treeLabel = treeLabel,
+        outputDirectory = outputDirectory,
+        availableBytes = availableBytes,
+        isWritable = isWritable,
+        activeCount = activeCount,
+        scheduledCount = scheduledCount,
+        fileNamePattern = fileNamePattern,
+        retentionDays = retentionDays,
+        maxSimultaneousRecordings = maxSimultaneousRecordings,
+        onChooseFolder = onChooseFolder,
+        onUseAppStorage = onUseAppStorage,
+        onChangePattern = onChangePattern,
+        onChangeRetention = onChangeRetention,
+        onChangeConcurrency = onChangeConcurrency,
+        onOpenBrowser = onOpenBrowser,
+        onRepairSchedule = onRepairSchedule
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun RecordingBrowserDialog(
+    recordingItems: List<RecordingItem>,
+    selectedRecordingId: String?,
+    onSelectedRecordingChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onPlay: (RecordingItem) -> Unit,
+    onStop: (RecordingItem) -> Unit,
+    onCancel: (RecordingItem) -> Unit,
+    onDelete: (RecordingItem) -> Unit,
+    onRetry: (RecordingItem) -> Unit,
+    onToggleSchedule: (RecordingItem, Boolean) -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.68f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.93f)
+                    .fillMaxHeight(0.9f),
+                colors = SurfaceDefaults.colors(containerColor = SurfaceElevated),
+                shape = RoundedCornerShape(22.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = stringResource(R.string.settings_recording_title),
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = OnBackground
+                            )
+                            Text(
+                                text = if (recordingItems.isNotEmpty()) {
+                                    stringResource(R.string.settings_recording_item_count, recordingItems.size)
+                                } else {
+                                    stringResource(R.string.settings_recording_empty_title)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurfaceDim
+                            )
+                        }
+                        CompactRecordingActionChip(
+                            label = stringResource(R.string.settings_cancel),
+                            accent = OnBackground,
+                            onClick = onDismiss
+                        )
+                    }
+
+                    if (recordingItems.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            TvEmptyState(
+                                title = stringResource(R.string.settings_recording_empty_title),
+                                subtitle = stringResource(R.string.settings_recording_empty_subtitle)
+                            )
+                        }
+                    } else {
+                        RecordingBrowserPanel(
+                            recordingItems = recordingItems,
+                            selectedRecordingId = selectedRecordingId,
+                            onSelectedRecordingChange = onSelectedRecordingChange,
+                            onPlay = onPlay,
+                            onStop = onStop,
+                            onCancel = onCancel,
+                            onDelete = onDelete,
+                            onRetry = onRetry,
+                            onToggleSchedule = onToggleSchedule
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RecordingBrowserPanel(
+    recordingItems: List<RecordingItem>,
+    selectedRecordingId: String?,
+    onSelectedRecordingChange: (String) -> Unit,
+    onPlay: (RecordingItem) -> Unit,
+    onStop: (RecordingItem) -> Unit,
+    onCancel: (RecordingItem) -> Unit,
+    onDelete: (RecordingItem) -> Unit,
+    onRetry: (RecordingItem) -> Unit,
+    onToggleSchedule: (RecordingItem, Boolean) -> Unit
+) {
+    val selectedItem = recordingItems.firstOrNull { it.id == selectedRecordingId } ?: recordingItems.first()
+
+    Row(
+        modifier = Modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(380.dp)
+                .fillMaxHeight(),
+            colors = SurfaceDefaults.colors(containerColor = SurfaceElevated),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.settings_recording_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Primary
+                    )
+                    Text(
+                        text = "${recordingItems.size} items",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceDim
+                    )
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 4.dp)
+                ) {
+                    items(recordingItems, key = { item -> item.id }) { item ->
+                        RecordingPickerRow(
+                            item = item,
+                            selected = item.id == selectedItem.id,
+                            onSelected = { onSelectedRecordingChange(item.id) }
+                        )
+                    }
+                }
+            }
+        }
+
+        RecordingDetailPanel(
+            item = selectedItem,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            onPlay = { onPlay(selectedItem) },
+            onStop = { onStop(selectedItem) },
+            onCancel = { onCancel(selectedItem) },
+            onDelete = { onDelete(selectedItem) },
+            onRetry = { onRetry(selectedItem) },
+            onToggleSchedule = { enabled -> onToggleSchedule(selectedItem, enabled) }
+        )
+    }
+}
+
+@Composable
+private fun RecordingPickerRow(
+    item: RecordingItem,
+    selected: Boolean,
+    onSelected: () -> Unit
+) {
+    val accent = recordingStatusAccent(item.status)
+    TvClickableSurface(
+        onClick = onSelected,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (selected) accent.copy(alpha = 0.14f) else Color.Transparent,
+            contentColor = OnBackground,
+            focusedContainerColor = SurfaceHighlight.copy(alpha = 0.48f),
+            focusedContentColor = OnBackground
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(
+                border = BorderStroke(
+                    1.dp,
+                    if (selected) accent.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.08f)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ),
+            focusedBorder = Border(
+                border = BorderStroke(FocusSpec.BorderWidth, Color.White),
+                shape = RoundedCornerShape(12.dp)
+            )
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focusState ->
+                if (focusState.isFocused) onSelected()
+            }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 5.dp, height = 36.dp)
+                    .background(accent.copy(alpha = 0.92f), RoundedCornerShape(999.dp))
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = recordingDisplayTitle(item),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OnBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = recordingListSecondaryLine(item),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = OnSurfaceDim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = recordingStatusLabel(item.status),
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RecordingDetailPanel(
+    item: RecordingItem,
+    modifier: Modifier = Modifier,
+    onPlay: () -> Unit,
+    onStop: () -> Unit,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+    onRetry: () -> Unit,
+    onToggleSchedule: (Boolean) -> Unit
+) {
+    val accent = recordingStatusAccent(item.status)
+    Surface(
+        modifier = modifier,
+        colors = SurfaceDefaults.colors(containerColor = SurfaceElevated),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = recordingDisplayTitle(item),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = OnBackground,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                recordingDisplaySubtitle(item)?.let { subtitle ->
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = OnSurfaceDim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatusTonePill(
+                        label = recordingStatusLabel(item.status),
+                        accent = accent
+                    )
+                    if (item.recurrence != RecordingRecurrence.NONE) {
+                        StatusTonePill(
+                            label = when (item.recurrence) {
+                                RecordingRecurrence.DAILY -> stringResource(R.string.settings_recording_recurrence_daily)
+                                RecordingRecurrence.WEEKLY -> stringResource(R.string.settings_recording_recurrence_weekly)
+                                RecordingRecurrence.NONE -> stringResource(R.string.settings_recording_recurrence_none)
+                            },
+                            accent = Secondary
+                        )
+                    }
+                }
+                Text(
+                    text = stringResource(
+                        R.string.settings_recording_time_window,
+                        formatTimestamp(item.scheduledStartMs),
+                        formatTimestamp(item.scheduledEndMs)
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                RecordingMetricCard(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.settings_recording_source_label),
+                    value = formatRecordingSourceType(item.sourceType)
+                )
+                RecordingMetricCard(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.settings_recording_bytes_label),
+                    value = formatBytes(item.bytesWritten)
+                )
+                RecordingMetricCard(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.settings_recording_speed_label),
+                    value = if (item.averageThroughputBytesPerSecond > 0L) {
+                        "${formatBytes(item.averageThroughputBytesPerSecond)}/s"
+                    } else {
+                        "N/A"
+                    }
+                )
+            }
+
+            if (item.retryCount > 0) {
+                RecordingMetaPill(
+                    label = stringResource(R.string.settings_recording_retry_count_label),
+                    value = item.retryCount.toString()
+                )
+            }
+
+            item.outputDisplayPath?.takeIf { output -> output.isNotBlank() }?.let { output ->
+                Text(
+                    text = "${stringResource(R.string.settings_recording_output_label)}: ${summarizeRecordingOutputPath(output)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceDim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            item.failureReason?.takeIf { reason -> reason.isNotBlank() }?.let { reason ->
+                Text(
+                    text = reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ErrorColor
+                )
+            }
+
+            if (item.failureCategory != RecordingFailureCategory.NONE) {
+                Text(
+                    text = "${stringResource(R.string.settings_recording_failure_label)}: ${formatRecordingFailureCategory(item.failureCategory)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ErrorColor
+                )
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                maxItemsInEachRow = 4
+            ) {
+                if (item.status == RecordingStatus.COMPLETED && (!item.outputUri.isNullOrBlank() || !item.outputPath.isNullOrBlank())) {
+                    CompactRecordingActionChip(
+                        label = "Play",
+                        accent = Primary,
+                        onClick = onPlay
+                    )
+                }
+                if (item.status == RecordingStatus.RECORDING) {
+                    CompactRecordingActionChip(
+                        label = stringResource(R.string.settings_recording_stop),
+                        accent = ErrorColor,
+                        onClick = onStop
+                    )
+                }
+                if (item.status == RecordingStatus.SCHEDULED) {
+                    CompactRecordingActionChip(
+                        label = stringResource(
+                            if (item.scheduleEnabled) R.string.settings_recording_disable
+                            else R.string.settings_recording_enable
+                        ),
+                        accent = Secondary,
+                        onClick = { onToggleSchedule(!item.scheduleEnabled) }
+                    )
+                    CompactRecordingActionChip(
+                        label = stringResource(R.string.settings_recording_cancel),
+                        accent = OnBackground,
+                        onClick = onCancel
+                    )
+                }
+                if (item.status == RecordingStatus.COMPLETED || item.status == RecordingStatus.FAILED || item.status == RecordingStatus.CANCELLED) {
+                    if (item.status == RecordingStatus.FAILED) {
+                        CompactRecordingActionChip(
+                            label = stringResource(R.string.settings_recording_retry),
+                            accent = Primary,
+                            onClick = onRetry
+                        )
+                    }
+                    CompactRecordingActionChip(
+                        label = stringResource(R.string.settings_recording_delete),
+                        accent = OnBackground,
+                        onClick = onDelete
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordingMetricCard(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = OnSurfaceDim
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            color = OnBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun StatusTonePill(
+    label: String,
+    accent: Color
+) {
+    Box(
+        modifier = Modifier
+            .background(accent.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = accent
+        )
+    }
+}
+
+private fun recordingDisplayTitle(item: RecordingItem): String {
+    val title = item.programTitle?.trim().orEmpty()
+    return if (title.isNotBlank()) title else item.channelName
+}
+
+private fun recordingDisplaySubtitle(item: RecordingItem): String? {
+    val title = item.programTitle?.trim().orEmpty()
+    return if (title.isNotBlank() && title != item.channelName) item.channelName else null
+}
+
+@Composable
+private fun recordingListSecondaryLine(item: RecordingItem): String {
+    val subtitle = recordingDisplaySubtitle(item)
+    return subtitle ?: stringResource(
+        R.string.settings_recording_time_window,
+        formatTimestamp(item.scheduledStartMs),
+        formatTimestamp(item.scheduledEndMs)
+    )
+}
+
+@Composable
+private fun recordingStatusLabel(status: RecordingStatus): String = when (status) {
+    RecordingStatus.SCHEDULED -> stringResource(R.string.settings_recording_status_scheduled)
+    RecordingStatus.RECORDING -> stringResource(R.string.settings_recording_status_recording)
+    RecordingStatus.COMPLETED -> stringResource(R.string.settings_recording_status_completed)
+    RecordingStatus.FAILED -> stringResource(R.string.settings_recording_status_failed)
+    RecordingStatus.CANCELLED -> stringResource(R.string.settings_recording_status_cancelled)
+}
+
+private fun recordingStatusAccent(status: RecordingStatus): Color = when (status) {
+    RecordingStatus.RECORDING -> Primary
+    RecordingStatus.SCHEDULED -> Secondary
+    RecordingStatus.COMPLETED -> Color(0xFF7BA7FF)
+    RecordingStatus.FAILED -> ErrorColor
+    RecordingStatus.CANCELLED -> OnSurfaceDim
 }
 
 @Composable
@@ -530,7 +1155,7 @@ internal fun RecordingItemCard(
                     value = if (item.averageThroughputBytesPerSecond > 0L) {
                         "${formatBytes(item.averageThroughputBytesPerSecond)}/s"
                     } else {
-                        "ג€“"
+                        "N/A"
                     }
                 )
                 if (item.retryCount > 0) {

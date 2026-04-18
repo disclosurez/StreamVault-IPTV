@@ -54,10 +54,9 @@ import com.streamvault.app.ui.components.dialogs.PinDialog
 import com.streamvault.app.ui.components.shell.AppNavigationChrome
 import com.streamvault.app.ui.components.shell.AppScreenScaffold
 import com.streamvault.domain.model.ContentType
-import kotlinx.coroutines.launch
 import com.streamvault.app.ui.interaction.TvClickableSurface
-import com.streamvault.app.ui.interaction.TvButton
 import com.streamvault.app.ui.interaction.TvIconButton
+import kotlinx.coroutines.launch
 
 private enum class CategoryControlsMode {
     PROTECTION,
@@ -89,9 +88,21 @@ fun ParentalControlGroupScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var currentMode by rememberSaveable { mutableStateOf(CategoryControlsMode.PROTECTION) }
+    var selectedType by rememberSaveable { mutableStateOf(ContentType.LIVE) }
     var showPinDialog by rememberSaveable { mutableStateOf(false) }
     var pinAction by rememberSaveable { mutableStateOf<CategoryPinAction?>(null) }
     var pinError by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedTypeLabel = contentTypeTabLabel(selectedType)
+    val filteredCategories = uiState.categories.filter { item ->
+        item.category.type == selectedType &&
+            (uiState.searchQuery.isBlank() || item.category.name.contains(uiState.searchQuery, ignoreCase = true))
+    }
+    val hiddenCount = uiState.categories.count { item ->
+        item.category.type == selectedType && item.isHidden
+    }
+    val visibleCount = uiState.categories.count { item ->
+        item.category.type == selectedType && !item.isHidden
+    }
 
     LaunchedEffect(Unit) {
         backButtonFocusRequester.requestFocus()
@@ -155,8 +166,16 @@ fun ParentalControlGroupScreen(
                 }
 
                 item {
+                    ContentTypeSelectorRow(
+                        selectedType = selectedType,
+                        onTypeSelected = { selectedType = it }
+                    )
+                }
+
+                item {
                     when (currentMode) {
                         CategoryControlsMode.PROTECTION -> ProtectionSummaryCard(
+                            selectedTypeLabel = selectedTypeLabel,
                             hasChanges = uiState.hasPendingProtectionChanges,
                             changeCount = uiState.pendingProtectionChangeCount,
                             hasParentalPin = uiState.hasParentalPin,
@@ -172,20 +191,21 @@ fun ParentalControlGroupScreen(
                             onReset = viewModel::resetProtectionChanges
                         )
                         CategoryControlsMode.VISIBILITY -> VisibilitySummaryCard(
-                            hiddenCount = uiState.hiddenCategoryCount,
-                            visibleCount = uiState.visibleCategoryCount,
-                            onHideAll = viewModel::hideAllCategories,
-                            onUnhideAll = viewModel::unhideAllCategories
+                            selectedTypeLabel = selectedTypeLabel,
+                            hiddenCount = hiddenCount,
+                            visibleCount = visibleCount,
+                            onHideAll = { viewModel.hideAllCategories(selectedType) },
+                            onUnhideAll = { viewModel.unhideAllCategories(selectedType) }
                         )
                     }
                 }
 
-                if (uiState.categories.isEmpty()) {
+                if (filteredCategories.isEmpty()) {
                     item {
                         EmptyCategoryMessage()
                     }
                 } else {
-                    items(uiState.categories, key = { it.key }) { item ->
+                    items(filteredCategories, key = { it.key }) { item ->
                         when (currentMode) {
                             CategoryControlsMode.PROTECTION -> CategoryProtectionCard(
                                 item = item,
@@ -249,6 +269,30 @@ fun ParentalControlGroupScreen(
 }
 
 @Composable
+private fun ContentTypeSelectorRow(
+    selectedType: ContentType,
+    onTypeSelected: (ContentType) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        listOf(ContentType.LIVE, ContentType.MOVIE, ContentType.SERIES).forEach { type ->
+            CategoryModeChip(
+                label = contentTypeTabLabel(type),
+                selected = selectedType == type,
+                onClick = { onTypeSelected(type) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun contentTypeTabLabel(type: ContentType): String = when (type) {
+    ContentType.LIVE -> stringResource(R.string.nav_live_tv)
+    ContentType.MOVIE -> stringResource(R.string.nav_movies)
+    ContentType.SERIES,
+    ContentType.SERIES_EPISODE -> stringResource(R.string.nav_series)
+}
+
+@Composable
 private fun ModeSelectorRow(
     selectedMode: CategoryControlsMode,
     onModeSelected: (CategoryControlsMode) -> Unit
@@ -294,6 +338,7 @@ private fun CategoryModeChip(
 
 @Composable
 private fun ProtectionSummaryCard(
+    selectedTypeLabel: String,
     hasChanges: Boolean,
     changeCount: Int,
     hasParentalPin: Boolean,
@@ -307,6 +352,11 @@ private fun ProtectionSummaryCard(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        Text(
+            text = selectedTypeLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF7EB1FF)
+        )
         Text(
             text = stringResource(R.string.settings_category_protection_summary_title),
             style = MaterialTheme.typography.titleMedium,
@@ -347,6 +397,7 @@ private fun ProtectionSummaryCard(
 
 @Composable
 private fun VisibilitySummaryCard(
+    selectedTypeLabel: String,
     hiddenCount: Int,
     visibleCount: Int,
     onHideAll: () -> Unit,
@@ -359,6 +410,11 @@ private fun VisibilitySummaryCard(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        Text(
+            text = selectedTypeLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF7EB1FF)
+        )
         Text(
             text = stringResource(R.string.settings_category_visibility_summary_title),
             style = MaterialTheme.typography.titleMedium,

@@ -2,6 +2,7 @@ package com.streamvault.domain.model
 
 data class Favorite(
     val id: Long = 0,
+    val providerId: Long,
     val contentId: Long,
     val contentType: ContentType,
     val position: Int = 0,
@@ -15,6 +16,7 @@ data class Favorite(
 
 data class VirtualGroup(
     val id: Long = 0,
+    val providerId: Long,
     val name: String,
     val iconEmoji: String? = null,
     val position: Int = 0,

@@ -18,8 +18,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import java.io.File
 import java.util.concurrent.TimeUnit.SECONDS
 import javax.inject.Singleton
 
@@ -46,6 +48,12 @@ object NetworkModule {
         }
 
         return OkHttpClient.Builder()
+            .cache(
+                Cache(
+                    directory = File(context.cacheDir, "streamvault_http_cache"),
+                    maxSize = 256L * 1024 * 1024
+                )
+            )
             .connectTimeout(NetworkTimeoutConfig.CONNECT_TIMEOUT_SECONDS, SECONDS)
             .readTimeout(NetworkTimeoutConfig.READ_TIMEOUT_SECONDS, SECONDS)
             .writeTimeout(NetworkTimeoutConfig.WRITE_TIMEOUT_SECONDS, SECONDS)

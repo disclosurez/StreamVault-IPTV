@@ -1,8 +1,9 @@
 package com.streamvault.data.util
 
 import java.text.Normalizer
+import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 object AdultContentClassifier {
     private const val MAX_CLASSIFICATION_CACHE_SIZE = 4096
@@ -66,22 +67,29 @@ object AdultContentClassifier {
     )
     private val normalizedStrongKeywords = strongContainsKeywords.map(::normalize).distinct()
     private val normalizedBoundaryKeywords = boundaryKeywords.map(::normalize).distinct()
-    private val classificationCache = ConcurrentHashMap<String, Boolean>()
+    private val classificationCache: MutableMap<String, Boolean> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Boolean>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                return size > MAX_CLASSIFICATION_CACHE_SIZE
+            }
+        }
+    )
 
     fun isAdultCategoryName(name: String?): Boolean {
         if (name.isNullOrBlank()) return false
         val normalized = normalize(name)
-        classificationCache[normalized]?.let { return it }
+        synchronized(classificationCache) {
+            classificationCache[normalized]?.let { return it }
+        }
         val normalizedPadded = " $normalized "
         val isAdult = normalizedStrongKeywords.any { keyword ->
             normalized.contains(keyword)
         } || normalizedBoundaryKeywords.any { keyword ->
             normalizedPadded.contains(" $keyword ")
         }
-        if (classificationCache.size >= MAX_CLASSIFICATION_CACHE_SIZE) {
-            classificationCache.clear()
+        synchronized(classificationCache) {
+            classificationCache[normalized] = isAdult
         }
-        classificationCache[normalized] = isAdult
         return isAdult
     }
 
@@ -99,4 +107,16 @@ object AdultContentClassifier {
             .replace(separatorsRegex, " ")
             .trim()
     }
+
+    internal fun resetCacheForTesting() {
+        synchronized(classificationCache) {
+            classificationCache.clear()
+        }
+    }
+
+    internal fun cacheSizeForTesting(): Int =
+        synchronized(classificationCache) { classificationCache.size }
+
+    internal fun isCachedForTesting(name: String): Boolean =
+        synchronized(classificationCache) { classificationCache.containsKey(normalize(name)) }
 }

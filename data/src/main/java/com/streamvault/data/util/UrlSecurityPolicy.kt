@@ -50,8 +50,10 @@ object UrlSecurityPolicy {
         return when {
             url.isBlank() -> null
             url.startsWith("content://") -> null  // SAF local file; validated by OS file picker
-            isSecureRemoteUrl(url) -> null
-            else -> "EPG URLs must use HTTPS or select a local file."
+            // Allow http:// as well as https:// — many IPTV portals serve their XMLTV
+            // EPG endpoint over plain HTTP on non-standard ports (same policy as playlists).
+            !containsNewlines(url) && hasAllowedScheme(url, playlistSourceSchemes) -> null
+            else -> "EPG URLs must use HTTP, HTTPS, or select a local file."
         }
     }
 

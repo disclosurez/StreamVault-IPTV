@@ -1,5 +1,6 @@
 package com.streamvault.data.repository
 
+import android.database.sqlite.SQLiteException
 import com.streamvault.data.local.dao.*
 import com.streamvault.data.local.entity.*
 import com.streamvault.data.mapper.*
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import com.streamvault.data.util.toFtsPrefixQuery
@@ -56,11 +58,29 @@ class SeriesRepositoryImpl @Inject constructor(
         const val MIN_SEARCH_QUERY_LENGTH = 2
         const val BROWSE_WINDOW_BUFFER = 80
         const val XTREAM_SERIES_CATEGORY_TIMEOUT_MILLIS = 60_000L
+        const val CURSOR_BATCH_SIZE = 40
     }
 
     private data class CachedXtreamProvider(
         val signature: String,
         val provider: XtreamProvider
+    )
+
+    private data class NameCursor(
+        val name: String,
+        val id: Long
+    )
+
+    private data class RatingCursor(
+        val rating: Float,
+        val name: String,
+        val id: Long
+    )
+
+    private data class FreshCursor(
+        val lastModified: Long,
+        val name: String,
+        val id: Long
     )
 
     private val xtreamProviderCache = ConcurrentHashMap<Long, CachedXtreamProvider>()
@@ -221,51 +241,7 @@ class SeriesRepositoryImpl @Inject constructor(
     override fun browseSeries(query: LibraryBrowseQuery): Flow<PagedResult<Series>> {
         return flow {
             query.categoryId?.let { ensureXtreamCategoryLoaded(query.providerId, it) }
-            emitAll(
-                combine(
-                    seriesBrowseSource(query),
-                    seriesBrowseTotalCount(query),
-                    favoriteDao.getAllByType(ContentType.SERIES.name),
-                    playbackHistoryDao.getByProvider(query.providerId)
-                ) { series, totalCount, favorites, history ->
-                    val favoriteIds = favorites
-                        .asSequence()
-                        .filter { it.groupId == null }
-                        .map { it.contentId }
-                        .toSet()
-                    val inProgressIds = history
-                        .asSequence()
-                        .filter { it.contentType == ContentType.SERIES || it.contentType == ContentType.SERIES_EPISODE }
-                        .filter {
-                            it.resumePositionMs > 0L && (
-                                it.totalDurationMs <= 0L ||
-                                    it.resumePositionMs < (it.totalDurationMs * 0.95f).toLong()
-                                )
-                        }
-                        .mapNotNull { it.seriesId ?: it.contentId }
-                        .toSet()
-                    val watchCounts = history
-                        .asSequence()
-                        .filter { it.contentType == ContentType.SERIES || it.contentType == ContentType.SERIES_EPISODE }
-                        .groupBy { it.seriesId ?: it.contentId }
-                        .mapValues { (_, entries) -> entries.maxOf { it.watchCount } }
-
-                    val browsed = applySeriesBrowseQuery(
-                        series = series,
-                        query = query,
-                        favoriteIds = favoriteIds,
-                        inProgressIds = inProgressIds,
-                        watchCounts = watchCounts
-                    )
-
-                    PagedResult(
-                        items = browsed.drop(query.offset).take(query.limit),
-                        totalCount = totalCount,
-                        offset = query.offset,
-                        limit = query.limit
-                    )
-                }
-            )
+            emit(fetchSeriesBrowseResult(query))
         }
     }
 
@@ -274,7 +250,7 @@ class SeriesRepositoryImpl @Inject constructor(
             if (ftsQuery.isNullOrBlank()) {
             flowOf(emptyList())
             } else combine(
-                seriesDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT),
+                safeSeriesSearchFlow(seriesDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT)),
                 preferencesRepository.parentalControlLevel
             ) { entities, level: Int ->
                 if (level == 2) {
@@ -285,6 +261,9 @@ class SeriesRepositoryImpl @Inject constructor(
             }.map { list ->
                 list.map { it.toDomain() }
                     .rankSearchResults(query) { it.name }
+            }.combine(favoriteDao.getAllByType(providerId, ContentType.SERIES.name)) { series, favorites ->
+                val favoriteIds = favorites.map { it.contentId }.toSet()
+                series.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
             }
         }
 
@@ -413,10 +392,13 @@ class SeriesRepositoryImpl @Inject constructor(
             fallbackContentType = ContentType.SERIES_EPISODE,
             fallbackContainerExtension = episode.containerExtension
         )?.let { resolvedStream ->
+            val ext = resolvedStream.containerExtension ?: episode.containerExtension
             Result.success(
                 StreamInfo(
                     url = resolvedStream.url,
                     title = episode.title,
+                    streamType = StreamType.fromContainerExtension(ext),
+                    containerExtension = ext,
                     expirationTime = resolvedStream.expirationTime
                 )
             )
@@ -459,7 +441,7 @@ class SeriesRepositoryImpl @Inject constructor(
                 val ftsQuery = normalizedSearch.toFtsPrefixQuery() ?: return flowOf(emptyList())
                 query.categoryId?.let { categoryId ->
                     combine(
-                        seriesDao.searchByCategory(query.providerId, categoryId, ftsQuery, SEARCH_RESULT_LIMIT),
+                        safeSeriesSearchFlow(seriesDao.searchByCategory(query.providerId, categoryId, ftsQuery, SEARCH_RESULT_LIMIT)),
                         preferencesRepository.parentalControlLevel
                     ) { entities, level ->
                         if (level == 2) entities.filter { !it.isUserProtected } else entities
@@ -668,6 +650,175 @@ class SeriesRepositoryImpl @Inject constructor(
     private fun browseFetchLimit(query: LibraryBrowseQuery): Int =
         (query.offset + query.limit + BROWSE_WINDOW_BUFFER).coerceAtMost(SEARCH_RESULT_LIMIT)
 
+    private suspend fun fetchSeriesBrowseResult(query: LibraryBrowseQuery): PagedResult<Series> {
+        val totalCount = seriesBrowseTotalCount(query).first()
+        val favoriteIds = favoriteDao.getAllByType(query.providerId, ContentType.SERIES.name)
+            .first()
+            .asSequence()
+            .filter { it.groupId == null }
+            .map { it.contentId }
+            .toSet()
+
+        val items = if (supportsCursorBrowse(query)) {
+            fetchSeriesCursorWindow(query, favoriteIds)
+        } else {
+            val series = seriesBrowseSource(query).first()
+            val history = playbackHistoryDao.getByProvider(query.providerId).first()
+            val inProgressIds = history
+                .asSequence()
+                .filter { it.contentType == ContentType.SERIES || it.contentType == ContentType.SERIES_EPISODE }
+                .filter {
+                    it.resumePositionMs > 0L && (
+                        it.totalDurationMs <= 0L ||
+                            it.resumePositionMs < (it.totalDurationMs * 0.95f).toLong()
+                        )
+                }
+                .mapNotNull { it.seriesId ?: it.contentId }
+                .toSet()
+            val watchCounts = history
+                .asSequence()
+                .filter { it.contentType == ContentType.SERIES || it.contentType == ContentType.SERIES_EPISODE }
+                .groupBy { it.seriesId ?: it.contentId }
+                .mapValues { (_, entries) -> entries.maxOf { it.watchCount } }
+
+            applySeriesBrowseQuery(
+                series = series,
+                query = query,
+                favoriteIds = favoriteIds,
+                inProgressIds = inProgressIds,
+                watchCounts = watchCounts
+            ).drop(query.offset).take(query.limit)
+        }
+
+        return PagedResult(
+            items = items,
+            totalCount = totalCount,
+            offset = query.offset,
+            limit = query.limit
+        )
+    }
+
+    private suspend fun fetchSeriesCursorWindow(
+        query: LibraryBrowseQuery,
+        favoriteIds: Set<Long>
+    ): List<Series> {
+        val parentalLevel = preferencesRepository.parentalControlLevel.first()
+        val targetVisibleCount = (query.offset + query.limit).coerceAtLeast(query.limit)
+        val collected = ArrayList<Series>(targetVisibleCount)
+
+        when {
+            query.filterBy.type == LibraryFilterType.ALL &&
+                query.sortBy in setOf(LibrarySortBy.LIBRARY, LibrarySortBy.TITLE) -> {
+                collectSeriesPages<NameCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadSeriesNamePage(query, limit, cursor)
+                }
+            }
+            (query.sortBy == LibrarySortBy.RATING || query.filterBy.type == LibraryFilterType.TOP_RATED) -> {
+                collectSeriesPages<RatingCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadSeriesRatingPage(query, limit, cursor)
+                }
+            }
+            query.sortBy == LibrarySortBy.RELEASE ||
+                query.sortBy == LibrarySortBy.UPDATED ||
+                query.filterBy.type == LibraryFilterType.RECENTLY_UPDATED -> {
+                collectSeriesPages<FreshCursor>(query, parentalLevel, collected, favoriteIds) { limit, cursor ->
+                    loadSeriesFreshPage(query, limit, cursor)
+                }
+            }
+        }
+
+        return collected.drop(query.offset).take(query.limit)
+    }
+
+    private suspend fun <C> collectSeriesPages(
+        query: LibraryBrowseQuery,
+        parentalLevel: Int,
+        collected: MutableList<Series>,
+        favoriteIds: Set<Long>,
+        loadPage: suspend (limit: Int, cursor: C?) -> List<SeriesBrowseEntity>
+    ) {
+        var cursor: C? = null
+        val targetVisibleCount = query.offset + query.limit
+        while (collected.size < targetVisibleCount) {
+            val batch = loadPage(CURSOR_BATCH_SIZE, cursor)
+            if (batch.isEmpty()) {
+                return
+            }
+            val visibleBatch = if (parentalLevel == 2) {
+                batch.filterNot { it.isUserProtected }
+            } else {
+                batch
+            }
+            collected += visibleBatch.map { entity ->
+                val item = entity.toDomain()
+                if (item.id in favoriteIds) item.copy(isFavorite = true) else item
+            }
+            if (batch.size < CURSOR_BATCH_SIZE) {
+                return
+            }
+            @Suppress("UNCHECKED_CAST")
+            cursor = cursorFromQuery(query, batch.last()) as C
+        }
+    }
+
+    private fun cursorFromQuery(query: LibraryBrowseQuery, entity: SeriesBrowseEntity): Any = when {
+        query.filterBy.type == LibraryFilterType.ALL &&
+            query.sortBy in setOf(LibrarySortBy.LIBRARY, LibrarySortBy.TITLE) -> NameCursor(entity.name, entity.id)
+        query.sortBy == LibrarySortBy.RATING || query.filterBy.type == LibraryFilterType.TOP_RATED ->
+            RatingCursor(entity.rating, entity.name, entity.id)
+        else -> FreshCursor(entity.lastModified, entity.name, entity.id)
+    }
+
+    private suspend fun loadSeriesNamePage(query: LibraryBrowseQuery, limit: Int, cursor: NameCursor?): List<SeriesBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) seriesDao.getByProviderCursorPage(query.providerId, limit)
+            else seriesDao.getByProviderCursorPageAfter(query.providerId, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) seriesDao.getByCategoryCursorPage(query.providerId, categoryId, limit)
+            else seriesDao.getByCategoryCursorPageAfter(query.providerId, categoryId, cursor.name, cursor.id, limit)
+        }
+    }
+
+    private suspend fun loadSeriesRatingPage(query: LibraryBrowseQuery, limit: Int, cursor: RatingCursor?): List<SeriesBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) seriesDao.getTopRatedCursorPage(query.providerId, limit)
+            else seriesDao.getTopRatedCursorPageAfter(query.providerId, cursor.rating, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) seriesDao.getTopRatedByCategoryCursorPage(query.providerId, categoryId, limit)
+            else seriesDao.getTopRatedByCategoryCursorPageAfter(query.providerId, categoryId, cursor.rating, cursor.name, cursor.id, limit)
+        }
+    }
+
+    private suspend fun loadSeriesFreshPage(query: LibraryBrowseQuery, limit: Int, cursor: FreshCursor?): List<SeriesBrowseEntity> {
+        val categoryId = query.categoryId
+        return if (categoryId == null) {
+            if (cursor == null) seriesDao.getFreshCursorPage(query.providerId, limit)
+            else seriesDao.getFreshCursorPageAfter(query.providerId, cursor.lastModified, cursor.name, cursor.id, limit)
+        } else {
+            if (cursor == null) seriesDao.getFreshByCategoryCursorPage(query.providerId, categoryId, limit)
+            else seriesDao.getFreshByCategoryCursorPageAfter(query.providerId, categoryId, cursor.lastModified, cursor.name, cursor.id, limit)
+        }
+    }
+
+    private fun supportsCursorBrowse(query: LibraryBrowseQuery): Boolean {
+        if (query.searchQuery.isNotBlank()) return false
+        return when {
+            query.filterBy.type == LibraryFilterType.ALL &&
+                query.sortBy in setOf(
+                    LibrarySortBy.LIBRARY,
+                    LibrarySortBy.TITLE,
+                    LibrarySortBy.RELEASE,
+                    LibrarySortBy.UPDATED,
+                    LibrarySortBy.RATING
+                ) -> true
+            query.filterBy.type == LibraryFilterType.TOP_RATED -> true
+            query.filterBy.type == LibraryFilterType.RECENTLY_UPDATED -> true
+            else -> false
+        }
+    }
+
     private fun applySeriesBrowseQuery(
         series: List<Series>,
         query: LibraryBrowseQuery,
@@ -711,6 +862,15 @@ class SeriesRepositoryImpl @Inject constructor(
             .filterNotNull()
             .any { value -> value.lowercase().contains(normalizedQuery) }
     }
+
+    private fun safeSeriesSearchFlow(source: Flow<List<SeriesBrowseEntity>>): Flow<List<SeriesBrowseEntity>> =
+        source.catch { error ->
+            if (error is SQLiteException) {
+                emit(emptyList<SeriesBrowseEntity>())
+            } else {
+                throw error
+            }
+        }
 
     private suspend fun ensureXtreamCategoryLoaded(providerId: Long, categoryId: Long) {
         val key = "$providerId:$categoryId"

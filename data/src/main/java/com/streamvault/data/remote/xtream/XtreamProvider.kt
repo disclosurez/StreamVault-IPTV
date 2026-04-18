@@ -713,7 +713,8 @@ class XtreamProvider(
                 adultCategoryIds = adultCategoryIds
             ),
             isUserProtected = false,
-            streamId = streamId
+            streamId = streamId,
+            addedAt = added?.trim()?.toLongOrNull() ?: 0L
         )
     }
 

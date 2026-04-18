@@ -504,7 +504,7 @@ class MultiViewViewModel @Inject constructor(
                 }
                 currentProviderId = providerId
                 combine(
-                    favoriteRepository.getFavorites(com.streamvault.domain.model.ContentType.LIVE),
+                    favoriteRepository.getFavorites(providerId, com.streamvault.domain.model.ContentType.LIVE),
                     playbackHistoryRepository.getRecentlyWatchedByProvider(providerId, limit = 12)
                 ) { favorites, history ->
                     val favoriteIds = favorites.map { it.contentId }

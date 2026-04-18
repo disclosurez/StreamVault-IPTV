@@ -63,6 +63,7 @@ import androidx.tv.material3.*
 import com.streamvault.app.R
 import com.streamvault.app.device.rememberIsTelevisionDevice
 import com.streamvault.app.ui.components.dialogs.PremiumDialog
+import com.streamvault.app.ui.components.dialogs.PremiumDialogFooterButton
 import com.streamvault.app.ui.components.shell.StatusPill
 import com.streamvault.app.ui.theme.*
 import com.streamvault.data.util.ProviderInputSanitizer
@@ -339,24 +340,24 @@ fun ProviderSetupScreen(
     }
 
     if (showDiscardDraftDialog) {
-        androidx.compose.material3.AlertDialog(
+        PremiumDialog(
+            title = stringResource(R.string.setup_discard_draft_title),
+            subtitle = stringResource(R.string.setup_discard_draft_body),
             onDismissRequest = { showDiscardDraftDialog = false },
-            title = { Text(stringResource(R.string.setup_discard_draft_title)) },
-            text = { Text(stringResource(R.string.setup_discard_draft_body), color = OnSurface) },
-            confirmButton = {
-                TextButton(
+            content = {},
+            footer = {
+                PremiumDialogFooterButton(
+                    label = stringResource(R.string.setup_discard_draft_cancel),
+                    onClick = { showDiscardDraftDialog = false }
+                )
+                PremiumDialogFooterButton(
+                    label = stringResource(R.string.setup_discard_draft_confirm),
                     onClick = {
                         showDiscardDraftDialog = false
                         onBack()
-                    }
-                ) {
-                    Text(stringResource(R.string.setup_discard_draft_confirm), color = Primary)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDiscardDraftDialog = false }) {
-                    Text(stringResource(R.string.setup_discard_draft_cancel), color = OnSurface)
-                }
+                    },
+                    emphasized = true
+                )
             }
         )
     }

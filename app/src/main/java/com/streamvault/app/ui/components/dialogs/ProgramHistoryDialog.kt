@@ -136,13 +136,14 @@ fun ProgramHistoryDialog(
                                     .border(
                                         width = if (isFocused) 2.dp else 1.dp,
                                         color = if (isFocused) {
-                                            MaterialTheme.colorScheme.primary
+                                            Color.White
                                         } else {
                                             unfocusedBorderColor
                                         },
                                         shape = RoundedCornerShape(8.dp)
                                     ),
                                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
                                 colors = ClickableSurfaceDefaults.colors(
                                     containerColor = Color.Transparent,
                                     focusedContainerColor = focusedContainerColor

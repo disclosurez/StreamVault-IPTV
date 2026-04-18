@@ -98,18 +98,31 @@ class BackupManagerImpl @Inject constructor(
                     username = entity.toDomain().username // Keep username for provider identification
                 )
             }
+            val providerIds = providerEntities.map { it.id }
             val providersById = providers.associateBy { it.id }
 
             // Gather all favorites across all types
-            val liveFavs = favoriteDao.getAllByType("LIVE").first().map { it.toDomain() }
-            val movieFavs = favoriteDao.getAllByType("MOVIE").first().map { it.toDomain() }
-            val seriesFavs = favoriteDao.getAllByType("SERIES").first().map { it.toDomain() }
+            val liveFavs = providerIds.flatMap { providerId ->
+                favoriteDao.getAllByType(providerId, "LIVE").first().map { it.toDomain() }
+            }
+            val movieFavs = providerIds.flatMap { providerId ->
+                favoriteDao.getAllByType(providerId, "MOVIE").first().map { it.toDomain() }
+            }
+            val seriesFavs = providerIds.flatMap { providerId ->
+                favoriteDao.getAllByType(providerId, "SERIES").first().map { it.toDomain() }
+            }
             val allFavorites = liveFavs + movieFavs + seriesFavs
 
             // Gather all custom groups
-            val liveGroups = virtualGroupDao.getByType("LIVE").first().map { it.toDomain() }
-            val movieGroups = virtualGroupDao.getByType("MOVIE").first().map { it.toDomain() }
-            val seriesGroups = virtualGroupDao.getByType("SERIES").first().map { it.toDomain() }
+            val liveGroups = providerIds.flatMap { providerId ->
+                virtualGroupDao.getByType(providerId, "LIVE").first().map { it.toDomain() }
+            }
+            val movieGroups = providerIds.flatMap { providerId ->
+                virtualGroupDao.getByType(providerId, "MOVIE").first().map { it.toDomain() }
+            }
+            val seriesGroups = providerIds.flatMap { providerId ->
+                virtualGroupDao.getByType(providerId, "SERIES").first().map { it.toDomain() }
+            }
             val allGroups = liveGroups + movieGroups + seriesGroups
 
             val playbackHistory = playbackHistoryDao.getAllSync().map { it.toDomain() }
@@ -188,15 +201,20 @@ class BackupManagerImpl @Inject constructor(
             }
 
             val existingProviders = providerDao.getAll().first()
+            val existingProviderIds = existingProviders.map { it.id }
             val existingGroups = buildList {
-                addAll(virtualGroupDao.getByType("LIVE").first())
-                addAll(virtualGroupDao.getByType("MOVIE").first())
-                addAll(virtualGroupDao.getByType("SERIES").first())
+                existingProviderIds.forEach { providerId ->
+                    addAll(virtualGroupDao.getByType(providerId, "LIVE").first())
+                    addAll(virtualGroupDao.getByType(providerId, "MOVIE").first())
+                    addAll(virtualGroupDao.getByType(providerId, "SERIES").first())
+                }
             }
             val existingFavorites = buildList {
-                addAll(favoriteDao.getAllByType("LIVE").first())
-                addAll(favoriteDao.getAllByType("MOVIE").first())
-                addAll(favoriteDao.getAllByType("SERIES").first())
+                existingProviderIds.forEach { providerId ->
+                    addAll(favoriteDao.getAllByType(providerId, "LIVE").first())
+                    addAll(favoriteDao.getAllByType(providerId, "MOVIE").first())
+                    addAll(favoriteDao.getAllByType(providerId, "SERIES").first())
+                }
             }
             val existingHistory = playbackHistoryDao.getAllSync()
             val existingProtectedCategories = existingProviders.flatMap { provider ->
@@ -350,12 +368,19 @@ class BackupManagerImpl @Inject constructor(
                     ).toSecureEntityForBackup(credentialCrypto)
                     providerDao.insert(entity)
                 }
+                val providerIdMap = backupData.providers.orEmpty().mapNotNull { provider ->
+                    providerDao.getByUrlAndUser(provider.serverUrl, provider.username)?.let { stored ->
+                        provider.id to stored.id
+                    }
+                }.toMap()
                 backupData.preferences
                     ?.get("lastActiveProviderId")
                     ?.toLongOrNull()
-                    ?.takeIf { it > 0L }
-                    ?.let { activeId ->
-                        providerDao.setActive(activeId)
+                    ?.let { backupProviderId ->
+                        providerIdMap[backupProviderId]
+                    }
+                    ?.let { resolvedProviderId ->
+                        providerDao.setActive(resolvedProviderId)
                     }
                     importedSections += "Providers"
                 } ?: run { skippedSections += "Providers" }
@@ -365,36 +390,59 @@ class BackupManagerImpl @Inject constructor(
 
             // 3. Restore Virtual Groups
             if (plan.importSavedLibrary) {
+                val providerIdMap = backupData.providers.orEmpty().mapNotNull { provider ->
+                    providerDao.getByUrlAndUser(provider.serverUrl, provider.username)?.let { stored ->
+                        provider.id to stored.id
+                    }
+                }.toMap()
+                val groupIdMap = mutableMapOf<Long, Long>()
                 backupData.virtualGroups?.let { groups ->
                     val existingGroups = buildList {
-                        addAll(virtualGroupDao.getByType("LIVE").first())
-                        addAll(virtualGroupDao.getByType("MOVIE").first())
-                        addAll(virtualGroupDao.getByType("SERIES").first())
+                        providerIdMap.values.distinct().forEach { providerId ->
+                            addAll(virtualGroupDao.getByType(providerId, "LIVE").first())
+                            addAll(virtualGroupDao.getByType(providerId, "MOVIE").first())
+                            addAll(virtualGroupDao.getByType(providerId, "SERIES").first())
+                        }
                     }
                 groups.forEach { group ->
+                    val resolvedProviderId = providerIdMap[group.providerId] ?: return@forEach
                     val conflict = existingGroups.firstOrNull {
+                        it.providerId == resolvedProviderId &&
                         it.name.equals(group.name, ignoreCase = true) &&
                             it.contentType == group.contentType
                     }
                     if (conflict != null && plan.conflictStrategy == BackupConflictStrategy.KEEP_EXISTING) {
+                        groupIdMap[group.id] = conflict.id
                         return@forEach
                     }
-                    virtualGroupDao.insert(group.toEntity())
+                    val insertedId = virtualGroupDao.insert(
+                        group.copy(id = 0L, providerId = resolvedProviderId).toEntity()
+                    )
+                    groupIdMap[group.id] = insertedId
                 }
                 } ?: run { skippedSections += "Saved Library" }
 
             // 4. Restore Favorites
                 backupData.favorites?.let { favs ->
                 favs.forEach { fav ->
+                    val resolvedProviderId = providerIdMap[fav.providerId] ?: return@forEach
+                    val resolvedGroupId = fav.groupId?.let { groupIdMap[it] }
                     val existing = favoriteDao.get(
+                        providerId = resolvedProviderId,
                         contentId = fav.contentId,
                         contentType = fav.contentType.name,
-                        groupId = fav.groupId
+                        groupId = resolvedGroupId
                     )
                     if (existing != null && plan.conflictStrategy == BackupConflictStrategy.KEEP_EXISTING) {
                         return@forEach
                     }
-                    favoriteDao.insert(fav.toEntity())
+                    favoriteDao.insert(
+                        fav.copy(
+                            id = 0L,
+                            providerId = resolvedProviderId,
+                            groupId = resolvedGroupId
+                        ).toEntity()
+                    )
                 }
                 }
                 val categoriesByProviderId = mutableMapOf<Long, List<com.streamvault.domain.model.Category>>()
@@ -432,19 +480,25 @@ class BackupManagerImpl @Inject constructor(
 
             if (plan.importPlaybackHistory) {
                 backupData.playbackHistory?.let { history ->
+                val providerIdMap = backupData.providers.orEmpty().mapNotNull { provider ->
+                    providerDao.getByUrlAndUser(provider.serverUrl, provider.username)?.let { stored ->
+                        provider.id to stored.id
+                    }
+                }.toMap()
                 if (plan.conflictStrategy == BackupConflictStrategy.REPLACE_EXISTING) {
                     playbackHistoryDao.deleteAll()
                 }
                 history.forEach { item ->
+                    val resolvedProviderId = providerIdMap[item.providerId] ?: return@forEach
                     if (plan.conflictStrategy == BackupConflictStrategy.KEEP_EXISTING) {
                         val existing = playbackHistoryDao.get(
                             contentId = item.contentId,
                             contentType = item.contentType.name,
-                            providerId = item.providerId
+                            providerId = resolvedProviderId
                         )
                         if (existing != null) return@forEach
                     }
-                    playbackHistoryDao.insertOrUpdate(item.toEntity())
+                    playbackHistoryDao.insertOrUpdate(item.copy(providerId = resolvedProviderId).toEntity())
                 }
                     movieDao.syncAllWatchProgressFromHistory()
                     episodeDao.syncAllWatchProgressFromHistory()

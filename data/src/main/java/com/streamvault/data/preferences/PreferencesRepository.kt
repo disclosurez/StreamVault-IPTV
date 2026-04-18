@@ -13,12 +13,14 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.streamvault.data.local.dao.ChannelPreferenceDao
+import com.streamvault.data.local.dao.SearchHistoryDao
 import com.streamvault.data.local.entity.ChannelPreferenceEntity
 import com.streamvault.domain.model.ChannelNumberingMode
 import com.streamvault.domain.model.CategorySortMode
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.DecoderMode
 import com.streamvault.domain.model.ActiveLiveSource
+import com.streamvault.domain.model.SearchHistoryScope
 import com.streamvault.domain.manager.ParentalPinVerifier
 import com.streamvault.domain.manager.ParentalControlSessionState
 import com.streamvault.domain.manager.ParentalControlSessionStore
@@ -41,7 +43,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 @Singleton
 class PreferencesRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val channelPreferenceDao: ChannelPreferenceDao
+    private val channelPreferenceDao: ChannelPreferenceDao,
+    private val searchHistoryDao: SearchHistoryDao
 ) : ParentalControlSessionStore, ParentalPinVerifier {
     companion object {
         private const val PIN_SALT_BYTES = 16
@@ -65,6 +68,8 @@ class PreferencesRepository @Inject constructor(
         val APP_LANGUAGE = stringPreferencesKey("app_language")
         val LIVE_TV_CHANNEL_MODE = stringPreferencesKey("live_tv_channel_mode")
         val SHOW_LIVE_SOURCE_SWITCHER = booleanPreferencesKey("show_live_source_switcher")
+        val SHOW_ALL_CHANNELS_CATEGORY = booleanPreferencesKey("show_all_channels_category")
+        val SHOW_RECENT_CHANNELS_CATEGORY = booleanPreferencesKey("show_recent_channels_category")
         val LIVE_TV_CATEGORY_FILTERS = stringPreferencesKey("live_tv_category_filters")
         val LIVE_TV_QUICK_FILTER_VISIBILITY = stringPreferencesKey("live_tv_quick_filter_visibility")
         val LIVE_CHANNEL_NUMBERING_MODE = stringPreferencesKey("live_channel_numbering_mode")
@@ -106,8 +111,10 @@ class PreferencesRepository @Inject constructor(
         val XTREAM_TEXT_CLASSIFICATION = booleanPreferencesKey("xtream_text_classification")
         val XTREAM_BASE64_TEXT_COMPATIBILITY = booleanPreferencesKey("xtream_base64_text_compatibility")
         val XTREAM_TEXT_IMPORT_GENERATION = longPreferencesKey("xtream_text_import_generation")
+        val ZAP_AUTO_REVERT = booleanPreferencesKey("zap_auto_revert")
         val PREVENT_STANDBY_DURING_PLAYBACK = booleanPreferencesKey("prevent_standby_during_playback")
         val AUTO_CHECK_APP_UPDATES = booleanPreferencesKey("auto_check_app_updates")
+        val AUTO_DOWNLOAD_APP_UPDATES = booleanPreferencesKey("auto_download_app_updates")
         val LAST_APP_UPDATE_CHECK_TIMESTAMP = longPreferencesKey("last_app_update_check_timestamp")
         val APP_UPDATE_DOWNLOAD_ID = longPreferencesKey("app_update_download_id")
         val APP_UPDATE_DOWNLOADED_VERSION_NAME = stringPreferencesKey("app_update_downloaded_version_name")
@@ -117,6 +124,23 @@ class PreferencesRepository @Inject constructor(
         val APP_UPDATE_DOWNLOAD_URL = stringPreferencesKey("app_update_download_url")
         val APP_UPDATE_RELEASE_NOTES = stringPreferencesKey("app_update_release_notes")
         val APP_UPDATE_PUBLISHED_AT = stringPreferencesKey("app_update_published_at")
+        val LAST_MAINTENANCE_AT = longPreferencesKey("last_maintenance_at")
+        val LAST_MAINTENANCE_DELETED_PROGRAMS = intPreferencesKey("last_maintenance_deleted_programs")
+        val LAST_MAINTENANCE_DELETED_EXTERNAL_PROGRAMMES = intPreferencesKey("last_maintenance_deleted_external_programmes")
+        val LAST_MAINTENANCE_DELETED_ORPHAN_EPISODES = intPreferencesKey("last_maintenance_deleted_orphan_episodes")
+        val LAST_MAINTENANCE_DELETED_STALE_FAVORITES = intPreferencesKey("last_maintenance_deleted_stale_favorites")
+        val LAST_MAINTENANCE_VACUUM_RAN = booleanPreferencesKey("last_maintenance_vacuum_ran")
+        val LAST_MAINTENANCE_MAIN_DB_BYTES = longPreferencesKey("last_maintenance_main_db_bytes")
+        val LAST_MAINTENANCE_WAL_BYTES = longPreferencesKey("last_maintenance_wal_bytes")
+        val LAST_MAINTENANCE_RECLAIMABLE_BYTES = longPreferencesKey("last_maintenance_reclaimable_bytes")
+        val LAST_MAINTENANCE_CHANNEL_ROWS = longPreferencesKey("last_maintenance_channel_rows")
+        val LAST_MAINTENANCE_MOVIE_ROWS = longPreferencesKey("last_maintenance_movie_rows")
+        val LAST_MAINTENANCE_SERIES_ROWS = longPreferencesKey("last_maintenance_series_rows")
+        val LAST_MAINTENANCE_EPISODE_ROWS = longPreferencesKey("last_maintenance_episode_rows")
+        val LAST_MAINTENANCE_PROGRAM_ROWS = longPreferencesKey("last_maintenance_program_rows")
+        val LAST_MAINTENANCE_EPG_PROGRAMME_ROWS = longPreferencesKey("last_maintenance_epg_programme_rows")
+        val LAST_MAINTENANCE_PLAYBACK_HISTORY_ROWS = longPreferencesKey("last_maintenance_playback_history_rows")
+        val LAST_MAINTENANCE_FAVORITE_ROWS = longPreferencesKey("last_maintenance_favorite_rows")
     }
 
     private object ParentalSessionKeys {
@@ -273,13 +297,7 @@ class PreferencesRepository @Inject constructor(
         preferences[PreferencesKeys.LAST_SPEED_TEST_ESTIMATED] ?: false
     }
 
-    val recentSearchQueries: Flow<List<String>> = context.dataStore.data.map { preferences ->
-        preferences[PreferencesKeys.RECENT_SEARCH_QUERIES]
-            ?.split('|')
-            ?.map { it.trim() }
-            ?.filter { it.isNotBlank() }
-            .orEmpty()
-    }
+    val recentSearchQueries: Flow<List<String>> = getRecentSearchQueries(SearchHistoryScope.ALL, null)
 
     val parentalControlLevel: Flow<Int> = context.dataStore.data
         .map { preferences ->
@@ -381,6 +399,10 @@ class PreferencesRepository @Inject constructor(
         preferences[PreferencesKeys.AUTO_CHECK_APP_UPDATES] ?: true
     }
 
+    val autoDownloadAppUpdates: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.AUTO_DOWNLOAD_APP_UPDATES] ?: false
+    }
+
     val lastAppUpdateCheckTimestamp: Flow<Long?> = context.dataStore.data.map { preferences ->
         preferences[PreferencesKeys.LAST_APP_UPDATE_CHECK_TIMESTAMP]?.takeIf { it > 0L }
     }
@@ -417,6 +439,39 @@ class PreferencesRepository @Inject constructor(
         preferences[PreferencesKeys.APP_UPDATE_PUBLISHED_AT]?.takeIf { it.isNotBlank() }
     }
 
+    val lastMaintenanceSnapshot: Flow<DatabaseMaintenanceSnapshot?> = context.dataStore.data.map { preferences ->
+        val ranAt = preferences[PreferencesKeys.LAST_MAINTENANCE_AT] ?: return@map null
+        DatabaseMaintenanceSnapshot(
+            ranAt = ranAt,
+            deletedPrograms = preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_PROGRAMS] ?: 0,
+            deletedExternalProgrammes = preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_EXTERNAL_PROGRAMMES] ?: 0,
+            deletedOrphanEpisodes = preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_ORPHAN_EPISODES] ?: 0,
+            deletedStaleFavorites = preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_STALE_FAVORITES] ?: 0,
+            vacuumRan = preferences[PreferencesKeys.LAST_MAINTENANCE_VACUUM_RAN] ?: false,
+            mainDbBytes = preferences[PreferencesKeys.LAST_MAINTENANCE_MAIN_DB_BYTES] ?: 0L,
+            walBytes = preferences[PreferencesKeys.LAST_MAINTENANCE_WAL_BYTES] ?: 0L,
+            reclaimableBytes = preferences[PreferencesKeys.LAST_MAINTENANCE_RECLAIMABLE_BYTES] ?: 0L,
+            channelRows = preferences[PreferencesKeys.LAST_MAINTENANCE_CHANNEL_ROWS] ?: 0L,
+            movieRows = preferences[PreferencesKeys.LAST_MAINTENANCE_MOVIE_ROWS] ?: 0L,
+            seriesRows = preferences[PreferencesKeys.LAST_MAINTENANCE_SERIES_ROWS] ?: 0L,
+            episodeRows = preferences[PreferencesKeys.LAST_MAINTENANCE_EPISODE_ROWS] ?: 0L,
+            programRows = preferences[PreferencesKeys.LAST_MAINTENANCE_PROGRAM_ROWS] ?: 0L,
+            epgProgrammeRows = preferences[PreferencesKeys.LAST_MAINTENANCE_EPG_PROGRAMME_ROWS] ?: 0L,
+            playbackHistoryRows = preferences[PreferencesKeys.LAST_MAINTENANCE_PLAYBACK_HISTORY_ROWS] ?: 0L,
+            favoriteRows = preferences[PreferencesKeys.LAST_MAINTENANCE_FAVORITE_ROWS] ?: 0L
+        )
+    }
+
+    val zapAutoRevert: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.ZAP_AUTO_REVERT] ?: true
+    }
+
+    suspend fun setZapAutoRevert(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.ZAP_AUTO_REVERT] = enabled
+        }
+    }
+
     suspend fun setPreventStandbyDuringPlayback(prevent: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.PREVENT_STANDBY_DURING_PLAYBACK] = prevent
@@ -426,6 +481,12 @@ class PreferencesRepository @Inject constructor(
     suspend fun setAutoCheckAppUpdates(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.AUTO_CHECK_APP_UPDATES] = enabled
+        }
+    }
+
+    suspend fun setAutoDownloadAppUpdates(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.AUTO_DOWNLOAD_APP_UPDATES] = enabled
         }
     }
 
@@ -498,6 +559,48 @@ class PreferencesRepository @Inject constructor(
                 } else {
                     preferences[PreferencesKeys.APP_UPDATE_PUBLISHED_AT] = publishedAt
                 }
+            }
+        }
+    }
+
+    suspend fun setLastMaintenanceSnapshot(snapshot: DatabaseMaintenanceSnapshot?) {
+        context.dataStore.edit { preferences ->
+            if (snapshot == null) {
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_AT)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_DELETED_PROGRAMS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_DELETED_EXTERNAL_PROGRAMMES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_DELETED_ORPHAN_EPISODES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_DELETED_STALE_FAVORITES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_VACUUM_RAN)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_MAIN_DB_BYTES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_WAL_BYTES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_RECLAIMABLE_BYTES)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_CHANNEL_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_MOVIE_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_SERIES_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_EPISODE_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_PROGRAM_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_EPG_PROGRAMME_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_PLAYBACK_HISTORY_ROWS)
+                preferences.remove(PreferencesKeys.LAST_MAINTENANCE_FAVORITE_ROWS)
+            } else {
+                preferences[PreferencesKeys.LAST_MAINTENANCE_AT] = snapshot.ranAt
+                preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_PROGRAMS] = snapshot.deletedPrograms
+                preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_EXTERNAL_PROGRAMMES] = snapshot.deletedExternalProgrammes
+                preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_ORPHAN_EPISODES] = snapshot.deletedOrphanEpisodes
+                preferences[PreferencesKeys.LAST_MAINTENANCE_DELETED_STALE_FAVORITES] = snapshot.deletedStaleFavorites
+                preferences[PreferencesKeys.LAST_MAINTENANCE_VACUUM_RAN] = snapshot.vacuumRan
+                preferences[PreferencesKeys.LAST_MAINTENANCE_MAIN_DB_BYTES] = snapshot.mainDbBytes
+                preferences[PreferencesKeys.LAST_MAINTENANCE_WAL_BYTES] = snapshot.walBytes
+                preferences[PreferencesKeys.LAST_MAINTENANCE_RECLAIMABLE_BYTES] = snapshot.reclaimableBytes
+                preferences[PreferencesKeys.LAST_MAINTENANCE_CHANNEL_ROWS] = snapshot.channelRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_MOVIE_ROWS] = snapshot.movieRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_SERIES_ROWS] = snapshot.seriesRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_EPISODE_ROWS] = snapshot.episodeRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_PROGRAM_ROWS] = snapshot.programRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_EPG_PROGRAMME_ROWS] = snapshot.epgProgrammeRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_PLAYBACK_HISTORY_ROWS] = snapshot.playbackHistoryRows
+                preferences[PreferencesKeys.LAST_MAINTENANCE_FAVORITE_ROWS] = snapshot.favoriteRows
             }
         }
     }
@@ -653,17 +756,56 @@ class PreferencesRepository @Inject constructor(
         }
     }
 
+    fun getRecentSearchQueries(
+        scope: SearchHistoryScope,
+        providerId: Long?,
+        limit: Int = 6
+    ): Flow<List<String>> {
+        return searchHistoryDao.observeRecent(scope.name, searchHistoryProviderKey(providerId), limit)
+            .map { rows -> rows.map { it.query } }
+    }
+
+    suspend fun recordRecentSearchQuery(
+        query: String,
+        scope: SearchHistoryScope,
+        providerId: Long?,
+        usedAt: Long = System.currentTimeMillis()
+    ) {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return
+        searchHistoryDao.record(
+            query = normalized,
+            contentScope = scope.name,
+            providerId = searchHistoryProviderKey(providerId),
+            usedAt = usedAt
+        )
+        clearLegacyRecentSearchQueries()
+    }
+
+    suspend fun clearRecentSearchQueries(
+        scope: SearchHistoryScope,
+        providerId: Long?
+    ) {
+        searchHistoryDao.deleteByScope(scope.name, searchHistoryProviderKey(providerId))
+        clearLegacyRecentSearchQueries()
+    }
+
     suspend fun setRecentSearchQueries(queries: List<String>) {
-        context.dataStore.edit { preferences ->
-            val normalized = queries
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-            if (normalized.isEmpty()) {
-                preferences.remove(PreferencesKeys.RECENT_SEARCH_QUERIES)
-            } else {
-                preferences[PreferencesKeys.RECENT_SEARCH_QUERIES] = normalized.joinToString("|")
+        searchHistoryDao.deleteByScope(SearchHistoryScope.ALL.name, searchHistoryProviderKey(null))
+        var usedAt = System.currentTimeMillis()
+        queries
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+            .forEach { query ->
+                searchHistoryDao.record(
+                    query = query,
+                    contentScope = SearchHistoryScope.ALL.name,
+                    providerId = searchHistoryProviderKey(null),
+                    usedAt = usedAt--
+                )
             }
-        }
+        clearLegacyRecentSearchQueries()
     }
 
     suspend fun setParentalPin(pin: String) {
@@ -804,6 +946,26 @@ class PreferencesRepository @Inject constructor(
     suspend fun setShowLiveSourceSwitcher(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.SHOW_LIVE_SOURCE_SWITCHER] = enabled
+        }
+    }
+
+    val showAllChannelsCategory: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.SHOW_ALL_CHANNELS_CATEGORY] ?: true
+    }
+
+    suspend fun setShowAllChannelsCategory(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SHOW_ALL_CHANNELS_CATEGORY] = enabled
+        }
+    }
+
+    val showRecentChannelsCategory: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.SHOW_RECENT_CHANNELS_CATEGORY] ?: true
+    }
+
+    suspend fun setShowRecentChannelsCategory(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SHOW_RECENT_CHANNELS_CATEGORY] = enabled
         }
     }
 
@@ -1128,6 +1290,7 @@ class PreferencesRepository @Inject constructor(
 
     suspend fun clearAllRecentData() {
         channelPreferenceDao.deleteAll()
+        searchHistoryDao.deleteAll()
         context.dataStore.edit { preferences ->
             val keysToRemove = preferences.asMap().keys.filter { key ->
                 key.name.startsWith("last_live_category_id_") || 
@@ -1152,6 +1315,14 @@ class PreferencesRepository @Inject constructor(
 
     private fun pinnedCategoriesKey(providerId: Long, type: ContentType): String =
         "pinned_categories_${providerId}_${type.name}"
+
+    private suspend fun clearLegacyRecentSearchQueries() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(PreferencesKeys.RECENT_SEARCH_QUERIES)
+        }
+    }
+
+    private fun searchHistoryProviderKey(providerId: Long?): Long = providerId ?: 0L
 
 
     private fun List<String>.normalizeLiveTvCategoryFilters(): List<String> {
@@ -1235,4 +1406,24 @@ class PreferencesRepository @Inject constructor(
 data class ParentalPinBackupData(
     val hash: String,
     val saltBase64: String
+)
+
+data class DatabaseMaintenanceSnapshot(
+    val ranAt: Long,
+    val deletedPrograms: Int,
+    val deletedExternalProgrammes: Int,
+    val deletedOrphanEpisodes: Int,
+    val deletedStaleFavorites: Int,
+    val vacuumRan: Boolean,
+    val mainDbBytes: Long,
+    val walBytes: Long,
+    val reclaimableBytes: Long,
+    val channelRows: Long,
+    val movieRows: Long,
+    val seriesRows: Long,
+    val episodeRows: Long,
+    val programRows: Long,
+    val epgProgrammeRows: Long,
+    val playbackHistoryRows: Long,
+    val favoriteRows: Long
 )
