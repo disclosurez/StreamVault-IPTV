@@ -114,7 +114,7 @@ class ValidateAndAddProviderTest {
                 url = "file://playlist.m3u",
                 name = "Local Playlist",
                 epgSyncMode = ProviderEpgSyncMode.SKIP,
-                m3uVodClassificationEnabled = true,
+                m3uVodClassificationEnabled = false,
                 id = 11L
             )
         )
