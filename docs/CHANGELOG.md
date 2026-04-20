@@ -3,11 +3,18 @@
 All notable product changes are recorded in this document.
 ## [1.0.7] - 2026-04-20
 
+### Added
+
+- Added Stalker Portal provider support.
+
 ### Fixed
 
+- Fixed TV Guide startup loading full large categories before first render.
 - Fixed startup crashes on some Android 9 devices when secure preference storage fails to initialize.
 - Fixed Picture-in-Picture setup on devices that report invalid or unsupported video aspect ratios.
-- Fixed crash on launch for users upgrading from 1.0.4 (or earlier) who had previously deleted a provider. Because SQLite foreign-key enforcement was never enabled at the database layer, `ON DELETE CASCADE` never fired when a provider was removed. Channels, movies, and series belonging to that provider remained in the database with a now-invalid `provider_id`. When the 1.0.5 migration ran to attach favorites to their provider, it resolved each favorite's provider by looking up the content row — which still existed — and carried the orphaned `provider_id` into the new table. The subsequent FK integrity check then found the violation and threw an `IllegalStateException`, crashing the app on every subsequent launch. The fix purges orphaned content rows at the start of that migration so any favorites that referenced them are silently dropped instead of producing an unresolvable FK violation.
+- Fixed launch crashes for some upgrades from 1.0.4 or earlier caused by orphaned provider content left behind by older deletes.
+- Fixed first-frame video freezes on some devices in fullscreen, live preview, and multiview playback.
+- Fixed some playback failures not retrying after video had already started.
 
 ---
 

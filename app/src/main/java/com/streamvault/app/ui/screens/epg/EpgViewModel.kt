@@ -1181,8 +1181,8 @@ class EpgViewModel @Inject constructor(
         request: GuideBaseRequest
     ) = when (request.resolvedCategoryId) {
         ChannelRepository.ALL_CHANNELS_ID -> combine(
-            channelRepository.getChannelsByNumber(providerId, request.resolvedCategoryId),
-            channelRepository.getChannelsWithoutErrors(providerId, request.resolvedCategoryId),
+            channelRepository.getChannelsByCategoryPage(providerId, request.resolvedCategoryId, MAX_CHANNELS),
+            channelRepository.getChannelsWithoutErrorsPage(providerId, request.resolvedCategoryId, MAX_CHANNELS),
             favoriteRepository.getFavorites(providerId, ContentType.LIVE)
         ) { channelsByNumber, healthyChannels, favorites ->
             val favoriteIds = favorites.map { it.contentId }.toSet()
@@ -1203,8 +1203,8 @@ class EpgViewModel @Inject constructor(
             .flatMapLatest { ids -> loadGuideChannelsByOrderedIds(ids, providerId) }
 
         else -> combine(
-            channelRepository.getChannelsByNumber(providerId, request.resolvedCategoryId),
-            channelRepository.getChannelsWithoutErrors(providerId, request.resolvedCategoryId),
+            channelRepository.getChannelsByCategoryPage(providerId, request.resolvedCategoryId, MAX_CHANNELS),
+            channelRepository.getChannelsWithoutErrorsPage(providerId, request.resolvedCategoryId, MAX_CHANNELS),
             favoriteRepository.getFavorites(providerId, ContentType.LIVE)
         ) { channelsByNumber, healthyChannels, favorites ->
             val favoriteIds = favorites.map { it.contentId }.toSet()
@@ -1330,7 +1330,6 @@ class EpgViewModel @Inject constructor(
     ) {
         guideFallbackJob?.cancel()
         if (channels.isEmpty()) {
-            guideFallbackJob = null
             return
         }
 
