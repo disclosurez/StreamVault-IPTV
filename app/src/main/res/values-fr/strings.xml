@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Terminez d’abord la configuration, puis récupérez automatiquement les données du guide en arrière-plan.</string>
     <string name="setup_epg_sync_mode_skip_title">Ignorer l’EPG pour l’instant</string>
     <string name="setup_epg_sync_mode_skip_description">Ne pas récupérer automatiquement les données du guide. Vous pourrez actualiser l’EPG plus tard dans les Paramètres.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker peut utiliser le guide natif du portail lorsque XMLTV est absent ou indisponible. Le chargement immédiat l’importe pendant la configuration, le chargement en arrière-plan le reporte et l’option d’ignorer laisse le guide se charger à la demande.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Téléchargez les chaînes en direct et importez le guide du portail Stalker pendant la configuration. Si XMLTV est configuré et fonctionne, il est utilisé en priorité.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Terminez d’abord la configuration, puis importez le guide du portail Stalker en arrière-plan. Si XMLTV est configuré et fonctionne, il est utilisé en priorité.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">N’importez pas automatiquement les données du guide en bloc. Les données du guide en direct peuvent toujours se charger à la demande lorsque vous parcourez les chaînes.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Fichier</string>

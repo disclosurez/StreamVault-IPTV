@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Nejprve dokončit nastavení a poté automaticky stáhnout data průvodce na pozadí.</string>
     <string name="setup_epg_sync_mode_skip_title">EPG zatím přeskočit</string>
     <string name="setup_epg_sync_mode_skip_description">Nesynchronizovat data průvodce automaticky. EPG můžete později obnovit v Nastavení.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker může použít nativní průvodce portálu, když XMLTV chybí nebo není dostupné. Volba načíst hned jej importuje během nastavení, načtení na pozadí to odloží a přeskočit ponechá načítání průvodce na vyžádání.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Během nastavení stáhnout živé kanály a importovat průvodce portálu Stalker. Pokud je XMLTV nakonfigurováno a funguje, použije se nejdříve.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Nejprve dokončete nastavení a potom na pozadí importujte průvodce portálu Stalker. Pokud je XMLTV nakonfigurováno a funguje, použije se nejdříve.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Neimportujte automaticky hromadná data průvodce. Data živého průvodce lze při procházení kanálů stále načítat na vyžádání.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Soubor</string>

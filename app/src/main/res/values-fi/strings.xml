@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Viimeistele asetukset ensin, sitten hae opastiedot automaattisesti taustalla.</string>
     <string name="setup_epg_sync_mode_skip_title">Ohita EPG toistaiseksi</string>
     <string name="setup_epg_sync_mode_skip_description">Älä hae opastietoja automaattisesti. Voit päivittää EPG:n myöhemmin asetuksista.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker voi käyttää portaalin omaa ohjelmaopasta, kun XMLTV puuttuu tai ei ole käytettävissä. Lataa heti tuo sen asetuksen aikana, taustalataus lykkää sitä ja ohitus jättää oppaan latauksen pyynnöstä tehtäväksi.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Lataa live-kanavat ja tuo Stalker-portaalin opas asetuksen aikana. Jos XMLTV on määritetty ja toimii, sitä käytetään ensin.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Viimeistele asetus ensin ja tuo sitten Stalker-portaalin opas taustalla. Jos XMLTV on määritetty ja toimii, sitä käytetään ensin.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Älä tuo opastietoja automaattisesti massana. Live-oppaan tiedot voidaan silti ladata pyynnöstä, kun selaat kanavia.</string>
     <string name="setup_m3u_hint">M3U-URL</string>
     <string name="setup_tab_url">URL-osoite</string>
     <string name="setup_tab_file">Tiedosto</string>

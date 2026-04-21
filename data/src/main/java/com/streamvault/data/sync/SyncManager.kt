@@ -20,6 +20,7 @@ import com.streamvault.data.mapper.toEntity
 import com.streamvault.data.parser.M3uParser
 import com.streamvault.data.remote.stalker.StalkerApiService
 import com.streamvault.data.remote.stalker.StalkerProvider
+import com.streamvault.data.remote.stalker.StalkerProviderProfile
 import com.streamvault.data.remote.dto.XtreamCategory
 import com.streamvault.data.remote.dto.XtreamSeriesItem
 import com.streamvault.data.remote.dto.XtreamStream
@@ -95,6 +96,7 @@ private const val XTREAM_RECOVERY_ABORT_WARNING_SUFFIX =
 private const val XTREAM_AVOID_FULL_CATALOG_COOLDOWN_MILLIS = 6 * 60 * 60 * 1000L
 private const val XTREAM_MOVIE_REQUEST_TIMEOUT_MILLIS = 60_000L
 private const val XTREAM_SERIES_REQUEST_TIMEOUT_MILLIS = 60_000L
+private const val STALKER_GUIDE_PROGRAM_BATCH_SIZE = 500
 
 enum class SyncRepairSection {
     LIVE,
@@ -863,21 +865,11 @@ class SyncManager @Inject constructor(
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastLiveSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(provider.id, onProgress, "Downloading Live TV...")
             val hiddenLiveCategoryIds = preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.LIVE).first()
-            val categories = requireResult(api.getLiveCategories(), "Failed to load live categories")
-            val channels = loadStalkerChannelsByCategory(api, categories, onProgress)
+            val liveCatalogResult = loadStalkerLiveCatalog(api, provider, onProgress)
             val liveCatalog = mergeVisibleLiveSyncWithHiddenStoredContent(
                 providerId = provider.id,
-                visibleCategories = categories.map { category ->
-                    CategoryEntity(
-                        providerId = provider.id,
-                        categoryId = category.id,
-                        name = category.name,
-                        parentId = category.parentId,
-                        type = ContentType.LIVE,
-                        isAdult = category.isAdult
-                    )
-                },
-                visibleChannels = channels.map { it.toEntity() },
+                visibleCategories = liveCatalogResult.categories,
+                visibleChannels = liveCatalogResult.channels.map { it.toEntity() },
                 hiddenLiveCategoryIds = hiddenLiveCategoryIds
             )
             val acceptedCount = syncCatalogStore.replaceLiveCatalog(
@@ -891,13 +883,13 @@ class SyncManager @Inject constructor(
                 liveCount = acceptedCount
             )
             syncMetadataRepository.updateMetadata(metadata)
+            warnings += liveCatalogResult.warnings
         }
 
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastMovieSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(provider.id, onProgress, "Downloading Movies...")
             val categories = requireResult(api.getVodCategories(), "Failed to load movie categories")
-            val movies = loadStalkerMoviesByCategory(api, categories, onProgress)
-            val acceptedCount = syncCatalogStore.replaceMovieCatalog(
+            syncCatalogStore.replaceMovieCatalog(
                 providerId = provider.id,
                 categories = categories.map { category ->
                     CategoryEntity(
@@ -909,16 +901,16 @@ class SyncManager @Inject constructor(
                         isAdult = category.isAdult
                     )
                 },
-                movies = movies.asSequence().map { it.toEntity() }
+                movies = emptySequence()
             )
             metadata = metadata.copy(
                 lastMovieSync = now,
                 lastMovieAttempt = now,
                 lastMovieSuccess = now,
-                movieCount = acceptedCount,
-                movieSyncMode = VodSyncMode.FULL,
+                movieCount = 0,
+                movieSyncMode = VodSyncMode.LAZY_BY_CATEGORY,
                 movieWarningsCount = 0,
-                movieCatalogStale = false
+                movieCatalogStale = true
             )
             syncMetadataRepository.updateMetadata(metadata)
         }
@@ -926,8 +918,7 @@ class SyncManager @Inject constructor(
         if (force || ContentCachePolicy.shouldRefresh(metadata.lastSeriesSuccess, ContentCachePolicy.CATALOG_TTL_MILLIS, now)) {
             progress(provider.id, onProgress, "Downloading Series...")
             val categories = requireResult(api.getSeriesCategories(), "Failed to load series categories")
-            val series = loadStalkerSeriesByCategory(api, categories, onProgress)
-            val acceptedCount = syncCatalogStore.replaceSeriesCatalog(
+            syncCatalogStore.replaceSeriesCatalog(
                 providerId = provider.id,
                 categories = categories.map { category ->
                     CategoryEntity(
@@ -939,12 +930,12 @@ class SyncManager @Inject constructor(
                         isAdult = category.isAdult
                     )
                 },
-                series = series.asSequence().map { it.toEntity() }
+                series = emptySequence()
             )
             metadata = metadata.copy(
                 lastSeriesSync = now,
                 lastSeriesSuccess = now,
-                seriesCount = acceptedCount
+                seriesCount = 0
             )
             syncMetadataRepository.updateMetadata(metadata)
         }
@@ -1032,30 +1023,13 @@ class SyncManager @Inject constructor(
             }
 
             ProviderType.STALKER_PORTAL -> {
-                val currentEpgUrl = providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
-                if (!currentEpgUrl.isNullOrBlank() && (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSuccess, ContentCachePolicy.EPG_TTL_MILLIS, now))) {
-                    val epgValidationError = UrlSecurityPolicy.validateOptionalEpgUrl(currentEpgUrl)
-                    if (epgValidationError != null) {
-                        warnings.add(epgValidationError)
-                    } else {
-                        try {
-                            progress(provider.id, onProgress, "Downloading EPG...")
-                            retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
-                            updatedMetadata = updatedMetadata.copy(
-                                lastEpgSync = now,
-                                lastEpgSuccess = now,
-                                epgCount = programDao.countByProvider(provider.id)
-                            )
-                            syncMetadataRepository.updateMetadata(updatedMetadata)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Log.e(TAG, "EPG sync failed (non-fatal): ${sanitizeThrowableMessage(e)}")
-                            warnings.add("Portal XMLTV sync failed; live guide will fall back to on-demand Stalker data.")
-                        }
-                    }
-                } else {
-                    warnings.add("No XMLTV URL configured; live guide will use on-demand portal data when available.")
+                if (force || ContentCachePolicy.shouldRefresh(updatedMetadata.lastEpgSuccess, ContentCachePolicy.EPG_TTL_MILLIS, now)) {
+                    warnings += syncStalkerPreferredEpg(
+                        provider = provider,
+                        now = now,
+                        onProgress = onProgress
+                    )
+                    updatedMetadata = syncMetadataRepository.getMetadata(provider.id) ?: updatedMetadata
                 }
             }
         }
@@ -1081,6 +1055,18 @@ class SyncManager @Inject constructor(
     ) {
         progress(provider.id, onProgress, "Retrying EPG...")
         val hiddenLiveCategoryIds = preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.LIVE).first()
+        if (provider.type == ProviderType.STALKER_PORTAL) {
+            syncStalkerPreferredEpg(
+                provider = provider,
+                now = System.currentTimeMillis(),
+                onProgress = onProgress
+            )
+            progress(provider.id, onProgress, "Refreshing external EPG sources...")
+            epgSourceRepository.refreshAllForProvider(provider.id)
+            progress(provider.id, onProgress, "Resolving EPG mappings...")
+            epgSourceRepository.resolveForProvider(provider.id, hiddenLiveCategoryIds)
+            return
+        }
         val epgUrl = when (provider.type) {
             ProviderType.XTREAM_CODES -> {
                 val base = provider.serverUrl.trimEnd('/')
@@ -1124,6 +1110,168 @@ class SyncManager @Inject constructor(
         epgSourceRepository.refreshAllForProvider(provider.id)
         progress(provider.id, onProgress, "Resolving EPG mappings...")
         epgSourceRepository.resolveForProvider(provider.id, hiddenLiveCategoryIds)
+    }
+
+    private suspend fun syncStalkerPreferredEpg(
+        provider: Provider,
+        now: Long,
+        onProgress: ((String) -> Unit)?
+    ): List<String> {
+        val warnings = mutableListOf<String>()
+        val currentEpgUrl = providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
+        var shouldUseNativeGuide = currentEpgUrl.isBlank()
+
+        if (currentEpgUrl.isNotBlank()) {
+            val epgValidationError = UrlSecurityPolicy.validateOptionalEpgUrl(currentEpgUrl)
+            if (epgValidationError != null) {
+                Log.w(TAG, "Portal XMLTV URL invalid for provider ${provider.id}: $epgValidationError")
+                warnings.add("Portal XMLTV URL is invalid; using the Stalker portal guide instead.")
+                shouldUseNativeGuide = true
+            } else {
+                try {
+                    progress(provider.id, onProgress, "Downloading EPG...")
+                    retryTransient { epgRepository.refreshEpg(provider.id, currentEpgUrl) }
+                    val epgCount = programDao.countByProvider(provider.id)
+                    if (epgCount > 0) {
+                        syncMetadataRepository.updateMetadata(
+                            (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)).copy(
+                                lastEpgSync = now,
+                                lastEpgSuccess = now,
+                                epgCount = epgCount
+                            )
+                        )
+                    } else {
+                        warnings.add("Portal XMLTV imported zero programs; using the Stalker portal guide instead.")
+                        shouldUseNativeGuide = true
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Portal XMLTV sync failed for provider ${provider.id}: ${sanitizeThrowableMessage(e)}")
+                    warnings.add("Portal XMLTV sync failed; using the Stalker portal guide instead.")
+                    shouldUseNativeGuide = true
+                }
+            }
+        }
+
+        if (shouldUseNativeGuide) {
+            warnings += syncStalkerPortalEpg(
+                provider = provider,
+                now = now,
+                onProgress = onProgress
+            )
+        }
+
+        return warnings
+    }
+
+    private suspend fun syncStalkerPortalEpg(
+        provider: Provider,
+        now: Long,
+        onProgress: ((String) -> Unit)?
+    ): List<String> {
+        val channels = channelDao.getGuideSyncEntriesByProvider(provider.id)
+        if (channels.isEmpty()) {
+            return emptyList()
+        }
+
+        val api = createStalkerSyncProvider(provider)
+        val failedChannels = mutableListOf<String>()
+        val insertBuffer = ArrayList<com.streamvault.data.local.entity.ProgramEntity>(STALKER_GUIDE_PROGRAM_BATCH_SIZE)
+        var replacedExistingGuide = false
+
+        suspend fun flushPrograms() {
+            if (insertBuffer.isEmpty()) return
+            val chunk = insertBuffer.toList()
+            insertBuffer.clear()
+            transactionRunner.inTransaction {
+                if (!replacedExistingGuide) {
+                    programDao.deleteByProvider(provider.id)
+                    replacedExistingGuide = true
+                }
+                programDao.insertAll(chunk)
+            }
+        }
+
+        channels.forEachIndexed { index, channel ->
+            val channelKey = channel.epgChannelId?.takeIf { it.isNotBlank() } ?: channel.streamId.toString()
+            val channelName = channel.name.ifBlank { channelKey }
+            progress(provider.id, onProgress, "Downloading portal EPG... ${index + 1} of ${channels.size}")
+            runCatching {
+                requireResult(
+                    api.getEpg(channelKey),
+                    "Failed to load Stalker guide for $channelName"
+                )
+            }.onSuccess { programs ->
+                programs
+                    .asSequence()
+                    .filter { program -> program.endTime > program.startTime }
+                    .forEach { program ->
+                        insertBuffer += program.copy(
+                            providerId = provider.id,
+                            channelId = channelKey
+                        ).toEntity()
+                        if (insertBuffer.size >= STALKER_GUIDE_PROGRAM_BATCH_SIZE) {
+                            flushPrograms()
+                        }
+                    }
+            }.onFailure { error ->
+                failedChannels += channelName
+                Log.w(
+                    TAG,
+                    "Stalker portal EPG fetch failed for provider ${provider.id} channel $channelKey",
+                    error
+                )
+            }
+        }
+
+        flushPrograms()
+
+        if (!replacedExistingGuide && failedChannels.isNotEmpty()) {
+            return listOf(
+                "Stalker portal guide sync failed for all ${failedChannels.size} channels; keeping existing guide data."
+            )
+        }
+
+        if (!replacedExistingGuide) {
+            transactionRunner.inTransaction {
+                programDao.deleteByProvider(provider.id)
+            }
+        }
+
+        val epgCount = programDao.countByProvider(provider.id)
+        syncMetadataRepository.updateMetadata(
+            (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)).copy(
+                lastEpgSync = now,
+                lastEpgSuccess = now,
+                epgCount = epgCount
+            )
+        )
+
+        val warnings = mutableListOf<String>()
+        if (epgCount == 0) {
+            warnings.add("Stalker portal guide import returned zero programs.")
+        }
+        if (failedChannels.isNotEmpty()) {
+            warnings.add(
+                "Stalker portal guide imported $epgCount programs, but ${failedChannels.size} channels failed (${summarizeChannelNames(failedChannels)})."
+            )
+        }
+        return warnings
+    }
+
+    private fun summarizeChannelNames(channelNames: List<String>): String {
+        val distinctNames = channelNames.distinct()
+        if (distinctNames.isEmpty()) {
+            return "unknown channels"
+        }
+        val preview = distinctNames.take(3).joinToString()
+        val remaining = distinctNames.size - 3
+        return if (remaining > 0) {
+            "$preview, and $remaining more"
+        } else {
+            preview
+        }
     }
 
     private suspend fun syncLiveOnly(
@@ -1256,21 +1404,11 @@ class SyncManager @Inject constructor(
                 progress(provider.id, onProgress, "Retrying Live TV...")
                 val api = createStalkerSyncProvider(provider)
                 val hiddenLiveCategoryIds = preferencesRepository.getHiddenCategoryIds(provider.id, ContentType.LIVE).first()
-                val categories = requireResult(api.getLiveCategories(), "Failed to load live categories")
-                val channels = loadStalkerChannelsByCategory(api, categories, onProgress)
+                val liveCatalogResult = loadStalkerLiveCatalog(api, provider, onProgress)
                 val liveCatalog = mergeVisibleLiveSyncWithHiddenStoredContent(
                     providerId = provider.id,
-                    visibleCategories = categories.map { category ->
-                        CategoryEntity(
-                            providerId = provider.id,
-                            categoryId = category.id,
-                            name = category.name,
-                            parentId = category.parentId,
-                            type = ContentType.LIVE,
-                            isAdult = category.isAdult
-                        )
-                    },
-                    visibleChannels = channels.map { it.toEntity() },
+                    visibleCategories = liveCatalogResult.categories,
+                    visibleChannels = liveCatalogResult.channels.map { it.toEntity() },
                     hiddenLiveCategoryIds = hiddenLiveCategoryIds
                 )
                 val acceptedCount = syncCatalogStore.replaceLiveCatalog(provider.id, liveCatalog.categories, liveCatalog.channels)
@@ -1989,13 +2127,136 @@ class SyncManager @Inject constructor(
         categories: List<com.streamvault.domain.model.Category>,
         onProgress: ((String) -> Unit)?
     ): List<Channel> {
+        progress(api.providerId, onProgress, "Loading live channels...")
+        val bulkChannels = requireResult(api.getLiveStreams(null), "Failed to load live channels")
         if (categories.isEmpty()) {
-            return requireResult(api.getLiveStreams(null), "Failed to load live channels")
+            return bulkChannels
         }
+
+        val hasResolvedCategories = bulkChannels.any { channel -> channel.categoryId != null }
+        if (bulkChannels.isNotEmpty() && hasResolvedCategories) {
+            return bulkChannels.distinctBy { it.streamId }
+        }
+
         return categories.flatMap { category ->
             progress(api.providerId, onProgress, "Loading ${category.name}...")
             requireResult(api.getLiveStreams(category.id), "Failed to load live channels for ${category.name}")
         }.distinctBy { it.streamId }
+    }
+
+    private data class StalkerLiveCatalogResult(
+        val categories: List<CategoryEntity>,
+        val channels: List<Channel>,
+        val warnings: List<String> = emptyList()
+    )
+
+    private suspend fun loadStalkerLiveCatalog(
+        api: StalkerProvider,
+        provider: Provider,
+        onProgress: ((String) -> Unit)?
+    ): StalkerLiveCatalogResult {
+        return when (val categoriesResult = api.getLiveCategories()) {
+            is com.streamvault.domain.model.Result.Success -> {
+                val channels = loadStalkerChannelsByCategory(api, categoriesResult.data, onProgress)
+                StalkerLiveCatalogResult(
+                    categories = categoriesResult.data.map { it.toEntity(provider.id) },
+                    channels = channels
+                )
+            }
+            is com.streamvault.domain.model.Result.Error -> {
+                Log.w(
+                    TAG,
+                    "Stalker live categories failed for provider ${provider.id}; trying bulk live fallback: ${categoriesResult.message}",
+                    categoriesResult.exception
+                )
+                when (val bulkResult = api.getLiveStreams(null)) {
+                    is com.streamvault.domain.model.Result.Success -> {
+                        val channels = bulkResult.data.distinctBy { it.streamId }
+                        if (channels.isEmpty()) {
+                            throw IllegalStateException(
+                                "${categoriesResult.message.ifBlank { "Failed to load live categories" }} Bulk live fallback returned no channels.",
+                                categoriesResult.exception
+                            )
+                        }
+                        StalkerLiveCatalogResult(
+                            categories = synthesizeStalkerLiveCategories(provider.id, channels),
+                            channels = channels,
+                            warnings = listOf("Live categories failed; recovered using bulk live channels.")
+                        )
+                    }
+                    is com.streamvault.domain.model.Result.Error -> {
+                        val profileDiagnostic = stalkerCatalogAccessDiagnostic(
+                            api = api,
+                            primaryMessage = categoriesResult.message,
+                            fallbackMessage = bulkResult.message
+                        )
+                        throw IllegalStateException(
+                            buildString {
+                                append(categoriesResult.message.ifBlank { "Failed to load live categories" })
+                                bulkResult.message.takeIf { it.isNotBlank() }?.let {
+                                    append(" Bulk live fallback also failed: ")
+                                    append(it)
+                                }
+                                profileDiagnostic?.let {
+                                    append(' ')
+                                    append(it)
+                                }
+                            },
+                            bulkResult.exception ?: categoriesResult.exception
+                        )
+                    }
+                    is com.streamvault.domain.model.Result.Loading -> throw IllegalStateException("Unexpected loading state")
+                }
+            }
+            is com.streamvault.domain.model.Result.Loading -> throw IllegalStateException("Unexpected loading state")
+        }
+    }
+
+    private suspend fun stalkerCatalogAccessDiagnostic(
+        api: StalkerProvider,
+        primaryMessage: String,
+        fallbackMessage: String?
+    ): String? {
+        if (!isStalkerEmptyResponse(primaryMessage) || !isStalkerEmptyResponse(fallbackMessage)) {
+            return null
+        }
+        val profile = when (val profileResult = api.getAccountProfile()) {
+            is com.streamvault.domain.model.Result.Success -> profileResult.data
+            else -> return null
+        }
+        if (!profile.hasLikelyMissingCatalogAccess()) {
+            return null
+        }
+        return "Portal authenticated, but the returned Stalker profile indicates this account has no accessible catalog data. Check that the MAC is activated and assigned a live/VOD package on the provider side."
+    }
+
+    private fun isStalkerEmptyResponse(message: String?): Boolean =
+        !message.isNullOrBlank() && message.contains("empty response", ignoreCase = true)
+
+    private fun StalkerProviderProfile.hasLikelyMissingCatalogAccess(): Boolean {
+        val normalizedAccountId = accountId?.trim().orEmpty()
+        val normalizedAccountName = accountName?.trim().orEmpty()
+        return authAccess == false &&
+            (normalizedAccountId.isBlank() || normalizedAccountId == "0") &&
+            (normalizedAccountName.isBlank() || normalizedAccountName == "0")
+    }
+
+    private fun synthesizeStalkerLiveCategories(
+        providerId: Long,
+        channels: List<Channel>
+    ): List<CategoryEntity> {
+        return channels
+            .mapNotNull { channel ->
+                val categoryId = channel.categoryId ?: return@mapNotNull null
+                CategoryEntity(
+                    providerId = providerId,
+                    categoryId = categoryId,
+                    name = channel.categoryName?.takeIf { it.isNotBlank() } ?: "Category $categoryId",
+                    type = ContentType.LIVE,
+                    isAdult = channel.isAdult
+                )
+            }
+            .distinctBy { it.categoryId }
     }
 
     private suspend fun loadStalkerMoviesByCategory(

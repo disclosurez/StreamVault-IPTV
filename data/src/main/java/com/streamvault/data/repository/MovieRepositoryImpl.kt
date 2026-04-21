@@ -82,6 +82,8 @@ class MovieRepositoryImpl @Inject constructor(
         const val MIN_SEARCH_QUERY_LENGTH = 2
         const val BROWSE_WINDOW_BUFFER = 80
         const val XTREAM_MOVIE_HYDRATION_TIMEOUT_MILLIS = 60_000L
+        const val XTREAM_CATEGORY_HYDRATION_CONCURRENCY = 2
+        const val XTREAM_EMPTY_CATEGORY_RETRY_COOLDOWN_MILLIS = 30_000L
         const val CURSOR_BATCH_SIZE = 40
     }
 
@@ -112,7 +114,9 @@ class MovieRepositoryImpl @Inject constructor(
     private val xtreamCategoryLoadLocks = ConcurrentHashMap<String, Mutex>()
     private val freshXtreamCategories = ConcurrentHashMap.newKeySet<String>()
     private val backgroundRefreshes = ConcurrentHashMap.newKeySet<String>()
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val repositoryScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(XTREAM_CATEGORY_HYDRATION_CONCURRENCY)
+    )
 
     override fun getMovies(providerId: Long): Flow<List<Movie>> =
         preferencesRepository.parentalControlLevel.flatMapLatest { level ->
@@ -342,7 +346,7 @@ class MovieRepositoryImpl @Inject constructor(
         val remoteMovieResult = try {
             when (provider.type) {
                 ProviderType.XTREAM_CODES -> getOrCreateXtreamProvider(providerId, provider).getVodInfo(movieEntity.streamId)
-                ProviderType.STALKER_PORTAL -> createStalkerProvider(providerId, provider).getVodInfo(movieEntity.streamId)
+                ProviderType.STALKER_PORTAL -> return Result.success(movieEntity.toDomain())
                 ProviderType.M3U -> return Result.success(movieEntity.toDomain())
             }
         } catch (e: Exception) {
@@ -391,6 +395,8 @@ class MovieRepositoryImpl @Inject constructor(
                 StreamInfo(
                     url = resolvedStream.url,
                     title = movie.name,
+                    headers = resolvedStream.headers,
+                    userAgent = resolvedStream.userAgent,
                     streamType = StreamType.fromContainerExtension(ext),
                     containerExtension = ext,
                     expirationTime = resolvedStream.expirationTime
@@ -972,7 +978,7 @@ class MovieRepositoryImpl @Inject constructor(
     ) {
         val key = "$providerId:$categoryId"
         val provider = providerDao.getById(providerId) ?: return
-        if (provider.type != ProviderType.XTREAM_CODES) return
+        if (provider.type != ProviderType.XTREAM_CODES && provider.type != ProviderType.STALKER_PORTAL) return
 
         val localCount = movieDao.getCountByCategory(providerId, categoryId).first()
         val hydration = movieCategoryHydrationDao.get(providerId, categoryId)
@@ -1023,13 +1029,21 @@ class MovieRepositoryImpl @Inject constructor(
         repositoryScope.launch {
             try {
                 val provider = providerDao.getById(providerId) ?: return@launch
-                if (provider.type != ProviderType.XTREAM_CODES) return@launch
+                if (provider.type != ProviderType.XTREAM_CODES && provider.type != ProviderType.STALKER_PORTAL) {
+                    return@launch
+                }
                 val localCount = movieDao.getCountByCategory(providerId, categoryId).first()
                 val hydration = movieCategoryHydrationDao.get(providerId, categoryId)
                 if (hydration?.isFresh() == true && (localCount > 0 || hydration.itemCount == 0)) return@launch
+                if (localCount == 0 && hydration?.isEmptyRetryCoolingDown() == true) return@launch
                 if (localCount == 0 && !fetchIfMissing) return@launch
                 if (localCount > 0 && !refreshStaleInBackground && !fetchIfMissing) return@launch
-                if (!shouldUsePersistedCategoryHydration(provider, providerId) && localCount > 0) return@launch
+                if (!shouldUsePersistedCategoryHydration(provider, providerId) &&
+                    provider.type != ProviderType.STALKER_PORTAL &&
+                    localCount > 0
+                ) {
+                    return@launch
+                }
                 hydrateXtreamCategory(providerId, categoryId, provider, forceRefresh = localCount > 0)
             } finally {
                 backgroundRefreshes.remove(key)
@@ -1054,26 +1068,46 @@ class MovieRepositoryImpl @Inject constructor(
             }
 
             runCatching {
-                val xtreamProvider = getOrCreateXtreamProvider(providerId, provider)
-                when (val result = withTimeout(XTREAM_MOVIE_HYDRATION_TIMEOUT_MILLIS) {
-                    xtreamProvider.getVodStreams(categoryId)
-                }) {
+                val result = withTimeout(XTREAM_MOVIE_HYDRATION_TIMEOUT_MILLIS) {
+                    when (provider.type) {
+                        ProviderType.XTREAM_CODES -> getOrCreateXtreamProvider(providerId, provider).getVodStreams(categoryId)
+                        ProviderType.STALKER_PORTAL -> createStalkerProvider(providerId, provider).getVodStreams(categoryId)
+                        ProviderType.M3U -> return@withTimeout Success(emptyList())
+                    }
+                }
+                when (result) {
                     is Success -> {
                         val entities = result.data.map { movie -> movie.toEntity() }
-                        transactionRunner.inTransaction {
-                            movieDao.replaceCategory(providerId, categoryId, entities)
+                        val lazyXtreamHydration = provider.type == ProviderType.XTREAM_CODES &&
+                            shouldUsePersistedCategoryHydration(provider, providerId)
+                        if (lazyXtreamHydration && entities.isEmpty()) {
                             movieCategoryHydrationDao.upsert(
                                 MovieCategoryHydrationEntity(
                                     providerId = providerId,
                                     categoryId = categoryId,
                                     lastHydratedAt = System.currentTimeMillis(),
-                                    itemCount = entities.size,
-                                    lastStatus = "SUCCESS",
-                                    lastError = null
+                                    itemCount = localCount,
+                                    lastStatus = "EMPTY_RETRY",
+                                    lastError = "Xtream category returned an empty result; retry pending."
                                 )
                             )
+                            freshXtreamCategories.remove(key)
+                        } else {
+                            transactionRunner.inTransaction {
+                                movieDao.replaceCategory(providerId, categoryId, entities)
+                                movieCategoryHydrationDao.upsert(
+                                    MovieCategoryHydrationEntity(
+                                        providerId = providerId,
+                                        categoryId = categoryId,
+                                        lastHydratedAt = System.currentTimeMillis(),
+                                        itemCount = entities.size,
+                                        lastStatus = "SUCCESS",
+                                        lastError = null
+                                    )
+                                )
+                            }
+                            freshXtreamCategories.add(key)
                         }
-                        freshXtreamCategories.add(key)
                     }
                     else -> Unit
                 }
@@ -1099,6 +1133,11 @@ class MovieRepositoryImpl @Inject constructor(
     private fun MovieCategoryHydrationEntity.isFresh(now: Long = System.currentTimeMillis()): Boolean {
         if (lastStatus != "SUCCESS") return false
         return !ContentCachePolicy.shouldRefresh(lastHydratedAt, ContentCachePolicy.CATALOG_TTL_MILLIS, now)
+    }
+
+    private fun MovieCategoryHydrationEntity.isEmptyRetryCoolingDown(now: Long = System.currentTimeMillis()): Boolean {
+        if (lastStatus != "EMPTY_RETRY") return false
+        return !ContentCachePolicy.shouldRefresh(lastHydratedAt, XTREAM_EMPTY_CATEGORY_RETRY_COOLDOWN_MILLIS, now)
     }
 
     private fun movieIsInProgress(movie: Movie): Boolean {

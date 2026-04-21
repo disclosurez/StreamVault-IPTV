@@ -18,7 +18,9 @@ import javax.inject.Singleton
 data class ResolvedStreamUrl(
     val url: String,
     val expirationTime: Long? = null,
-    val containerExtension: String? = null
+    val containerExtension: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    val userAgent: String? = null
 )
 
 @Singleton
@@ -70,28 +72,40 @@ class XtreamStreamUrlResolver @Inject constructor(
         fallbackContainerExtension: String? = null,
         preferStableUrl: Boolean = false
     ): ResolvedStreamUrl? {
+        val xtreamToken = XtreamUrlFactory.parseInternalStreamUrl(url)
+        val stalkerToken = StalkerUrlFactory.parseInternalStreamUrl(url)
+        val providerId = xtreamToken?.providerId ?: stalkerToken?.providerId ?: fallbackProviderId?.takeIf { it > 0 }
+        val provider = providerId?.let { id -> providerDao.getById(id) }
+
         if (url.isNotBlank() && !XtreamUrlFactory.isInternalStreamUrl(url) && !StalkerUrlFactory.isInternalStreamUrl(url)) {
+            if (provider?.type == ProviderType.STALKER_PORTAL) {
+                resolveDirectStalkerUrl(
+                    provider = provider,
+                    url = url,
+                    fallbackStreamId = fallbackStreamId,
+                    fallbackContentType = fallbackContentType,
+                    fallbackContainerExtension = fallbackContainerExtension
+                )?.let { return it }
+            }
             return ResolvedStreamUrl(
                 url = url,
                 expirationTime = extractStreamExpirationTime(url)
             )
         }
 
-        val xtreamToken = XtreamUrlFactory.parseInternalStreamUrl(url)
-        val stalkerToken = StalkerUrlFactory.parseInternalStreamUrl(url)
-        val providerId = xtreamToken?.providerId ?: stalkerToken?.providerId ?: fallbackProviderId?.takeIf { it > 0 } ?: return null
-        val provider = providerDao.getById(providerId) ?: return null
-        return when (provider.type) {
+        val resolvedProviderId = providerId ?: return null
+        val resolvedProvider = provider ?: return null
+        return when (resolvedProvider.type) {
             ProviderType.XTREAM_CODES -> {
                 val kind = xtreamToken?.kind ?: fallbackContentType?.let(XtreamUrlFactory::kindForContentType) ?: return null
                 val streamId = xtreamToken?.streamId ?: fallbackStreamId?.takeIf { it > 0 } ?: return null
                 val ext = xtreamToken?.containerExtension ?: fallbackContainerExtension
                 val directSource = xtreamToken?.directSource?.takeIf(UrlSecurityPolicy::isAllowedStreamEntryUrl)
-                val decryptedPassword = credentialCrypto.decryptIfNeeded(provider.password)
+                val decryptedPassword = credentialCrypto.decryptIfNeeded(resolvedProvider.password)
 
                 val fallbackResolvedUrl = XtreamUrlFactory.buildPlaybackUrl(
-                    serverUrl = provider.serverUrl,
-                    username = provider.username,
+                    serverUrl = resolvedProvider.serverUrl,
+                    username = resolvedProvider.username,
                     password = decryptedPassword,
                     kind = kind,
                     streamId = streamId,
@@ -112,16 +126,18 @@ class XtreamStreamUrlResolver @Inject constructor(
                         expirationTime = extractStreamExpirationTime(passthroughUrl)
                     )
                 }
-                val resolvedUrl = when (
-                    val resolvedResult = getOrCreateStalkerProvider(provider).resolvePlaybackUrl(token.kind, token.cmd)
+                val playbackInfo = when (
+                    val resolvedResult = getOrCreateStalkerProvider(resolvedProvider).resolvePlaybackInfo(token.kind, token.cmd)
                 ) {
                     is com.streamvault.domain.model.Result.Success -> resolvedResult.data
                     else -> return null
                 }
                 ResolvedStreamUrl(
-                    url = resolvedUrl,
-                    expirationTime = extractStreamExpirationTime(resolvedUrl),
-                    containerExtension = token.containerExtension ?: fallbackContainerExtension
+                    url = playbackInfo.url,
+                    expirationTime = extractStreamExpirationTime(playbackInfo.url),
+                    containerExtension = token.containerExtension ?: fallbackContainerExtension,
+                    headers = playbackInfo.headers,
+                    userAgent = playbackInfo.userAgent
                 )
             }
             ProviderType.M3U -> url.takeIf { it.isNotBlank() }?.let { passthroughUrl ->
@@ -131,6 +147,90 @@ class XtreamStreamUrlResolver @Inject constructor(
                 )
             }
         }
+    }
+
+    private suspend fun resolveDirectStalkerUrl(
+        provider: ProviderEntity,
+        url: String,
+        fallbackStreamId: Long?,
+        fallbackContentType: ContentType?,
+        fallbackContainerExtension: String?
+    ): ResolvedStreamUrl? {
+        val kind = when (fallbackContentType) {
+            ContentType.LIVE -> StalkerStreamKind.LIVE
+            ContentType.MOVIE -> StalkerStreamKind.MOVIE
+            ContentType.SERIES_EPISODE -> StalkerStreamKind.EPISODE
+            else -> return null
+        }
+        val repairedUrl = repairDirectStalkerUrl(url, kind, fallbackStreamId)
+        if (!UrlSecurityPolicy.isAllowedStreamEntryUrl(repairedUrl)) {
+            return null
+        }
+        val playbackInfo = when (val resolvedResult = getOrCreateStalkerProvider(provider).resolvePlaybackInfo(kind, repairedUrl)) {
+            is com.streamvault.domain.model.Result.Success -> resolvedResult.data
+            else -> return null
+        }
+        return ResolvedStreamUrl(
+            url = playbackInfo.url,
+            expirationTime = extractStreamExpirationTime(playbackInfo.url),
+            containerExtension = fallbackContainerExtension,
+            headers = playbackInfo.headers,
+            userAgent = playbackInfo.userAgent
+        )
+    }
+
+    private fun repairDirectStalkerUrl(
+        url: String,
+        kind: StalkerStreamKind,
+        fallbackStreamId: Long?
+    ): String {
+        if (kind != StalkerStreamKind.LIVE || fallbackStreamId == null || fallbackStreamId <= 0L) {
+            return url
+        }
+        val uri = runCatching { URI(url) }.getOrNull() ?: return url
+        val path = uri.path?.lowercase() ?: return url
+        if (!path.endsWith("/play/live.php")) {
+            return url
+        }
+
+        val rawQuery = uri.rawQuery ?: return url
+        val parts = rawQuery.split('&').filter { it.isNotBlank() }
+        if (parts.isEmpty()) {
+            return url
+        }
+
+        var hasStream = false
+        var changed = false
+        val repairedParts = parts.map { part ->
+            val key = part.substringBefore('=', missingDelimiterValue = "").lowercase()
+            if (key != "stream") {
+                return@map part
+            }
+            hasStream = true
+            val value = part.substringAfter('=', missingDelimiterValue = "")
+            if (value.isNotBlank()) {
+                return@map part
+            }
+            changed = true
+            "stream=$fallbackStreamId"
+        }.toMutableList()
+
+        if (!hasStream && rawQuery.contains("play_token=")) {
+            repairedParts += "stream=$fallbackStreamId"
+            changed = true
+        }
+
+        if (!changed) {
+            return url
+        }
+
+        return URI(
+            uri.scheme,
+            uri.authority,
+            uri.path,
+            repairedParts.joinToString("&"),
+            uri.fragment
+        ).toString()
     }
 
     private fun getOrCreateStalkerProvider(provider: ProviderEntity): StalkerProvider {

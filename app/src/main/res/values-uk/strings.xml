@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Спершу завершити налаштування, а потім автоматично завантажити дані телегіда у фоновому режимі.</string>
     <string name="setup_epg_sync_mode_skip_title">Пропустити EPG наразі</string>
     <string name="setup_epg_sync_mode_skip_description">Не завантажувати дані телегіда автоматично. Ви зможете оновити EPG пізніше в Налаштуваннях.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker може використовувати рідний телегід порталу, коли XMLTV відсутній або недоступний. Завантажити зараз імпортує його під час налаштування, завантаження у фоновому режимі відкладає імпорт, а пропуск залишає завантаження телегіда на вимогу.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Завантажте live-канали та імпортуйте телегід порталу Stalker під час налаштування. Якщо XMLTV налаштовано й він працює, спочатку буде використано його.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Спершу завершіть налаштування, а потім імпортуйте телегід порталу Stalker у фоновому режимі. Якщо XMLTV налаштовано й він працює, спочатку буде використано його.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Не імпортуйте дані телегіда автоматично масово. Дані live-телегіда все одно можуть завантажуватися на вимогу під час перегляду каналів.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Файл</string>

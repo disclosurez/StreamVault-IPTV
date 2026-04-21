@@ -12,6 +12,10 @@ import com.streamvault.data.local.dao.SeriesCategoryHydrationDao
 import com.streamvault.data.local.entity.SeriesEntity
 import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.preferences.PreferencesRepository
+import com.streamvault.data.remote.stalker.StalkerCategoryRecord
+import com.streamvault.data.remote.stalker.StalkerItemRecord
+import com.streamvault.data.remote.stalker.StalkerProviderProfile
+import com.streamvault.data.remote.stalker.StalkerSession
 import com.streamvault.data.remote.dto.XtreamCategory
 import com.streamvault.data.remote.dto.XtreamSeriesItem
 import com.streamvault.data.remote.stalker.StalkerApiService
@@ -22,14 +26,18 @@ import com.streamvault.data.security.CredentialCrypto
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.Result
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -91,6 +99,92 @@ class SeriesRepositoryImplTest {
         assertThat(result).isEmpty()
         verify(seriesDao).replaceCategory(eq(7L), eq(77L), any())
         verify(episodeDao).deleteOrphans()
+    }
+
+    @Test
+    fun `getSeriesByCategory lazily hydrates stalker category when local cache is empty`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(seriesDao.getCountByCategory(7L, 77L)).thenReturn(flowOf(0))
+        whenever(seriesDao.getByCategory(7L, 77L)).thenReturn(flowOf(emptyList()))
+        whenever(providerDao.getById(7L)).thenReturn(
+            ProviderEntity(
+                id = 7L,
+                name = "Stalker",
+                type = ProviderType.STALKER_PORTAL,
+                serverUrl = "http://example.com",
+                stalkerMacAddress = "00:11:22:33:44:55",
+                status = ProviderStatus.ACTIVE
+            )
+        )
+        whenever(stalkerApiService.authenticate(any())).thenReturn(
+            Result.success(
+                StalkerSession(
+                    loadUrl = "http://example.com/stalker_portal/server/load.php",
+                    portalReferer = "http://example.com/stalker_portal/c/",
+                    token = "token"
+                ) to StalkerProviderProfile(accountName = "Stalker")
+            )
+        )
+        whenever(stalkerApiService.getSeriesCategories(any(), any())).thenReturn(
+            Result.success(listOf(StalkerCategoryRecord(id = "77", name = "Drama")))
+        )
+        whenever(stalkerApiService.getSeries(any(), any(), anyOrNull())).thenReturn(
+            Result.success(
+                listOf(
+                    StalkerItemRecord(
+                        id = "301",
+                        name = "Series",
+                        categoryId = "77",
+                        isSeries = true
+                    )
+                )
+            )
+        )
+        whenever(seriesCategoryHydrationDao.get(7L, 77L)).thenReturn(null)
+        whenever(episodeDao.deleteOrphans()).thenReturn(0)
+
+        val repository = createRepository()
+
+        val result = repository.getSeriesByCategory(7L, 77L).first()
+
+        assertThat(result).isEmpty()
+        verify(seriesDao).replaceCategory(eq(7L), eq(77L), any())
+        verify(episodeDao).deleteOrphans()
+    }
+
+    @Test
+    fun `getSeriesByCategory marks empty xtream fast sync hydration for retry`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
+        whenever(seriesDao.getCountByCategory(7L, 77L)).thenReturn(flowOf(0))
+        whenever(seriesDao.getByCategory(7L, 77L)).thenReturn(flowOf(emptyList()))
+        whenever(seriesCategoryHydrationDao.get(7L, 77L)).thenReturn(null)
+        whenever(providerDao.getById(7L)).thenReturn(
+            ProviderEntity(
+                id = 7L,
+                name = "Xtream",
+                type = ProviderType.XTREAM_CODES,
+                serverUrl = "http://example.com",
+                username = "user",
+                password = "pass",
+                xtreamFastSyncEnabled = true,
+                status = ProviderStatus.ACTIVE
+            )
+        )
+        whenever(xtreamApiService.getSeriesCategories(any())).thenReturn(
+            listOf(XtreamCategory(categoryId = "77", categoryName = "Drama"))
+        )
+        whenever(xtreamApiService.getSeriesList(any())).thenReturn(emptyList())
+
+        val repository = createRepository()
+
+        repository.getSeriesByCategory(7L, 77L).first()
+
+        verify(seriesDao, never()).replaceCategory(eq(7L), eq(77L), any())
+        val hydrationCaptor = argumentCaptor<com.streamvault.data.local.entity.SeriesCategoryHydrationEntity>()
+        verify(seriesCategoryHydrationDao).upsert(hydrationCaptor.capture())
+        assertThat(hydrationCaptor.firstValue.lastStatus).isEqualTo("EMPTY_RETRY")
+        assertThat(hydrationCaptor.firstValue.itemCount).isEqualTo(0)
     }
 
     @Test

@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">先完成设置，然后在后台自动获取节目指南数据。</string>
     <string name="setup_epg_sync_mode_skip_title">暂时跳过 EPG</string>
     <string name="setup_epg_sync_mode_skip_description">不自动获取节目指南数据。您之后可在设置中刷新 EPG。</string>
+    <string name="setup_stalker_epg_sync_mode_helper">当 XMLTV 缺失或不可用时，Stalker 可以使用门户自带的节目单。立即模式会在设置过程中导入它，后台模式会将其延后，而跳过则保留为按需加载。</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">在设置过程中下载直播频道并导入 Stalker 门户节目单。如果已配置 XMLTV 且可正常使用，则会优先使用 XMLTV。</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">先完成设置，然后在后台导入 Stalker 门户节目单。如果已配置 XMLTV 且可正常使用，则会优先使用 XMLTV。</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">不要自动批量导入节目单数据。浏览频道时，直播节目单数据仍可按需加载。</string>
     <string name="setup_m3u_hint">M3U URL</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">文件</string>

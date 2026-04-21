@@ -244,10 +244,24 @@ fun ProviderSetupScreen(
     fun onSourceTypeSelected(type: SourceType) {
         if (uiState.isEditing) return
         when (type) {
-            SourceType.XTREAM  -> { selectedTab = 0 }
-            SourceType.STALKER -> { selectedTab = 1 }
-            SourceType.M3U_URL -> { selectedTab = 2; viewModel.updateM3uTab(0) }
-            SourceType.M3U_FILE-> { selectedTab = 2; viewModel.updateM3uTab(1) }
+            SourceType.XTREAM  -> {
+                selectedTab = 0
+                viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.XTREAM)
+            }
+            SourceType.STALKER -> {
+                selectedTab = 1
+                viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.STALKER)
+            }
+            SourceType.M3U_URL -> {
+                selectedTab = 2
+                viewModel.updateM3uTab(0)
+                viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.M3U)
+            }
+            SourceType.M3U_FILE-> {
+                selectedTab = 2
+                viewModel.updateM3uTab(1)
+                viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.M3U)
+            }
         }
     }
 
@@ -629,9 +643,15 @@ private fun AdvancedProviderOptionsSection(
     onStalkerDeviceLocaleChange: (String) -> Unit
 ) {
     var showAdvancedOptions by rememberSaveable(sourceType) { mutableStateOf(false) }
+    val defaultEpgSyncMode = when (sourceType) {
+        SourceType.STALKER -> ProviderEpgSyncMode.BACKGROUND
+        SourceType.XTREAM,
+        SourceType.M3U_URL,
+        SourceType.M3U_FILE -> ProviderEpgSyncMode.UPFRONT
+    }
 
     LaunchedEffect(uiState.isEditing, uiState.epgSyncMode, uiState.xtreamFastSyncEnabled, sourceType) {
-        val hasNonDefaultSelection = ((sourceType == SourceType.XTREAM || sourceType == SourceType.STALKER) && uiState.epgSyncMode != ProviderEpgSyncMode.UPFRONT) ||
+        val hasNonDefaultSelection = ((sourceType == SourceType.XTREAM || sourceType == SourceType.STALKER) && uiState.epgSyncMode != defaultEpgSyncMode) ||
             (sourceType == SourceType.XTREAM && !uiState.xtreamFastSyncEnabled) ||
             ((sourceType == SourceType.M3U_URL || sourceType == SourceType.M3U_FILE) && !uiState.m3uVodClassificationEnabled) ||
             (sourceType == SourceType.STALKER && (stalkerDeviceProfile.isNotBlank() || stalkerDeviceTimezone.isNotBlank() || stalkerDeviceLocale.isNotBlank()))
@@ -805,13 +825,20 @@ private fun AdvancedProviderOptionsSection(
                             color = TextPrimary
                         )
                         Text(
-                            text = androidx.compose.ui.res.stringResource(R.string.setup_epg_sync_mode_helper),
+                            text = androidx.compose.ui.res.stringResource(
+                                if (sourceType == SourceType.STALKER) {
+                                    R.string.setup_stalker_epg_sync_mode_helper
+                                } else {
+                                    R.string.setup_epg_sync_mode_helper
+                                }
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = OnSurfaceDim
                         )
                         ProviderEpgSyncMode.entries.forEach { mode ->
                             EpgSyncModeOptionRow(
                                 mode = mode,
+                                sourceType = sourceType,
                                 selected = uiState.epgSyncMode == mode,
                                 onSelect = { onSelectEpgSyncMode(mode) }
                             )
@@ -844,6 +871,7 @@ private fun AdvancedProviderOptionsSection(
 @Composable
 private fun EpgSyncModeOptionRow(
     mode: ProviderEpgSyncMode,
+    sourceType: SourceType,
     selected: Boolean,
     onSelect: () -> Unit
 ) {
@@ -853,9 +881,21 @@ private fun EpgSyncModeOptionRow(
         ProviderEpgSyncMode.SKIP -> R.string.setup_epg_sync_mode_skip_title
     }
     val descriptionRes = when (mode) {
-        ProviderEpgSyncMode.UPFRONT -> R.string.setup_epg_sync_mode_upfront_description
-        ProviderEpgSyncMode.BACKGROUND -> R.string.setup_epg_sync_mode_background_description
-        ProviderEpgSyncMode.SKIP -> R.string.setup_epg_sync_mode_skip_description
+        ProviderEpgSyncMode.UPFRONT -> if (sourceType == SourceType.STALKER) {
+            R.string.setup_stalker_epg_sync_mode_upfront_description
+        } else {
+            R.string.setup_epg_sync_mode_upfront_description
+        }
+        ProviderEpgSyncMode.BACKGROUND -> if (sourceType == SourceType.STALKER) {
+            R.string.setup_stalker_epg_sync_mode_background_description
+        } else {
+            R.string.setup_epg_sync_mode_background_description
+        }
+        ProviderEpgSyncMode.SKIP -> if (sourceType == SourceType.STALKER) {
+            R.string.setup_stalker_epg_sync_mode_skip_description
+        } else {
+            R.string.setup_epg_sync_mode_skip_description
+        }
     }
     Surface(
         onClick = onSelect,

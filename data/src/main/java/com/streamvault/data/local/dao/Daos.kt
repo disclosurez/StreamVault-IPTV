@@ -221,6 +221,16 @@ abstract class ChannelDao {
     )
     abstract suspend fun getGuideLookupsByIds(ids: List<Long>): List<ChannelGuideLookupEntity>
 
+    @Query(
+        """
+        SELECT name, stream_id, epg_channel_id
+        FROM channels
+        WHERE provider_id = :providerId
+        ORDER BY number ASC, id ASC
+        """
+    )
+    abstract suspend fun getGuideSyncEntriesByProvider(providerId: Long): List<ChannelGuideSyncEntity>
+
     @Query("SELECT * FROM channels WHERE provider_id = :providerId")
     abstract suspend fun getByProviderSync(providerId: Long): List<ChannelEntity>
 

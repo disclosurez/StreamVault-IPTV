@@ -16,9 +16,16 @@ import com.streamvault.domain.model.Season
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.provider.IptvProvider
 import com.streamvault.domain.util.ChannelNormalizer
+import java.net.URI
 import java.util.Locale
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+data class StalkerPlaybackInfo(
+    val url: String,
+    val headers: Map<String, String> = emptyMap(),
+    val userAgent: String? = null
+)
 
 class StalkerProvider(
     override val providerId: Long,
@@ -46,7 +53,7 @@ class StalkerProvider(
             is Result.Success -> {
                 val profile = authResult.data.second
                 val hostLabel = portalUrl.substringAfter("://").substringBefore('/').ifBlank { "portal" }
-                val providerName = profile.accountName?.takeIf { it.isNotBlank() }
+                val providerName = profile.accountName?.takeUnless { it.isBlank() || it == "0" }
                     ?: "${normalizedMacAddress().takeLast(8)}@$hostLabel"
                 Result.success(
                     Provider(
@@ -70,6 +77,14 @@ class StalkerProvider(
                     )
                 )
             }
+            is Result.Error -> Result.error(authResult.message, authResult.exception)
+            is Result.Loading -> Result.error("Unexpected loading state")
+        }
+    }
+
+    suspend fun getAccountProfile(): Result<StalkerProviderProfile> {
+        return when (val authResult = ensureAuthenticated()) {
+            is Result.Success -> Result.success(authResult.data.second)
             is Result.Error -> Result.error(authResult.message, authResult.exception)
             is Result.Loading -> Result.error("Unexpected loading state")
         }
@@ -168,12 +183,31 @@ class StalkerProvider(
         }
     }
 
-    suspend fun resolvePlaybackUrl(kind: StalkerStreamKind, cmd: String): Result<String> {
+    suspend fun resolvePlaybackInfo(kind: StalkerStreamKind, cmd: String): Result<StalkerPlaybackInfo> {
         return when (val authResult = ensureAuthenticated()) {
             is Result.Success -> {
                 val (session, _) = authResult.data
-                when (val linkResult = api.createLink(session, currentDeviceProfile(), kind, cmd)) {
-                    is Result.Success -> Result.success(linkResult.data)
+                val profile = currentDeviceProfile()
+                val directUrl = extractDirectPlaybackUrl(cmd)
+                directUrl
+                    ?.takeIf { candidate -> shouldBypassCreateLink(kind, candidate) }
+                    ?.let { candidate ->
+                        return Result.success(
+                            StalkerPlaybackInfo(
+                                url = candidate,
+                                headers = buildPlaybackHeaders(session, profile),
+                                userAgent = profile.userAgent
+                            )
+                        )
+                    }
+                when (val linkResult = api.createLink(session, profile, kind, cmd)) {
+                    is Result.Success -> Result.success(
+                        StalkerPlaybackInfo(
+                            url = repairCreateLinkUrl(kind, linkResult.data, directUrl),
+                            headers = buildPlaybackHeaders(session, profile),
+                            userAgent = profile.userAgent
+                        )
+                    )
                     is Result.Error -> Result.error(linkResult.message, linkResult.exception)
                     is Result.Loading -> Result.error("Unexpected loading state")
                 }
@@ -182,6 +216,9 @@ class StalkerProvider(
             is Result.Loading -> Result.error("Unexpected loading state")
         }
     }
+
+    suspend fun resolvePlaybackUrl(kind: StalkerStreamKind, cmd: String): Result<String> =
+        resolvePlaybackInfo(kind, cmd).mapData(StalkerPlaybackInfo::url)
 
     override suspend fun buildStreamUrl(streamId: Long, containerExtension: String?): String {
         throw UnsupportedOperationException("Stalker stream URLs require a command token context.")
@@ -277,6 +314,117 @@ class StalkerProvider(
             timezone = normalizedTimezone(),
             locale = normalizedLocale()
         )
+    }
+
+    private fun buildPlaybackHeaders(
+        session: StalkerSession,
+        profile: StalkerDeviceProfile
+    ): Map<String, String> = buildMap {
+        put("Referer", session.portalReferer)
+        put("Accept", "*/*")
+        put(
+            "Cookie",
+            listOf(
+                "mac=${profile.macAddress}",
+                "stb_lang=${profile.locale}",
+                "timezone=${profile.timezone}",
+                "sn=${profile.serialNumber}",
+                "device_id=${profile.deviceId}",
+                "device_id2=${profile.deviceId2}",
+                "signature=${profile.signature}"
+            ).joinToString("; ")
+        )
+        put("X-User-Agent", profile.xUserAgent)
+        session.token.takeIf { it.isNotBlank() }?.let { token ->
+            put("Authorization", "Bearer $token")
+        }
+    }
+
+    private fun extractDirectPlaybackUrl(cmd: String): String? {
+        return cmd
+            .substringAfter(' ', missingDelimiterValue = cmd)
+            .trim()
+            .takeIf(UrlSecurityPolicy::isAllowedStreamEntryUrl)
+    }
+
+    private fun shouldBypassCreateLink(kind: StalkerStreamKind, directUrl: String): Boolean {
+        val parsed = runCatching { URI(directUrl) }.getOrNull() ?: return false
+        val host = parsed.host?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (host.isBlank()) return false
+        if (host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0") return false
+        if (kind == StalkerStreamKind.LIVE && !hasUsableLiveStreamTarget(parsed)) return false
+
+        return true
+    }
+
+    private fun repairCreateLinkUrl(
+        kind: StalkerStreamKind,
+        resolvedUrl: String,
+        sourceDirectUrl: String?
+    ): String {
+        if (kind != StalkerStreamKind.LIVE || sourceDirectUrl.isNullOrBlank()) {
+            return resolvedUrl
+        }
+
+        val resolvedUri = runCatching { URI(resolvedUrl) }.getOrNull() ?: return resolvedUrl
+        val sourceUri = runCatching { URI(sourceDirectUrl) }.getOrNull() ?: return resolvedUrl
+        if (!isSameLivePlayPath(resolvedUri, sourceUri)) {
+            return resolvedUrl
+        }
+        if (hasUsableLiveStreamTarget(resolvedUri)) {
+            return resolvedUrl
+        }
+
+        val sourceStreamId = sourceUri.queryParameter("stream")?.takeIf { it.isNotBlank() } ?: return resolvedUrl
+        return replaceQueryParameter(resolvedUri, "stream", sourceStreamId) ?: resolvedUrl
+    }
+
+    private fun hasUsableLiveStreamTarget(uri: URI): Boolean {
+        val path = uri.path?.lowercase(Locale.ROOT).orEmpty()
+        if (!path.endsWith("/play/live.php")) {
+            return true
+        }
+        return !uri.queryParameter("stream").isNullOrBlank()
+    }
+
+    private fun isSameLivePlayPath(first: URI, second: URI): Boolean {
+        val firstHost = first.host?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val secondHost = second.host?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val firstPath = first.path?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val secondPath = second.path?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        return firstHost.isNotBlank() &&
+            firstHost == secondHost &&
+            firstPath == secondPath &&
+            firstPath.endsWith("/play/live.php")
+    }
+
+    private fun URI.queryParameter(name: String): String? {
+        val rawQuery = rawQuery ?: return null
+        return rawQuery.split('&')
+            .asSequence()
+            .map { part ->
+                val key = part.substringBefore('=', missingDelimiterValue = "")
+                val value = part.substringAfter('=', missingDelimiterValue = "")
+                key to value
+            }
+            .firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }
+            ?.second
+    }
+
+    private fun replaceQueryParameter(uri: URI, name: String, value: String): String? {
+        val rawQuery = uri.rawQuery ?: return null
+        val updated = rawQuery.split('&')
+            .filter { it.isNotBlank() }
+            .map { part ->
+                val key = part.substringBefore('=', missingDelimiterValue = "")
+                if (key.equals(name, ignoreCase = true)) {
+                    "$key=$value"
+                } else {
+                    part
+                }
+            }
+            .joinToString("&")
+        return URI(uri.scheme, uri.authority, uri.path, updated, uri.fragment).toString()
     }
 
     private suspend fun resolveRawCategoryId(type: ContentType, categoryId: Long?): String? {

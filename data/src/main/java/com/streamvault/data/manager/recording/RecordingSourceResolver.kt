@@ -59,6 +59,8 @@ class RecordingSourceResolver @Inject constructor(
         return ResolvedRecordingSource(
             url = resolved.url,
             sourceType = inferred,
+            headers = resolved.headers,
+            userAgent = resolved.userAgent,
             expirationTime = resolved.expirationTime,
             providerLabel = providerLabel
         )
@@ -81,14 +83,14 @@ class RecordingSourceResolver @Inject constructor(
             url.contains(".mpd") || url.contains("ext=mpd") -> RecordingSourceType.DASH
             url.endsWith(".ts") || url.contains(".ts?") || url.contains("ext=ts") -> RecordingSourceType.TS
             url.endsWith(".m3u8") || url.contains(".m3u8?") || url.contains("ext=m3u8") -> RecordingSourceType.HLS
-            else -> probeAdaptiveType(resolved.url)
+            else -> probeAdaptiveType(resolved)
         }
     }
 
-    private fun probeAdaptiveType(url: String): RecordingSourceType {
+    private fun probeAdaptiveType(resolved: ResolvedStreamUrl): RecordingSourceType {
         // Try HEAD first — lighter and avoids Range-header rejections.
         val headResult = runCatching {
-            val headRequest = Request.Builder().url(url).head().build()
+            val headRequest = buildRequest(resolved, isHead = true)
             okHttpClient.newCall(headRequest).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
@@ -103,10 +105,7 @@ class RecordingSourceResolver @Inject constructor(
         if (headResult != null) return headResult
 
         // Fall back to a small GET to inspect the body prefix.
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
+        val request = buildRequest(resolved, isHead = false)
 
         val bodyPrefix = runCatching {
             okHttpClient.newCall(request).execute().use { response ->
@@ -126,5 +125,22 @@ class RecordingSourceResolver @Inject constructor(
             bodyPrefix.isEmpty() -> RecordingSourceType.UNKNOWN
             else -> RecordingSourceType.TS
         }
+    }
+
+    private fun buildRequest(resolved: ResolvedStreamUrl, isHead: Boolean): Request {
+        return Request.Builder()
+            .url(resolved.url)
+            .apply {
+                resolved.userAgent?.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) }
+                resolved.headers.forEach { (name, value) ->
+                    header(name, value)
+                }
+                if (isHead) {
+                    head()
+                } else {
+                    get()
+                }
+            }
+            .build()
     }
 }

@@ -209,7 +209,7 @@ class PlayerViewModel @Inject constructor(
     private val failedStreamsThisSession = mutableMapOf<String, Int>()
     private var hasRetriedWithSoftwareDecoder = false
     private var hasRetriedXtreamAuthRefresh = false
-    private val probePassedProviderIds = mutableSetOf<Long>()
+    private val probePassedPlaybackKeys = mutableSetOf<String>()
     private val notifiedRecordingFailureIds = mutableSetOf<String>()
     internal var lastRecordedLivePlaybackKey: Pair<Long, Long>? = null
     private var currentStreamClassLabel: String = "Primary"
@@ -765,7 +765,7 @@ class PlayerViewModel @Inject constructor(
                 logicalGroupId = updatedChannel.logicalGroupId,
                 rawChannelId = rawChannelId
             )
-            val resolvedUrl = resolvePlaybackUrl(
+            val streamInfo = resolvePlaybackStreamInfo(
                 logicalUrl = updatedChannel.streamUrl,
                 internalContentId = updatedChannel.id,
                 providerId = updatedChannel.providerId,
@@ -781,12 +781,7 @@ class PlayerViewModel @Inject constructor(
                     internalChannelId = updatedChannel.id
                 )
             }
-            val streamInfo = StreamInfo(
-                url = resolvedUrl,
-                title = currentTitle,
-                streamType = com.streamvault.domain.model.StreamType.UNKNOWN
-            )
-            if (!preparePlayer(streamInfo, requestVersion)) return@launch
+            if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
             playerEngine.play()
         }
     }
@@ -1115,7 +1110,7 @@ class PlayerViewModel @Inject constructor(
             return false
         }
 
-        probePlaybackUrl(streamInfo.url)?.let { failure ->
+        probePlaybackUrl(streamInfo)?.let { failure ->
             if (!isActivePlaybackSession(requestVersion)) return false
             setLastFailureReason(failure.message)
             showPlayerNotice(
@@ -1125,7 +1120,7 @@ class PlayerViewModel @Inject constructor(
             )
             return false
         }
-        currentProviderId.takeIf { it > 0L }?.let { probePassedProviderIds.add(it) }
+        probePassedPlaybackKeys.add(playbackProbeCacheKey(streamInfo.url))
         playerEngine.setMuted(preferencesRepository.playerMuted.first())
         playerEngine.setPlaybackSpeed(
             if (currentContentType == ContentType.LIVE) {
@@ -1151,7 +1146,8 @@ class PlayerViewModel @Inject constructor(
         return true
     }
 
-    private suspend fun probePlaybackUrl(url: String): PlaybackProbeFailure? {
+    private suspend fun probePlaybackUrl(streamInfo: com.streamvault.domain.model.StreamInfo): PlaybackProbeFailure? {
+        val url = streamInfo.url
         if (!shouldProbePlaybackUrl(url)) return null
 
         return runCatching {
@@ -1160,11 +1156,21 @@ class PlayerViewModel @Inject constructor(
                     .url(url)
                     .get()
                     .header("Range", "bytes=0-0")
+                    .apply {
+                        streamInfo.userAgent?.takeIf { it.isNotBlank() }?.let { header("User-Agent", it) }
+                        streamInfo.headers.forEach { (name, value) ->
+                            header(name, value)
+                        }
+                    }
                     .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     when (response.code) {
                         401, 403 -> PlaybackProbeFailure(
                             message = "This provider stream was rejected (${response.code} Unauthorized/Forbidden).",
+                            recoveryType = PlayerRecoveryType.SOURCE
+                        )
+                        456 -> PlaybackProbeFailure(
+                            message = "This provider rejected playback for this channel (HTTP 456). The MAC or subscription may not have access to this stream.",
                             recoveryType = PlayerRecoveryType.SOURCE
                         )
                         404 -> PlaybackProbeFailure(
@@ -1185,14 +1191,20 @@ class PlayerViewModel @Inject constructor(
     private suspend fun shouldProbePlaybackUrl(url: String): Boolean {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return false
         val providerId = currentProviderId.takeIf { it > 0L } ?: return false
-        if (providerId in probePassedProviderIds) return false
         val provider = providerRepository.getProvider(providerId) ?: return false
+        val cacheKey = playbackProbeCacheKey(url)
+        if (provider.type != com.streamvault.domain.model.ProviderType.STALKER_PORTAL && cacheKey in probePassedPlaybackKeys) {
+            return false
+        }
         return (
             provider.type == com.streamvault.domain.model.ProviderType.XTREAM_CODES ||
                 provider.type == com.streamvault.domain.model.ProviderType.STALKER_PORTAL
             ) &&
             (xtreamStreamUrlResolver.isInternalStreamUrl(currentStreamUrl) || xtreamStreamUrlResolver.isInternalStreamUrl(url))
     }
+
+    private fun playbackProbeCacheKey(url: String): String =
+        currentStreamUrl.takeIf { it.isNotBlank() } ?: url
 
     fun prepare(
         streamUrl: String, 
@@ -2017,6 +2029,11 @@ class PlayerViewModel @Inject constructor(
         is PlayerError.NetworkError -> {
             if (error.message.contains("timeout", ignoreCase = true)) {
                 PlayerRecoveryType.BUFFER_TIMEOUT
+            } else if (
+                error.message.contains("HTTP 456", ignoreCase = true) ||
+                error.message.contains("access denied", ignoreCase = true)
+            ) {
+                PlayerRecoveryType.SOURCE
             } else {
                 PlayerRecoveryType.NETWORK
             }
@@ -2035,7 +2052,12 @@ class PlayerViewModel @Inject constructor(
 
     private fun resolvePlaybackErrorMessage(error: PlayerError): String = when (classifyPlaybackError(error)) {
         PlayerRecoveryType.NETWORK -> "This stream is not responding right now. You can retry or try another source."
-        PlayerRecoveryType.SOURCE -> "We couldn't start this stream on the available paths."
+        PlayerRecoveryType.SOURCE -> when {
+            error.message.contains("HTTP 456", ignoreCase = true) ||
+                error.message.contains("access denied", ignoreCase = true) ->
+                "This provider rejected playback for this channel. The MAC or subscription may not have access to this stream."
+            else -> "We couldn't start this stream on the available paths."
+        }
         PlayerRecoveryType.DECODER -> "This stream could not play in the current decoder mode."
         PlayerRecoveryType.DRM -> "Playback requires valid DRM credentials or a supported device security level."
         PlayerRecoveryType.BUFFER_TIMEOUT -> "Playback stayed stuck buffering for too long on this stream."
@@ -2121,7 +2143,7 @@ class PlayerViewModel @Inject constructor(
         if (!isActivePlaybackSession(requestVersion, playbackUrl)) return false
 
         hasRetriedXtreamAuthRefresh = true
-        probePassedProviderIds.remove(currentProviderId)
+        probePassedPlaybackKeys.remove(playbackProbeCacheKey(playbackUrl))
         setLastFailureReason(error.message)
         appendRecoveryAction("Refreshed provider playback URL after auth failure")
         showPlayerNotice(
@@ -2228,8 +2250,12 @@ class PlayerViewModel @Inject constructor(
                     logicalGroupId = updatedChannel.logicalGroupId,
                     rawChannelId = nextVariant.rawChannelId
                 )
-                val resolvedUrl = resolvePlaybackUrl(nextVariant.streamUrl, updatedChannel.id, updatedChannel.providerId, ContentType.LIVE)
-                    ?: return@launch
+                val streamInfo = resolvePlaybackStreamInfo(
+                    logicalUrl = nextVariant.streamUrl,
+                    internalContentId = updatedChannel.id,
+                    providerId = updatedChannel.providerId,
+                    contentType = ContentType.LIVE
+                ) ?: return@launch
                 if (!isActivePlaybackSession(requestVersion, nextVariant.streamUrl)) return@launch
                 recordLivePlayback(updatedChannel)
                 requestEpg(
@@ -2238,12 +2264,7 @@ class PlayerViewModel @Inject constructor(
                     streamId = updatedChannel.streamId,
                     internalChannelId = updatedChannel.id
                 )
-                val streamInfo = com.streamvault.domain.model.StreamInfo(
-                    url = resolvedUrl,
-                    title = currentTitle,
-                    streamType = com.streamvault.domain.model.StreamType.UNKNOWN
-                )
-                if (!preparePlayer(streamInfo, requestVersion)) return@launch
+                if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
                 playerEngine.play()
             }
             return true
@@ -2262,15 +2283,10 @@ class PlayerViewModel @Inject constructor(
         currentStreamUrl = nextStream
         updateStreamClass("Alternate")
         viewModelScope.launch {
-            val resolvedUrl = resolvePlaybackUrl(nextStream, channel.id, channel.providerId, ContentType.LIVE)
+            val streamInfo = resolvePlaybackStreamInfo(nextStream, channel.id, channel.providerId, ContentType.LIVE)
                 ?: return@launch
             if (!isActivePlaybackSession(requestVersion, nextStream)) return@launch
-            val streamInfo = com.streamvault.domain.model.StreamInfo(
-                url = resolvedUrl,
-                title = currentTitle,
-                streamType = com.streamvault.domain.model.StreamType.UNKNOWN
-            )
-            if (!preparePlayer(streamInfo, requestVersion)) return@launch
+            if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
             playerEngine.play()
         }
         return true
@@ -2311,15 +2327,10 @@ class PlayerViewModel @Inject constructor(
         currentStreamUrl = nextStream
         updateStreamClass("Catch-up")
         viewModelScope.launch {
-            val resolvedUrl = resolvePlaybackUrl(nextStream, currentContentId, currentProviderId, ContentType.LIVE)
+            val streamInfo = resolvePlaybackStreamInfo(nextStream, currentContentId, currentProviderId, ContentType.LIVE)
                 ?: return@launch
             if (!isActivePlaybackSession(requestVersion, nextStream)) return@launch
-            val streamInfo = com.streamvault.domain.model.StreamInfo(
-                url = resolvedUrl,
-                title = currentTitle,
-                streamType = com.streamvault.domain.model.StreamType.UNKNOWN
-            )
-            if (!preparePlayer(streamInfo, requestVersion)) return@launch
+            if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
             playerEngine.play()
         }
         return true
@@ -2643,15 +2654,10 @@ class PlayerViewModel @Inject constructor(
         if (isCatchUpPlayback()) {
             val requestVersion = beginPlaybackSession()
             viewModelScope.launch {
-                val resolvedUrl = resolvePlaybackUrl(streamUrl, currentContentId, currentProviderId, currentContentType)
+                val streamInfo = resolvePlaybackStreamInfo(streamUrl, currentContentId, currentProviderId, currentContentType)
                     ?: return@launch
                 if (!isActivePlaybackSession(requestVersion, streamUrl)) return@launch
-                val streamInfo = com.streamvault.domain.model.StreamInfo(
-                    url = resolvedUrl,
-                    title = currentTitle,
-                    streamType = com.streamvault.domain.model.StreamType.UNKNOWN
-                )
-                if (!preparePlayer(streamInfo, requestVersion)) return@launch
+                if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
                 playerEngine.play()
             }
             return
@@ -2685,6 +2691,7 @@ class PlayerViewModel @Inject constructor(
                 ContentType.LIVE -> {
                     channelRepository.getChannel(internalContentId)?.let { channel ->
                         fallbackStreamId = channel.streamId.takeIf { it > 0L }
+                            ?: channel.epgChannelId?.toLongOrNull()
                         channelRepository.getStreamInfo(channel).getOrNull()?.let { resolved ->
                             return resolved.copy(title = resolved.title ?: currentTitle)
                         }
@@ -2735,6 +2742,8 @@ class PlayerViewModel @Inject constructor(
                 return com.streamvault.domain.model.StreamInfo(
                     url = resolved.url,
                     title = currentTitle,
+                    headers = resolved.headers,
+                    userAgent = resolved.userAgent,
                     streamType = com.streamvault.domain.model.StreamType.fromContainerExtension(ext),
                     containerExtension = ext,
                     expirationTime = resolved.expirationTime

@@ -35,7 +35,7 @@ data class StalkerProviderSetupCommand(
     val deviceProfile: String = "",
     val timezone: String = "",
     val locale: String = "",
-    val epgSyncMode: ProviderEpgSyncMode = ProviderEpgSyncMode.UPFRONT,
+    val epgSyncMode: ProviderEpgSyncMode = ProviderEpgSyncMode.BACKGROUND,
     val existingProviderId: Long? = null
 )
 

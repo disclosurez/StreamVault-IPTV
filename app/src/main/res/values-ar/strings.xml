@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">أكمل الإعداد أولًا، ثم اجلب بيانات الدليل تلقائيًا في الخلفية.</string>
     <string name="setup_epg_sync_mode_skip_title">تخطي EPG الآن</string>
     <string name="setup_epg_sync_mode_skip_description">لا تجلب بيانات الدليل تلقائيًا. يمكنك تحديث EPG لاحقًا من الإعدادات.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">يمكن لـ Stalker استخدام دليل البوابة الأصلي عندما يكون XMLTV مفقودًا أو غير متاح. يقوم خيار «الفوري» باستيراده أثناء الإعداد، ويؤجل خيار «الخلفية» ذلك، بينما يترك خيار «التخطي» تحميل الدليل عند الطلب.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">نزّل القنوات المباشرة واستورد دليل بوابة Stalker أثناء الإعداد. إذا كان XMLTV مُعدًا ويعمل، فسيتم استخدامه أولًا.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">أكمل الإعداد أولًا، ثم استورد دليل بوابة Stalker في الخلفية. إذا كان XMLTV مُعدًا ويعمل، فسيتم استخدامه أولًا.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">لا تستورد بيانات الدليل المجمعة تلقائيًا. لا يزال بإمكان بيانات دليل البث المباشر التحميل عند الطلب أثناء تصفح القنوات.</string>
     <string name="setup_m3u_hint">رابط M3U</string>
     <string name="setup_tab_url">الرابط</string>
     <string name="setup_tab_file">ملف</string>

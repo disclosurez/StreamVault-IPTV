@@ -43,7 +43,7 @@ object PlayerErrorClassifier {
             chain.any { it is BehindLiveWindowException } ||
                 playbackException?.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW ->
                 PlaybackErrorCategory.LIVE_WINDOW
-            httpCode == 401 || httpCode == 403 -> PlaybackErrorCategory.HTTP_AUTH
+            httpCode == 401 || httpCode == 403 || httpCode == 456 -> PlaybackErrorCategory.HTTP_AUTH
             httpCode in setOf(408, 429, 500, 502, 503, 504) -> PlaybackErrorCategory.HTTP_SERVER
             chain.any { it is SSLHandshakeException || it is SSLException } ||
                 chain.any { it.message?.contains("certificate", ignoreCase = true) == true } ->
@@ -75,7 +75,7 @@ object PlayerErrorClassifier {
     }
 
     private fun parseHttpStatus(message: String?): Int? {
-        return Regex("""\b(401|403|408|429|500|502|503|504)\b""").find(message.orEmpty())
+        return Regex("""\b(401|403|408|429|456|500|502|503|504)\b""").find(message.orEmpty())
             ?.groupValues
             ?.getOrNull(1)
             ?.toIntOrNull()

@@ -864,6 +864,10 @@
     <string name="setup_epg_sync_mode_background_description">Finish setup first, then fetch guide data automatically in the background.</string>
     <string name="setup_epg_sync_mode_skip_title">Skip EPG for now</string>
     <string name="setup_epg_sync_mode_skip_description">Do not fetch guide data automatically. You can refresh EPG later from Settings.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker can use the portal’s native guide when XMLTV is missing or unavailable. Upfront imports it during setup, Background defers it, and Skip leaves guide loading on demand.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Download live channels and import the Stalker portal guide during setup. If XMLTV is configured and works, it is used first.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Finish setup first, then import the Stalker portal guide in the background. If XMLTV is configured and works, it is used first.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Do not bulk import guide data automatically. Live guide data can still load on demand when you browse channels.</string>
     <string name="setup_m3u_hint">M3U URL</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">File</string>

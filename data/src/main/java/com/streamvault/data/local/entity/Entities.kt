@@ -109,6 +109,12 @@ data class ChannelGuideLookupEntity(
     @ColumnInfo(name = "epg_channel_id") val epgChannelId: String? = null
 )
 
+data class ChannelGuideSyncEntity(
+    val name: String,
+    @ColumnInfo(name = "stream_id") val streamId: Long = 0,
+    @ColumnInfo(name = "epg_channel_id") val epgChannelId: String? = null
+)
+
 @Entity(
     tableName = "channel_preferences",
     foreignKeys = [ForeignKey(

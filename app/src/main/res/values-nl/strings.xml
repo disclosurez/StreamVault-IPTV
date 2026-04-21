@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Voltooi eerst de installatie en haal daarna automatisch gidsgegevens op op de achtergrond.</string>
     <string name="setup_epg_sync_mode_skip_title">EPG nu overslaan</string>
     <string name="setup_epg_sync_mode_skip_description">Haal geen gidsgegevens automatisch op. Je kunt EPG later verversen via Instellingen.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker kan de ingebouwde gids van het portaal gebruiken wanneer XMLTV ontbreekt of niet beschikbaar is. Meteen laden importeert die tijdens de installatie, laden op de achtergrond stelt dit uit en overslaan laat de gids op aanvraag laden.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Download livekanalen en importeer de Stalker-portaalgids tijdens de installatie. Als XMLTV is geconfigureerd en werkt, wordt dat eerst gebruikt.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Voltooi eerst de installatie en importeer daarna de Stalker-portaalgids op de achtergrond. Als XMLTV is geconfigureerd en werkt, wordt dat eerst gebruikt.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Importeer gidsgegevens niet automatisch in bulk. Live-gidsgegevens kunnen nog steeds op aanvraag worden geladen terwijl je door kanalen bladert.</string>
     <string name="setup_m3u_hint">M3U-URL</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Bestand</string>

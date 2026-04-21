@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Önce kurulumu bitir, ardından rehber verilerini arka planda otomatik olarak getir.</string>
     <string name="setup_epg_sync_mode_skip_title">EPG’yi şimdilik atla</string>
     <string name="setup_epg_sync_mode_skip_description">Rehber verilerini otomatik olarak getirme. EPG’yi daha sonra Ayarlar’dan yenileyebilirsin.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker, XMLTV eksik olduğunda veya kullanılamadığında portalın yerel rehberini kullanabilir. Şimdi yükle bunu kurulum sırasında içe aktarır, arka planda yükle erteler, atla ise rehberin isteğe bağlı yüklenmesini bırakır.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Kurulum sırasında canlı kanalları indir ve Stalker portal rehberini içe aktar. XMLTV yapılandırılmış ve çalışıyorsa önce o kullanılır.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Önce kurulumu tamamla, ardından Stalker portal rehberini arka planda içe aktar. XMLTV yapılandırılmış ve çalışıyorsa önce o kullanılır.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Rehber verilerini otomatik olarak toplu içe aktarma. Kanallara göz atarken canlı rehber verileri yine isteğe bağlı olarak yüklenebilir.</string>
     <string name="setup_m3u_hint">M3U URL\'si</string>
     <string name="setup_tab_url">URL\'si</string>
     <string name="setup_tab_file">Dosya</string>

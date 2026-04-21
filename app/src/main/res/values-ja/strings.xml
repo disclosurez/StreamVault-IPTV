@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">先にセットアップを完了し、その後番組表データを自動でバックグラウンド取得します。</string>
     <string name="setup_epg_sync_mode_skip_title">EPGを今はスキップ</string>
     <string name="setup_epg_sync_mode_skip_description">番組表データを自動取得しません。EPGは後で設定から更新できます。</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker は、XMLTV が未設定または利用できない場合に、ポータルのネイティブ番組表を使用できます。今すぐ読み込みはセットアップ中にそれを取り込み、バックグラウンド読み込みは後回しにし、スキップは必要時のみ番組表を読み込みます。</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">セットアップ中にライブチャンネルを取得し、Stalker ポータルの番組表を取り込みます。XMLTV が設定され正常に動作する場合は、そちらを優先して使用します。</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">まずセットアップを完了し、その後バックグラウンドで Stalker ポータルの番組表を取り込みます。XMLTV が設定され正常に動作する場合は、そちらを優先して使用します。</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">番組表データを自動で一括取り込みしません。チャンネルを閲覧中でも、ライブ番組表データは必要に応じて読み込めます。</string>
     <string name="setup_m3u_hint">M3U URL</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">ファイル</string>

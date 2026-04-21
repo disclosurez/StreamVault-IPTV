@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Сначала завершить настройку, затем автоматически получить данные программы в фоне.</string>
     <string name="setup_epg_sync_mode_skip_title">Пока пропустить EPG</string>
     <string name="setup_epg_sync_mode_skip_description">Не загружать данные программы автоматически. Обновить EPG можно позже в Настройках.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker может использовать встроенный гид портала, если XMLTV отсутствует или недоступен. Загрузить сейчас импортирует его во время настройки, загрузка в фоне откладывает импорт, а пропуск оставляет загрузку программы по запросу.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Загрузите live-каналы и импортируйте гид портала Stalker во время настройки. Если XMLTV настроен и работает, сначала будет использован он.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Сначала завершите настройку, затем импортируйте гид портала Stalker в фоне. Если XMLTV настроен и работает, сначала будет использован он.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Не импортируйте данные программы автоматически целиком. Данные live-гида по-прежнему могут загружаться по запросу при просмотре каналов.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Файл</string>
