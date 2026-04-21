@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Najpierw dokończ konfigurację, a potem pobierz dane programu automatycznie w tle.</string>
     <string name="setup_epg_sync_mode_skip_title">Pomiń EPG na razie</string>
     <string name="setup_epg_sync_mode_skip_description">Nie pobieraj automatycznie danych programu. EPG możesz odświeżyć później w Ustawieniach.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker może używać natywnego przewodnika portalu, gdy XMLTV jest niedostępne lub nie zostało skonfigurowane. Wczytaj teraz importuje go podczas konfiguracji, w tle odkłada to na później, a pomiń pozostawia ładowanie przewodnika na żądanie.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Pobierz kanały na żywo i zaimportuj przewodnik portalu Stalker podczas konfiguracji. Jeśli XMLTV jest skonfigurowane i działa, zostanie użyte najpierw.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Najpierw dokończ konfigurację, a następnie zaimportuj przewodnik portalu Stalker w tle. Jeśli XMLTV jest skonfigurowane i działa, zostanie użyte najpierw.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Nie importuj automatycznie zbiorczo danych przewodnika. Dane przewodnika na żywo nadal mogą być ładowane na żądanie podczas przeglądania kanałów.</string>
     <string name="setup_m3u_hint">Adres URL M3U</string>
     <string name="setup_tab_url">Adres URL</string>
     <string name="setup_tab_file">Plik</string>

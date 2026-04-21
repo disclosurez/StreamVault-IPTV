@@ -21,6 +21,12 @@ class PlayerErrorClassifierTest {
     }
 
     @Test
+    fun `456 maps to auth`() {
+        assertThat(PlayerErrorClassifier.classify(IOException("HTTP 456")))
+            .isEqualTo(PlaybackErrorCategory.HTTP_AUTH)
+    }
+
+    @Test
     fun `ssl exception maps to ssl`() {
         assertThat(PlayerErrorClassifier.classify(SSLHandshakeException("certificate verify failed")))
             .isEqualTo(PlaybackErrorCategory.SSL)

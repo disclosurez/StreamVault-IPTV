@@ -1,6 +1,19 @@
 ﻿# Changelog
 
 All notable product changes are recorded in this document.
+## [1.0.8] - 2026-04-21
+
+### Fixed
+
+- Fixed Xtream Movies and Series sometimes showing categories but loading zero items after fast sync.
+- Fixed Xtream fast-sync category hydration treating temporary empty category responses as completed, which could leave VOD groups partially loaded until a later refresh.
+- Fixed slow Stalker provider adds by loading VOD and Series categories first and fetching their items only when needed.
+- Fixed Stalker streams failing on some portals by sending the required MAG/STB playback headers and user-agent on the final media request.
+- Fixed malformed Stalker stream links on some portals when the server already returned a direct playback URL.
+- Fixed Stalker EPG sync options so upfront, background, and manual refresh can use the portal guide with XMLTV fallback.
+
+---
+
 ## [1.0.7] - 2026-04-20
 
 ### Added

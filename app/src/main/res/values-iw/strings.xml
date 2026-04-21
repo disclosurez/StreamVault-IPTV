@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">סיים קודם את ההגדרה, ואז הבא נתוני מדריך אוטומטית ברקע.</string>
     <string name="setup_epg_sync_mode_skip_title">דלג על EPG לעכשיו</string>
     <string name="setup_epg_sync_mode_skip_description">אל תביא נתוני מדריך אוטומטית. אפשר לרענן את EPG מאוחר יותר מההגדרות.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker יכול להשתמש במדריך המקורי של הפורטל כאשר XMLTV חסר או לא זמין. טעינה מיידית מייבאת אותו במהלך ההגדרה, טעינה ברקע דוחה אותו, ודילוג משאיר את טעינת המדריך לפי דרישה.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">הורד את הערוצים החיים וייבא את מדריך הפורטל של Stalker במהלך ההגדרה. אם XMLTV מוגדר ופועל, הוא ישמש ראשון.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">סיים תחילה את ההגדרה ולאחר מכן ייבא את מדריך הפורטל של Stalker ברקע. אם XMLTV מוגדר ופועל, הוא ישמש ראשון.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">אל תייבא באופן אוטומטי נתוני מדריך בכמות גדולה. נתוני המדריך החי עדיין יכולים להיטען לפי דרישה בזמן גלישה בין ערוצים.</string>
     <string name="setup_m3u_hint">כתובת URL של M3U</string>
     <string name="setup_tab_url">כתובת אתר</string>
     <string name="setup_tab_file">קובץ</string>

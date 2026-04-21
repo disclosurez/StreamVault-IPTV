@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Afslut opsætningen først, og hent derefter guide-data automatisk i baggrunden.</string>
     <string name="setup_epg_sync_mode_skip_title">Spring EPG over nu</string>
     <string name="setup_epg_sync_mode_skip_description">Hent ikke guide-data automatisk. Du kan opdatere EPG senere fra Indstillinger.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker kan bruge portalens indbyggede guide, når XMLTV mangler eller ikke er tilgængelig. Hent nu importerer den under opsætningen, baggrund udsætter det, og spring over lader guiden blive indlæst efter behov.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Hent livekanaler og importer Stalker-portalens guide under opsætningen. Hvis XMLTV er konfigureret og virker, bruges det først.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Afslut opsætningen først, og importer derefter Stalker-portalens guide i baggrunden. Hvis XMLTV er konfigureret og virker, bruges det først.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Importér ikke guide-data i bulk automatisk. Live-guide-data kan stadig indlæses efter behov, mens du gennemser kanaler.</string>
     <string name="setup_m3u_hint">M3U-URL</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Fil</string>

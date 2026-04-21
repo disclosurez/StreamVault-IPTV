@@ -42,6 +42,12 @@ class ProviderSetupViewModel @Inject constructor(
     private val validateAndAddProvider: ValidateAndAddProvider
 ) : ViewModel() {
 
+    enum class SetupSourceType {
+        XTREAM,
+        STALKER,
+        M3U
+    }
+
     private val _uiState = MutableStateFlow(ProviderSetupState())
     val uiState: StateFlow<ProviderSetupState> = _uiState.asStateFlow()
     private val _knownLocalM3uUrls = MutableStateFlow<Set<String>>(emptySet())
@@ -84,6 +90,7 @@ class ProviderSetupViewModel @Inject constructor(
                         stalkerDeviceTimezone = provider.stalkerDeviceTimezone,
                         stalkerDeviceLocale = provider.stalkerDeviceLocale,
                         epgSyncMode = provider.epgSyncMode,
+                        hasCustomizedEpgSyncMode = true,
                         xtreamFastSyncEnabled = provider.xtreamFastSyncEnabled,
                         m3uVodClassificationEnabled = provider.m3uVodClassificationEnabled,
                         selectedTab = when (provider.type) {
@@ -111,7 +118,19 @@ class ProviderSetupViewModel @Inject constructor(
     }
 
     fun updateEpgSyncMode(mode: ProviderEpgSyncMode) {
-        _uiState.update { it.copy(epgSyncMode = mode) }
+        _uiState.update { it.copy(epgSyncMode = mode, hasCustomizedEpgSyncMode = true) }
+    }
+
+    fun applySourceDefaults(sourceType: SetupSourceType) {
+        _uiState.update { current ->
+            if (current.isEditing || current.hasCustomizedEpgSyncMode) {
+                current
+            } else {
+                current.copy(
+                    epgSyncMode = defaultEpgSyncModeFor(sourceType)
+                )
+            }
+        }
     }
 
     fun loginStalker(
@@ -396,6 +415,13 @@ data class ProviderSetupState(
     val pendingCombinedAttachProfileId: Long? = null,
     val pendingCombinedAttachProfileName: String? = null,
     val epgSyncMode: ProviderEpgSyncMode = ProviderEpgSyncMode.UPFRONT,
+    val hasCustomizedEpgSyncMode: Boolean = false,
     val xtreamFastSyncEnabled: Boolean = true,
     val m3uVodClassificationEnabled: Boolean = false
 )
+
+private fun defaultEpgSyncModeFor(sourceType: ProviderSetupViewModel.SetupSourceType): ProviderEpgSyncMode = when (sourceType) {
+    ProviderSetupViewModel.SetupSourceType.STALKER -> ProviderEpgSyncMode.BACKGROUND
+    ProviderSetupViewModel.SetupSourceType.XTREAM,
+    ProviderSetupViewModel.SetupSourceType.M3U -> ProviderEpgSyncMode.UPFRONT
+}

@@ -1,5 +1,6 @@
 package com.streamvault.data.remote.stalker
 
+import android.util.Log
 import com.streamvault.domain.model.Result
 import java.io.IOException
 import java.net.URI
@@ -372,6 +373,8 @@ class OkHttpStalkerApiService @Inject constructor(
         query: Map<String, String>,
         token: String? = null
     ): JsonElement = withContext(Dispatchers.IO) {
+        val action = query["action"]
+        val canRetryAlternateEndpoint = !token.isNullOrBlank()
         val request = Request.Builder()
             .url(buildUrl(url, query))
             .header("User-Agent", profile.userAgent)
@@ -385,19 +388,74 @@ class OkHttpStalkerApiService @Inject constructor(
             .get()
             .build()
 
-        okHttpClient.newCall(request).execute().use { response ->
+        runCatching {
+            executeJsonRequest(request, action)
+        }.recoverCatching { error ->
+            if (!canRetryAlternateEndpoint) throw error
+            val alternateUrl = siblingLoadUrl(url)
+                ?.takeIf { it != url }
+                ?: throw error
+            Log.w(
+                TAG,
+                "Retrying Stalker ${action.orEmpty()} via alternate endpoint $alternateUrl after ${error.message}"
+            )
+            val alternateRequest = request.newBuilder()
+                .url(buildUrl(alternateUrl, query))
+                .header("Referer", StalkerUrlFactory.portalReferer(alternateUrl))
+                .build()
+            executeJsonRequest(alternateRequest, action)
+        }.getOrElse { throw it }
+    }
+
+    private fun executeJsonRequest(request: Request, action: String?): JsonElement {
+        return okHttpClient.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IOException("Portal request failed with HTTP ${response.code}.")
             }
             if (body.isBlank()) {
-                throw IOException("Portal returned an empty response.")
+                throw IOException("Portal returned an empty response${actionSuffix(action)}.")
             }
-            val parsed = runCatching { json.parseToJsonElement(body) }
-                .getOrElse { throw IOException("Portal returned unreadable JSON.", it) }
+            val parsed = parsePortalJson(body, action)
             parsed.ensureNoPortalError()
             parsed
         }
+    }
+
+    private fun siblingLoadUrl(url: String): String? {
+        val normalized = StalkerUrlFactory.normalizePortalUrl(url)
+        val lower = normalized.lowercase(Locale.ROOT)
+        return when {
+            lower.endsWith("/server/load.php") -> normalized.removeSuffix("/server/load.php") + "/portal.php"
+            lower.endsWith("/portal.php") -> normalized.removeSuffix("/portal.php") + "/server/load.php"
+            else -> null
+        }
+    }
+
+    private fun parsePortalJson(body: String, action: String?): JsonElement {
+        val normalized = sanitizePortalResponseBody(body)
+        runCatching { json.parseToJsonElement(normalized) }
+            .getOrNull()
+            ?.let { return it }
+
+        if (looksLikeHtml(normalized)) {
+            val lower = normalized.lowercase(Locale.ROOT)
+            if (lower.contains("access denied") || lower.contains("forbidden")) {
+                throw IOException("Portal denied the request${actionSuffix(action)}.")
+            }
+        }
+
+        extractEmbeddedJson(normalized)?.let { candidate ->
+            runCatching { json.parseToJsonElement(candidate) }
+                .getOrNull()
+                ?.let { return it }
+        }
+
+        throw runCatching { json.parseToJsonElement(normalized) }
+            .fold(
+                onSuccess = { IOException("Portal returned unreadable JSON${actionSuffix(action)}.") },
+                onFailure = { error -> IOException("Portal returned unreadable JSON${actionSuffix(action)}.", error) }
+            )
     }
 
     private fun JsonElement.ensureNoPortalError() {
@@ -465,6 +523,7 @@ class OkHttpStalkerApiService @Inject constructor(
     private fun JsonElement.toProviderProfile(): StalkerProviderProfile {
         val payload = payloadObjectOrNull()
         return StalkerProviderProfile(
+            accountId = payload?.findString("id"),
             accountName = payload?.findString("name")
                 ?: payload?.findString("account")
                 ?: payload?.findString("login"),
@@ -474,7 +533,8 @@ class OkHttpStalkerApiService @Inject constructor(
             expirationDate = payload?.findString("expire_billing_date")
                 ?.let(::parseExpirationDate)
                 ?: payload?.findString("end_date")?.let(::parseExpirationDate),
-            statusLabel = payload?.findString("status")
+            statusLabel = payload?.findString("status"),
+            authAccess = payload?.findBoolean("auth_access")
         )
     }
 
@@ -679,6 +739,52 @@ class OkHttpStalkerApiService @Inject constructor(
     private fun sanitizeUrl(value: String?): String? =
         value?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
 
+    private fun sanitizePortalResponseBody(body: String): String {
+        val withoutBom = body.trimStart('\uFEFF')
+        val sanitizedControls = withoutBom.filter { char ->
+            char == '\n' || char == '\r' || char == '\t' || char.code >= 0x20
+        }
+        return sanitizedControls.trim()
+    }
+
+    private fun looksLikeHtml(body: String): Boolean {
+        val trimmed = body.trimStart()
+        return trimmed.startsWith("<!DOCTYPE", ignoreCase = true) ||
+            trimmed.startsWith("<html", ignoreCase = true) ||
+            trimmed.startsWith("<body", ignoreCase = true)
+    }
+
+    private fun extractEmbeddedJson(body: String): String? {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return null
+
+        val callbackStart = trimmed.indexOf('(')
+        val callbackEnd = trimmed.lastIndexOf(')')
+        if (callbackStart in 1 until callbackEnd) {
+            val callbackPayload = trimmed.substring(callbackStart + 1, callbackEnd).trim()
+            if (callbackPayload.startsWith('{') || callbackPayload.startsWith('[')) {
+                return callbackPayload
+            }
+        }
+
+        val objectStart = trimmed.indexOf('{')
+        val objectEnd = trimmed.lastIndexOf('}')
+        if (objectStart >= 0 && objectEnd > objectStart) {
+            return trimmed.substring(objectStart, objectEnd + 1)
+        }
+
+        val arrayStart = trimmed.indexOf('[')
+        val arrayEnd = trimmed.lastIndexOf(']')
+        if (arrayStart >= 0 && arrayEnd > arrayStart) {
+            return trimmed.substring(arrayStart, arrayEnd + 1)
+        }
+
+        return null
+    }
+
+    private fun actionSuffix(action: String?): String =
+        action?.takeIf { it.isNotBlank() }?.let { " for $it" }.orEmpty()
+
     private fun extractContainerExtension(cmd: String?, fallback: String?): String? {
         fallback?.trim()?.removePrefix(".")?.takeIf { it.isNotBlank() }?.let { return it.lowercase(Locale.ROOT) }
         val path = runCatching { URI(cmd).path }.getOrNull() ?: cmd
@@ -693,6 +799,7 @@ class OkHttpStalkerApiService @Inject constructor(
         URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 
     companion object {
+        private const val TAG = "OkHttpStalkerApi"
         private const val MAX_PAGE_COUNT = 200
         private const val DEFAULT_PROGRAM_DURATION_MILLIS = 30 * 60_000L
         private const val DEFAULT_VERSION_STRING =

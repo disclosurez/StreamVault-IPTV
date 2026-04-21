@@ -459,7 +459,11 @@ class XtreamProvider(
     }
 
     suspend fun mapVodStreamsResponse(streams: List<XtreamStream>): List<Movie> =
-        mapVodStreamsSequence(streams.asSequence()).toList()
+        mapVodStreamsSequence(streams.asSequence()).toList().also { mapped ->
+            if (streams.isNotEmpty() && mapped.isEmpty()) {
+                Log.w(TAG, "Xtream VOD mapping rejected all ${streams.size} raw items for provider $providerId.")
+            }
+        }
 
     suspend fun mapVodStreamsSequence(streams: Sequence<XtreamStream>): Sequence<Movie> {
         val adultCategoryIds = loadAdultCategoryIds(ContentType.MOVIE)
@@ -482,7 +486,11 @@ class XtreamProvider(
     }
 
     suspend fun mapSeriesListResponse(items: List<XtreamSeriesItem>): List<Series> =
-        mapSeriesListSequence(items.asSequence()).toList()
+        mapSeriesListSequence(items.asSequence()).toList().also { mapped ->
+            if (items.isNotEmpty() && mapped.isEmpty()) {
+                Log.w(TAG, "Xtream series mapping rejected all ${items.size} raw items for provider $providerId.")
+            }
+        }
 
     suspend fun mapSeriesListSequence(items: Sequence<XtreamSeriesItem>): Sequence<Series> {
         val adultCategoryIds = loadAdultCategoryIds(ContentType.SERIES)

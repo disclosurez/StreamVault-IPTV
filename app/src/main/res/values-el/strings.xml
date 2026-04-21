@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Ολοκληρώστε πρώτα τη ρύθμιση και μετά ανακτήστε αυτόματα τα δεδομένα οδηγού στο παρασκήνιο.</string>
     <string name="setup_epg_sync_mode_skip_title">Παράλειψη EPG προς το παρόν</string>
     <string name="setup_epg_sync_mode_skip_description">Μην ανακτάτε αυτόματα δεδομένα οδηγού. Μπορείτε να ανανεώσετε το EPG αργότερα από τις Ρυθμίσεις.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Το Stalker μπορεί να χρησιμοποιήσει τον εγγενή οδηγό της πύλης όταν το XMLTV λείπει ή δεν είναι διαθέσιμο. Η επιλογή άμεσης φόρτωσης τον εισάγει κατά τη ρύθμιση, η φόρτωση στο παρασκήνιο τον αναβάλλει και η παράλειψη αφήνει τη φόρτωση οδηγού κατά απαίτηση.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Κατεβάστε τα ζωντανά κανάλια και εισαγάγετε τον οδηγό πύλης του Stalker κατά τη ρύθμιση. Αν το XMLTV είναι ρυθμισμένο και λειτουργεί, χρησιμοποιείται πρώτα.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Ολοκληρώστε πρώτα τη ρύθμιση και έπειτα εισαγάγετε τον οδηγό πύλης του Stalker στο παρασκήνιο. Αν το XMLTV είναι ρυθμισμένο και λειτουργεί, χρησιμοποιείται πρώτα.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Μην εισάγετε μαζικά τα δεδομένα οδηγού αυτόματα. Τα δεδομένα ζωντανού οδηγού μπορούν ακόμη να φορτωθούν κατά απαίτηση όταν περιηγείστε στα κανάλια.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Αρχείο</string>

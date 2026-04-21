@@ -195,7 +195,9 @@ class ChannelRepositoryImpl @Inject constructor(
         xtreamStreamUrlResolver.resolveWithMetadata(
             url = channel.streamUrl,
             fallbackProviderId = channel.providerId,
-            fallbackStreamId = channel.streamId,
+            fallbackStreamId = channel.streamId.takeIf { it > 0L }
+                ?: channel.epgChannelId?.toLongOrNull()
+                ?: channel.id.takeIf { it > 0L },
             fallbackContentType = ContentType.LIVE,
             preferStableUrl = preferStableUrl
         )?.let { resolvedStream ->
@@ -203,6 +205,8 @@ class ChannelRepositoryImpl @Inject constructor(
                 StreamInfo(
                     url = resolvedStream.url,
                     title = channel.name,
+                    headers = resolvedStream.headers,
+                    userAgent = resolvedStream.userAgent,
                     streamType = StreamType.fromContainerExtension(resolvedStream.containerExtension),
                     containerExtension = resolvedStream.containerExtension,
                     expirationTime = resolvedStream.expirationTime

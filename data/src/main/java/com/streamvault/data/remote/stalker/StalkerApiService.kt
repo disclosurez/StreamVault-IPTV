@@ -23,10 +23,12 @@ data class StalkerSession(
 )
 
 data class StalkerProviderProfile(
+    val accountId: String? = null,
     val accountName: String? = null,
     val maxConnections: Int? = null,
     val expirationDate: Long? = null,
-    val statusLabel: String? = null
+    val statusLabel: String? = null,
+    val authAccess: Boolean? = null
 )
 
 data class StalkerCategoryRecord(

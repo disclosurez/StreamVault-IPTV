@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Conclua a configuração primeiro e depois busque os dados do guia automaticamente em segundo plano.</string>
     <string name="setup_epg_sync_mode_skip_title">Pular EPG por enquanto</string>
     <string name="setup_epg_sync_mode_skip_description">Não buscar dados do guia automaticamente. Você pode atualizar o EPG depois em Configurações.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">O Stalker pode usar o guia nativo do portal quando o XMLTV estiver ausente ou indisponível. Carregar agora o importa durante a configuração, carregar em segundo plano o adia, e pular deixa o carregamento do guia sob demanda.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Baixe os canais ao vivo e importe o guia do portal Stalker durante a configuração. Se o XMLTV estiver configurado e funcionar, ele será usado primeiro.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Conclua a configuração primeiro e depois importe o guia do portal Stalker em segundo plano. Se o XMLTV estiver configurado e funcionar, ele será usado primeiro.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Não importe automaticamente os dados do guia em lote. Os dados do guia ao vivo ainda podem ser carregados sob demanda enquanto você navega pelos canais.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">Arquivo</string>

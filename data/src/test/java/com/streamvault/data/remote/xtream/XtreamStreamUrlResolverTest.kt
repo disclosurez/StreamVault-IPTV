@@ -15,6 +15,7 @@ import com.streamvault.data.remote.stalker.StalkerSeriesDetails
 import com.streamvault.data.remote.stalker.StalkerSession
 import com.streamvault.data.remote.stalker.StalkerStreamKind
 import com.streamvault.data.remote.stalker.StalkerUrlFactory
+import com.streamvault.domain.model.ContentType
 import com.streamvault.data.security.CredentialCrypto
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.ProviderType
@@ -176,11 +177,139 @@ class XtreamStreamUrlResolverTest {
         val firstResolved = resolver.resolveWithMetadata(internalUrl)
         val secondResolved = resolver.resolveWithMetadata(internalUrl)
 
-        assertThat(firstResolved?.url).isEqualTo("http://edge.example.com/live/77.m3u8?exp=1774017000")
-        assertThat(firstResolved?.expirationTime).isEqualTo(1_774_017_000_000L)
-        assertThat(secondResolved?.url).isEqualTo("http://edge.example.com/live/77.m3u8?exp=1774017000")
+        assertThat(firstResolved?.url).isEqualTo("http://edge.example.com/live/77.m3u8")
+        assertThat(firstResolved?.expirationTime).isNull()
+        assertThat(firstResolved?.headers?.get("Referer")).isEqualTo("https://portal.example.com/c/")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("mac=00:1A:79:12:34:56")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("stb_lang=en")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("timezone=UTC")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("sn=0001A79123456")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("device_id=")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("device_id2=")
+        assertThat(firstResolved?.headers?.get("Cookie")).contains("signature=")
+        assertThat(firstResolved?.headers?.get("Authorization")).isEqualTo("Bearer token")
+        assertThat(firstResolved?.headers?.get("X-User-Agent")).isEqualTo("Model: MAG250; Link: Ethernet")
+        assertThat(firstResolved?.userAgent).contains("MAG250 stbapp")
+        assertThat(secondResolved?.url).isEqualTo("http://edge.example.com/live/77.m3u8")
         assertThat(fakeStalkerApiService.authenticateCalls).isEqualTo(1)
-        assertThat(fakeStalkerApiService.createLinkCalls).isEqualTo(2)
+        assertThat(fakeStalkerApiService.createLinkCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun resolveWithMetadata_uses_direct_stalker_absolute_cmd_without_create_link() = runBlocking {
+        val fakeStalkerApiService = FakeStalkerApiService()
+        val resolver = XtreamStreamUrlResolver(
+            providerDao = FakeProviderDao(
+                ProviderEntity(
+                    id = 14,
+                    name = "Stalker",
+                    type = ProviderType.STALKER_PORTAL,
+                    serverUrl = "https://portal.example.com",
+                    stalkerMacAddress = "00:1A:79:12:34:56",
+                    stalkerDeviceProfile = "MAG250",
+                    stalkerDeviceTimezone = "UTC",
+                    stalkerDeviceLocale = "en"
+                )
+            ),
+            credentialCrypto = credentialCrypto,
+            stalkerApiService = fakeStalkerApiService
+        )
+        val directCmd = "http://0connect.top:8080/9UTXtQcxuxkk/9fa4ed5x07/443?play_token=iwdgLK23Yl"
+        val internalUrl = StalkerUrlFactory.buildInternalStreamUrl(
+            providerId = 14,
+            kind = StalkerStreamKind.LIVE,
+            itemId = 77,
+            cmd = directCmd,
+            containerExtension = "ts"
+        )
+
+        val resolved = resolver.resolveWithMetadata(internalUrl)
+
+        assertThat(resolved?.url).isEqualTo(directCmd)
+        assertThat(resolved?.headers?.get("Referer")).isEqualTo("https://portal.example.com/c/")
+        assertThat(resolved?.headers?.get("Authorization")).isEqualTo("Bearer token")
+        assertThat(resolved?.userAgent).contains("MAG250 stbapp")
+        assertThat(fakeStalkerApiService.authenticateCalls).isEqualTo(1)
+        assertThat(fakeStalkerApiService.createLinkCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun resolveWithMetadata_uses_wrapped_direct_stalker_live_cmd_without_create_link() = runBlocking {
+        val fakeStalkerApiService = FakeStalkerApiService().apply {
+            createLinkResponse = "http://line.trxdnscloud.ru/play/live.php?mac=00:1A:79:40:8B:D7&stream=&extension=ts&play_token=broken"
+        }
+        val resolver = XtreamStreamUrlResolver(
+            providerDao = FakeProviderDao(
+                ProviderEntity(
+                    id = 14,
+                    name = "Stalker",
+                    type = ProviderType.STALKER_PORTAL,
+                    serverUrl = "http://line.trxdnscloud.ru/c/",
+                    stalkerMacAddress = "00:1A:79:40:8B:D7",
+                    stalkerDeviceProfile = "MAG250",
+                    stalkerDeviceTimezone = "UTC",
+                    stalkerDeviceLocale = "en"
+                )
+            ),
+            credentialCrypto = credentialCrypto,
+            stalkerApiService = fakeStalkerApiService
+        )
+        val internalUrl = StalkerUrlFactory.buildInternalStreamUrl(
+            providerId = 14,
+            kind = StalkerStreamKind.LIVE,
+            itemId = 978715,
+            cmd = "ffmpeg http://line.trxdnscloud.ru/play/live.php?mac=00:1A:79:40:8B:D7&stream=978715&extension=ts&play_token=R7KbxtDJj3",
+            containerExtension = "ts"
+        )
+
+        val resolved = resolver.resolveWithMetadata(internalUrl)
+
+        assertThat(resolved?.url).isEqualTo(
+            "http://line.trxdnscloud.ru/play/live.php?mac=00:1A:79:40:8B:D7&stream=978715&extension=ts&play_token=R7KbxtDJj3"
+        )
+        assertThat(resolved?.headers?.get("Referer")).isEqualTo("https://portal.example.com/c/")
+        assertThat(resolved?.headers?.get("Authorization")).isEqualTo("Bearer token")
+        assertThat(resolved?.userAgent).contains("MAG250 stbapp")
+        assertThat(fakeStalkerApiService.authenticateCalls).isEqualTo(1)
+        assertThat(fakeStalkerApiService.createLinkCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun resolveWithMetadata_repairs_stale_direct_stalker_live_url_and_applies_headers() = runBlocking {
+        val fakeStalkerApiService = FakeStalkerApiService()
+        val resolver = XtreamStreamUrlResolver(
+            providerDao = FakeProviderDao(
+                ProviderEntity(
+                    id = 14,
+                    name = "Stalker",
+                    type = ProviderType.STALKER_PORTAL,
+                    serverUrl = "https://portal.example.com",
+                    stalkerMacAddress = "00:1A:79:12:34:56",
+                    stalkerDeviceProfile = "MAG250",
+                    stalkerDeviceTimezone = "UTC",
+                    stalkerDeviceLocale = "en"
+                )
+            ),
+            credentialCrypto = credentialCrypto,
+            stalkerApiService = fakeStalkerApiService
+        )
+
+        val resolved = resolver.resolveWithMetadata(
+            url = "http://portal.example.com/play/live.php?mac=00:1A:79:12:34:56&stream=&extension=ts&play_token=abc123",
+            fallbackProviderId = 14,
+            fallbackStreamId = 978715,
+            fallbackContentType = ContentType.LIVE,
+            fallbackContainerExtension = "ts"
+        )
+
+        assertThat(resolved?.url).isEqualTo(
+            "http://portal.example.com/play/live.php?mac=00:1A:79:12:34:56&stream=978715&extension=ts&play_token=abc123"
+        )
+        assertThat(resolved?.headers?.get("Referer")).isEqualTo("https://portal.example.com/c/")
+        assertThat(resolved?.headers?.get("Authorization")).isEqualTo("Bearer token")
+        assertThat(resolved?.userAgent).contains("MAG250 stbapp")
+        assertThat(fakeStalkerApiService.authenticateCalls).isEqualTo(1)
+        assertThat(fakeStalkerApiService.createLinkCalls).isEqualTo(0)
     }
 
     private class FakeProviderDao(
@@ -205,6 +334,7 @@ class XtreamStreamUrlResolverTest {
     private class FakeStalkerApiService : StalkerApiService {
         var authenticateCalls: Int = 0
         var createLinkCalls: Int = 0
+        var createLinkResponse: String = "http://edge.example.com/live/77.m3u8?exp=1774017000"
 
         override suspend fun authenticate(profile: StalkerDeviceProfile): Result<Pair<StalkerSession, StalkerProviderProfile>> {
             authenticateCalls += 1
@@ -281,7 +411,7 @@ class XtreamStreamUrlResolverTest {
             cmd: String
         ): Result<String> {
             createLinkCalls += 1
-            return Result.success("http://edge.example.com/live/77.m3u8?exp=1774017000")
+            return Result.success(createLinkResponse)
         }
     }
 }

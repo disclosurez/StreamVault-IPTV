@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.CombinedM3uProfile
 import com.streamvault.domain.model.Provider
+import com.streamvault.domain.model.ProviderEpgSyncMode
 import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.ProviderRepository
@@ -105,5 +106,36 @@ class ProviderSetupViewModelTest {
         verify(combinedM3uRepository).setActiveLiveSource(eq(ActiveLiveSource.CombinedM3uSource(99L)))
         assertThat(viewModel.uiState.value.loginSuccess).isTrue()
         assertThat(viewModel.uiState.value.pendingCombinedAttachProfileId).isNull()
+    }
+
+    @Test
+    fun `stalker source defaults epg sync mode to background when user has not customized it`() = runTest {
+        val viewModel = ProviderSetupViewModel(
+            providerRepository = providerRepository,
+            combinedM3uRepository = combinedM3uRepository,
+            validateAndAddProvider = validateAndAddProvider
+        )
+
+        viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.STALKER)
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.epgSyncMode).isEqualTo(ProviderEpgSyncMode.BACKGROUND)
+        assertThat(viewModel.uiState.value.hasCustomizedEpgSyncMode).isFalse()
+    }
+
+    @Test
+    fun `source defaults do not override customized epg sync mode`() = runTest {
+        val viewModel = ProviderSetupViewModel(
+            providerRepository = providerRepository,
+            combinedM3uRepository = combinedM3uRepository,
+            validateAndAddProvider = validateAndAddProvider
+        )
+
+        viewModel.updateEpgSyncMode(ProviderEpgSyncMode.SKIP)
+        viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.STALKER)
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.epgSyncMode).isEqualTo(ProviderEpgSyncMode.SKIP)
+        assertThat(viewModel.uiState.value.hasCustomizedEpgSyncMode).isTrue()
     }
 }

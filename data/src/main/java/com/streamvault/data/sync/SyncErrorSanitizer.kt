@@ -74,6 +74,8 @@ internal class SyncErrorSanitizer {
     private fun classifyIllegalState(message: String?, fallback: String): String {
         val normalized = message.orEmpty().lowercase()
         return when {
+            normalized.contains("no accessible catalog data") ->
+                "Provider authenticated, but the account has no accessible catalog data. Check that the MAC is activated and assigned a package on the provider side."
             normalized.contains("empty") && normalized.contains("catalog") -> "Provider returned an empty catalog."
             normalized.contains("playlist") && normalized.contains("http") -> "Playlist download failed."
             normalized.contains("epg") -> "Guide download failed."

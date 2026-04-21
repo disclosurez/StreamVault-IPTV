@@ -15,6 +15,11 @@ import com.streamvault.data.local.entity.MovieEntity
 import com.streamvault.data.local.entity.PlaybackHistoryLiteEntity
 import com.streamvault.data.local.entity.ProviderEntity
 import com.streamvault.data.preferences.PreferencesRepository
+import com.streamvault.data.remote.stalker.StalkerDeviceProfile
+import com.streamvault.data.remote.stalker.StalkerProviderProfile
+import com.streamvault.data.remote.stalker.StalkerSession
+import com.streamvault.data.remote.stalker.StalkerCategoryRecord
+import com.streamvault.data.remote.stalker.StalkerItemRecord
 import com.streamvault.data.remote.dto.XtreamCategory
 import com.streamvault.data.remote.dto.XtreamStream
 import com.streamvault.data.remote.stalker.StalkerApiService
@@ -24,6 +29,9 @@ import com.streamvault.data.security.CredentialCrypto
 import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.Result
+import com.streamvault.domain.model.SyncMetadata
+import com.streamvault.domain.model.VodSyncMode
 import com.streamvault.domain.repository.SyncMetadataRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -31,8 +39,11 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -193,6 +204,123 @@ class MovieRepositoryImplTest {
         repository.getMoviesByCategory(7L, 42L).first()
 
         verify(movieDao).replaceCategory(eq(7L), eq(42L), any())
+    }
+
+    @Test
+    fun `getMoviesByCategory marks empty xtream fast sync hydration for retry`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
+        whenever(movieDao.getCountByCategory(7L, 42L)).thenReturn(flowOf(0))
+        whenever(movieDao.getByCategory(7L, 42L)).thenReturn(flowOf(emptyList()))
+        whenever(movieCategoryHydrationDao.get(7L, 42L)).thenReturn(null)
+        whenever(syncMetadataRepository.getMetadata(7L)).thenReturn(
+            SyncMetadata(providerId = 7L, movieSyncMode = VodSyncMode.LAZY_BY_CATEGORY)
+        )
+        whenever(providerDao.getById(7L)).thenReturn(
+            ProviderEntity(
+                id = 7L,
+                name = "Xtream",
+                type = ProviderType.XTREAM_CODES,
+                serverUrl = "http://example.com",
+                username = "user",
+                password = "pass",
+                status = ProviderStatus.ACTIVE
+            )
+        )
+        whenever(xtreamApiService.getVodCategories(any())).thenReturn(
+            listOf(XtreamCategory(categoryId = "42", categoryName = "Action"))
+        )
+        whenever(xtreamApiService.getVodStreams(any())).thenReturn(emptyList())
+
+        val repository = createRepository()
+
+        repository.getMoviesByCategory(7L, 42L).first()
+
+        verify(movieDao, never()).replaceCategory(eq(7L), eq(42L), any())
+        val hydrationCaptor = argumentCaptor<com.streamvault.data.local.entity.MovieCategoryHydrationEntity>()
+        verify(movieCategoryHydrationDao).upsert(hydrationCaptor.capture())
+        assertThat(hydrationCaptor.firstValue.lastStatus).isEqualTo("EMPTY_RETRY")
+        assertThat(hydrationCaptor.firstValue.itemCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `getMoviesByCategory lazily hydrates stalker category when local cache is empty`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(movieDao.getCountByCategory(7L, 42L)).thenReturn(flowOf(0))
+        whenever(movieDao.getByCategory(7L, 42L)).thenReturn(flowOf(emptyList()))
+        whenever(movieCategoryHydrationDao.get(7L, 42L)).thenReturn(null)
+        whenever(providerDao.getById(7L)).thenReturn(
+            ProviderEntity(
+                id = 7L,
+                name = "Stalker",
+                type = ProviderType.STALKER_PORTAL,
+                serverUrl = "http://example.com",
+                stalkerMacAddress = "00:11:22:33:44:55",
+                status = ProviderStatus.ACTIVE
+            )
+        )
+        whenever(stalkerApiService.authenticate(any())).thenReturn(
+            Result.success(
+                StalkerSession(
+                    loadUrl = "http://example.com/stalker_portal/server/load.php",
+                    portalReferer = "http://example.com/stalker_portal/c/",
+                    token = "token"
+                ) to StalkerProviderProfile(accountName = "Stalker")
+            )
+        )
+        whenever(stalkerApiService.getVodCategories(any(), any())).thenReturn(
+            Result.success(listOf(StalkerCategoryRecord(id = "42", name = "Action")))
+        )
+        whenever(stalkerApiService.getVodStreams(any(), any(), anyOrNull())).thenReturn(
+            Result.success(
+                listOf(
+                    StalkerItemRecord(
+                        id = "101",
+                        name = "Movie",
+                        categoryId = "42",
+                        cmd = "ffmpeg http://example.com/movie.mp4",
+                        containerExtension = "mp4"
+                    )
+                )
+            )
+        )
+
+        val repository = createRepository()
+
+        repository.getMoviesByCategory(7L, 42L).first()
+
+        verify(movieDao).replaceCategory(eq(7L), eq(42L), any())
+    }
+
+    @Test
+    fun `getMovieDetails returns local data for stalker without full remote fetch`() = runTest {
+        whenever(movieDao.getById(101L)).thenReturn(
+            movieRecord(
+                id = 101L,
+                name = "Stored Movie",
+                genre = "Action",
+                categoryId = 42L,
+                rating = 8.5f
+            )
+        )
+        whenever(providerDao.getById(7L)).thenReturn(
+            ProviderEntity(
+                id = 7L,
+                name = "Stalker",
+                type = ProviderType.STALKER_PORTAL,
+                serverUrl = "http://example.com",
+                stalkerMacAddress = "00:11:22:33:44:55",
+                status = ProviderStatus.ACTIVE
+            )
+        )
+
+        val repository = createRepository()
+
+        val result = repository.getMovieDetails(7L, 101L)
+
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+        assertThat((result as Result.Success).data.name).isEqualTo("Stored Movie")
+        verify(stalkerApiService, never()).authenticate(any())
     }
 
     @Test

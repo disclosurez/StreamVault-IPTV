@@ -740,6 +740,10 @@
     <string name="setup_epg_sync_mode_background_description">Hoàn tất thiết lập trước, rồi tự động tải dữ liệu hướng dẫn trong nền.</string>
     <string name="setup_epg_sync_mode_skip_title">Tạm bỏ qua EPG</string>
     <string name="setup_epg_sync_mode_skip_description">Không tự động tải dữ liệu hướng dẫn. Bạn có thể làm mới EPG sau trong Cài đặt.</string>
+    <string name="setup_stalker_epg_sync_mode_helper">Stalker có thể dùng hướng dẫn gốc của cổng khi XMLTV bị thiếu hoặc không khả dụng. Tải ngay sẽ nhập nó trong lúc thiết lập, tải nền trì hoãn việc đó, còn bỏ qua sẽ để hướng dẫn tải theo yêu cầu.</string>
+    <string name="setup_stalker_epg_sync_mode_upfront_description">Tải các kênh trực tiếp và nhập hướng dẫn cổng Stalker trong lúc thiết lập. Nếu XMLTV đã được cấu hình và hoạt động, nó sẽ được dùng trước.</string>
+    <string name="setup_stalker_epg_sync_mode_background_description">Hoàn tất thiết lập trước, sau đó nhập hướng dẫn cổng Stalker ở chế độ nền. Nếu XMLTV đã được cấu hình và hoạt động, nó sẽ được dùng trước.</string>
+    <string name="setup_stalker_epg_sync_mode_skip_description">Không tự động nhập hàng loạt dữ liệu hướng dẫn. Dữ liệu hướng dẫn trực tiếp vẫn có thể tải theo yêu cầu khi bạn duyệt kênh.</string>
     <string name="setup_m3u_hint">URL M3U</string>
     <string name="setup_tab_url">URL</string>
     <string name="setup_tab_file">tập tin</string>

@@ -21,10 +21,7 @@ class PlayerDataSourceFactoryProvider(
         preload: Boolean = false
     ): Pair<PlayerTimeoutProfile, DataSource.Factory> {
         val profile = PlayerTimeoutProfile.resolve(streamInfo, resolvedStreamType, preload)
-        val headers = buildMap {
-            putAll(streamInfo.headers)
-            streamInfo.userAgent?.takeIf { it.isNotBlank() }?.let { put("User-Agent", it) }
-        }
+        val headers = streamInfo.headers
         val client = clientsByProfile.computeIfAbsent(profile) {
             baseClient.newBuilder()
                 .connectTimeout(profile.connectTimeoutMs, TimeUnit.MILLISECONDS)
@@ -33,6 +30,7 @@ class PlayerDataSourceFactoryProvider(
                 .build()
         }
         val upstreamFactory = OkHttpDataSource.Factory(client).apply {
+            streamInfo.userAgent?.takeIf { it.isNotBlank() }?.let(::setUserAgent)
             if (headers.isNotEmpty()) {
                 setDefaultRequestProperties(headers)
             }
