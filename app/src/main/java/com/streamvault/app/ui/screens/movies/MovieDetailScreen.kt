@@ -106,8 +106,9 @@ fun MovieDetailScreen(
                 resumePositionMs = uiState.resumePositionMs,
                 externalRatings = uiState.externalRatings,
                 isLoadingExternalRatings = uiState.isLoadingExternalRatings,
+                movieVariants = uiState.movieVariants,
                 relatedContent = uiState.relatedContent,
-                onPlay = { onPlay(movie) },
+                onPlay = onPlay,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onRelatedClick = onPlay,
                 onBack = onBack
@@ -123,8 +124,9 @@ private fun MovieDetailContent(
     resumePositionMs: Long,
     externalRatings: ExternalRatings,
     isLoadingExternalRatings: Boolean,
+    movieVariants: List<Movie>,
     relatedContent: List<Movie>,
-    onPlay: () -> Unit,
+    onPlay: (Movie) -> Unit,
     onToggleFavorite: () -> Unit,
     onRelatedClick: (Movie) -> Unit,
     onBack: () -> Unit
@@ -132,6 +134,9 @@ private fun MovieDetailContent(
     val context = LocalContext.current
     val isTelevisionDevice = rememberIsTelevisionDevice()
     val playButtonFocusRequester = remember { FocusRequester() }
+    val primaryPlayMovie = remember(movie.id, movieVariants) {
+        movieVariants.firstOrNull() ?: movie
+    }
 
     LaunchedEffect(movie.id) {
         playButtonFocusRequester.requestFocusSafely(
@@ -209,7 +214,9 @@ private fun MovieDetailContent(
                             resumePositionMs = resumePositionMs,
                             externalRatings = externalRatings,
                             isLoadingExternalRatings = isLoadingExternalRatings,
+                            movieVariants = movieVariants,
                             onPlay = onPlay,
+                            primaryPlayMovie = primaryPlayMovie,
                             onToggleFavorite = onToggleFavorite,
                             playButtonFocusRequester = playButtonFocusRequester,
                             onPlayTrailer = {
@@ -233,7 +240,9 @@ private fun MovieDetailContent(
                             resumePositionMs = resumePositionMs,
                             externalRatings = externalRatings,
                             isLoadingExternalRatings = isLoadingExternalRatings,
+                            movieVariants = movieVariants,
                             onPlay = onPlay,
+                            primaryPlayMovie = primaryPlayMovie,
                             onToggleFavorite = onToggleFavorite,
                             playButtonFocusRequester = playButtonFocusRequester,
                             onPlayTrailer = {
@@ -326,7 +335,9 @@ private fun MovieDetailHeroText(
     resumePositionMs: Long,
     externalRatings: ExternalRatings,
     isLoadingExternalRatings: Boolean,
-    onPlay: () -> Unit,
+    movieVariants: List<Movie>,
+    onPlay: (Movie) -> Unit,
+    primaryPlayMovie: Movie,
     onToggleFavorite: () -> Unit,
     playButtonFocusRequester: FocusRequester,
     onPlayTrailer: () -> Unit,
@@ -367,6 +378,64 @@ private fun MovieDetailHeroText(
             )
         )
 
+        if (movieVariants.size > 1) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.movie_detail_versions),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = AppColors.TextPrimary
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(movieVariants, key = { it.id }) { variant ->
+                        TvClickableSurface(
+                            onClick = { onPlay(variant) },
+                            modifier = Modifier.width(176.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(2f / 3f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(AppColors.SurfaceElevated)
+                                ) {
+                                    AsyncImage(
+                                        model = rememberCrossfadeImageModel(variant.posterUrl ?: variant.backdropUrl),
+                                        contentDescription = variant.name,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                                Text(
+                                    text = buildString {
+                                        append(variant.name)
+                                        variant.year?.takeIf(String::isNotBlank)?.let { year ->
+                                            append(" (")
+                                            append(year)
+                                            append(")")
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = AppColors.TextPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                variant.releaseDate?.takeIf(String::isNotBlank)?.let { releaseDate ->
+                                    Text(
+                                        text = releaseDate,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = AppColors.TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         ExternalRatingsStrip(
             ratings = externalRatings,
             isLoading = isLoadingExternalRatings
@@ -376,7 +445,7 @@ private fun MovieDetailHeroText(
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             TvButton(
-                onClick = onPlay,
+                onClick = { onPlay(primaryPlayMovie) },
                 modifier = Modifier.focusRequester(playButtonFocusRequester),
                 colors = ButtonDefaults.colors(
                     containerColor = AppColors.Brand,

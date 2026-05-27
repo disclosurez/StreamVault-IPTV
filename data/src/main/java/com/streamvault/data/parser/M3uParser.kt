@@ -134,7 +134,9 @@ class M3uParser {
     }
 
     fun parseToChannels(inputStream: InputStream, providerId: Long): List<Channel> {
-        return parse(inputStream).entries.mapIndexed { index, entry ->
+        return parse(inputStream).entries
+            .filterNot { ChannelNormalizer.hasTooManyHashCharacters(it.name) }
+            .mapIndexed { index, entry ->
             Channel(
                 id = index.toLong() + 1, // Will be replaced by stableId in SyncManager
                 name = entry.name,
