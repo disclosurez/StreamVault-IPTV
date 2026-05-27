@@ -1118,11 +1118,15 @@ class PlayerViewModel @Inject constructor(
                         url = session.streamInfo.url
                     )
                 )
-                // Re-prime the adopted engine against the fullscreen surface path at
-                // the live edge. Renewing in-place preserves the preview timeline
-                // position, which can strand HLS live playback in buffering after the
-                // fullscreen surface binds.
-                playerEngine.prepare(session.streamInfo)
+                val shouldRenewFullscreenPreview = shouldRenewAdoptedPreviewOnFullscreen(
+                    playbackState = playerEngine.playbackState.value,
+                    playerStats = playerEngine.playerStats.value
+                )
+                if (shouldRenewFullscreenPreview) {
+                    // If the preview is not already healthy, renew it against the fullscreen
+                    // path instead of carrying over a stuck preview timeline.
+                    playerEngine.renewStreamUrl(session.streamInfo)
+                }
                 playerEngine.play()
                 startTokenRenewalMonitoring(session.streamInfo.expirationTime)
                 maybeStartLiveTimeshift(session.streamInfo)

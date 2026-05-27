@@ -344,9 +344,9 @@ class VideoStallDetectorTest {
 
     private fun detector() = VideoStallDetector(
         nowMs = { nowMs },
-        initialGraceMs = 5_000L,
-        stallThresholdMs = 4_000L,
-        bufferingStallThresholdMs = 4_000L,
+        initialGraceMs = 4_000L,
+        stallThresholdMs = 3_000L,
+        bufferingStallThresholdMs = 5_000L,
         minPositionAdvanceMs = 1_000L
     )
 }
