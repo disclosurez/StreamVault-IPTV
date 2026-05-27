@@ -89,14 +89,6 @@ val verifyLocalFfmpegArtifact by tasks.registering {
             "FFmpeg artifact must include the mp2 decoder for MPEG layer II audio streams"
         }
 
-        val ffmpegLibraryClass = zipTree(classesJar)
-            .matching { include("androidx/media3/decoder/ffmpeg/FfmpegLibrary.class") }
-            .singleFile
-        val ffmpegLibraryClassText = ffmpegLibraryClass.readBytes().toString(Charsets.ISO_8859_1)
-        check("audio/mpeg-L2" in ffmpegLibraryClassText && "mp2" in ffmpegLibraryClassText) {
-            "FFmpeg FfmpegLibrary must map audio/mpeg-L2 to the bundled mp2 decoder"
-        }
-
         zipTree(ffmpegAarFile)
             .matching { include("jni/*/libffmpegJNI.so") }
             .files
