@@ -67,6 +67,7 @@ import com.streamvault.app.ui.components.shell.AppNavigationChrome
 import com.streamvault.app.ui.components.shell.AppScreenScaffold
 import com.streamvault.app.ui.design.FocusRestoreHost
 import com.streamvault.app.ui.design.requestFocusSafely
+import com.streamvault.app.ui.model.mergeSimilarCategories
 import androidx.activity.compose.BackHandler
 import com.streamvault.app.ui.model.LiveTvQuickFilterVisibilityMode
 import com.streamvault.app.ui.theme.*
@@ -376,13 +377,22 @@ fun HomeScreen(
                 val categoryFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
                 val channelFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
                 val visibleCategories = remember(uiState.categories, uiState.categorySearchQuery) {
-                    uiState.categories
-                        .asSequence()
-                        .filter {
-                            uiState.categorySearchQuery.isEmpty() ||
-                                it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
-                        }
-                        .toList()
+                    val mergedCategories = buildList {
+                        addAll(
+                            mergeSimilarCategories(
+                                uiState.categories.filter { it.isVirtual || it.id == ChannelRepository.ALL_CHANNELS_ID }
+                            )
+                        )
+                        addAll(
+                            mergeSimilarCategories(
+                                uiState.categories.filterNot { it.isVirtual || it.id == ChannelRepository.ALL_CHANNELS_ID }
+                            )
+                        )
+                    }
+                    mergedCategories.filter {
+                        uiState.categorySearchQuery.isEmpty() ||
+                            it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
+                    }
                 }
                 val isCategoryLocked: (Category) -> Boolean = remember(uiState.parentalControlLevel, uiState.unlockedCategoryIds) {
                     { category ->

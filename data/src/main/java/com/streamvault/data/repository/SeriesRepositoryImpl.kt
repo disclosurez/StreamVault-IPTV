@@ -77,6 +77,7 @@ class SeriesRepositoryImpl @Inject constructor(
         const val CURSOR_BATCH_SIZE = 40
         const val STALKER_PREVIEW_REQUIRED_COUNT_THRESHOLD = 24
         const val STALKER_PREVIEW_MAX_REMOTE_PAGES = 2
+        val YEAR_IN_TITLE_REGEX = Regex("""(19|20)\d{2}""")
         const val DETAIL_REFRESH_TTL_MILLIS = 14L * 24L * 60L * 60L * 1000L
         const val XTREAM_DETAIL_HYDRATION_TIMEOUT_MILLIS = 8_000L
         const val CACHE_STATE_SUMMARY_ONLY = "SUMMARY_ONLY"
@@ -138,7 +139,11 @@ class SeriesRepositoryImpl @Inject constructor(
                     } else {
                         entities
                     }
-                }.map { list -> list.map { it.toDomain() } }
+                }.map { list ->
+                    list
+                        .sortedByDescending(::seriesReleaseScore)
+                        .map { it.toDomain() }
+                }
             )
         }
 
@@ -159,7 +164,11 @@ class SeriesRepositoryImpl @Inject constructor(
                 } else {
                     entities
                 }
-            }.map { list -> list.map { it.toDomain() } }
+            }.map { list ->
+                list
+                    .sortedByDescending(::seriesReleaseScore)
+                    .map { it.toDomain() }
+            }
         )
     }
 
@@ -224,7 +233,9 @@ class SeriesRepositoryImpl @Inject constructor(
                     seriesDao.getByCategoryPreview(providerId, cat.categoryId, limitPerCategory)
                         .map { entities ->
                             val items = if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            (cat.categoryId as Long?) to items.map { it.toDomain() }
+                            (cat.categoryId as Long?) to items
+                                .sortedByDescending(::seriesReleaseScore)
+                                .map { it.toDomain() }
                         }
                 }
                 combine(categoryGroupFlows) { pairs ->
@@ -1447,7 +1458,25 @@ class SeriesRepositoryImpl @Inject constructor(
             ?.filter { it.isDigit() }
             ?.take(8)
             ?.toLongOrNull()
+            ?: yearFromTitle(series.name)?.toLong()
             ?: seriesUpdatedScore(series)
+
+    private fun seriesReleaseScore(series: SeriesBrowseEntity): Long =
+        series.releaseDate
+            ?.filter { it.isDigit() }
+            ?.take(8)
+            ?.toLongOrNull()
+            ?: yearFromTitle(series.name)?.toLong()
+            ?: series.lastModified.takeIf { it > 0L }
+            ?: 0L
+
+    private fun seriesDisplayYear(year: String?, releaseDate: String?, name: String?): Int? =
+        year?.trim()?.toIntOrNull()
+            ?: releaseDate?.filter(Char::isDigit)?.take(4)?.toIntOrNull()
+            ?: yearFromTitle(name)
+
+    private fun yearFromTitle(value: String?): Int? =
+        value?.let { YEAR_IN_TITLE_REGEX.find(it)?.value?.toIntOrNull() }
 
     private fun seriesUpdatedScore(series: Series): Long =
         series.lastModified.takeIf { it > 0L } ?: 0L

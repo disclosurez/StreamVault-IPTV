@@ -300,6 +300,12 @@ class SeriesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            preferencesRepository.getTopRatedLensVisible(ContentType.SERIES).collectLatest { visible ->
+                _uiState.update { it.copy(isTopRatedLensVisible = visible) }
+            }
+        }
+
+        viewModelScope.launch {
             providerRepository.getActiveProvider()
                 .filterNotNull()
                 .flatMapLatest { provider ->
@@ -616,6 +622,12 @@ class SeriesViewModel @Inject constructor(
                 canLoadMoreSelectedCategory = false,
                 isLoadingSelectedCategory = isLoadingSelectedCategory
             )
+        }
+    }
+
+    fun setTopRatedLensVisible(visible: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setTopRatedLensVisible(ContentType.SERIES, visible)
         }
     }
 
@@ -1302,6 +1314,7 @@ data class SeriesUiState(
     val selectedLibrarySortBy: LibrarySortBy = LibrarySortBy.LIBRARY,
     val vodViewMode: VodViewMode = VodViewMode.MODERN,
     val vodInfiniteScroll: Boolean = true,
+    val isTopRatedLensVisible: Boolean = true,
     val continueWatching: List<PlaybackHistory> = emptyList(),
     val hasProviders: Boolean = false,
     val hasActiveProvider: Boolean = false,

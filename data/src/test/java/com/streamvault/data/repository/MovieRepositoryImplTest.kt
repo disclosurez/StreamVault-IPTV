@@ -39,6 +39,7 @@ import com.streamvault.domain.model.LibrarySortBy
 import com.streamvault.domain.model.PlaybackHistory
 import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
+import java.time.Year
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.SyncMetadata
 import com.streamvault.domain.model.VodSyncMode
@@ -135,6 +136,79 @@ class MovieRepositoryImplTest {
         val result = repository.getRecommendations(7L, limit = 5).first()
 
         assertThat(result.map { it.name }).containsExactly("Galaxy Pursuit", "Quiet Tea").inOrder()
+    }
+
+    @Test
+    fun `getMovies removes duplicate movie titles from provider feed`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
+        whenever(movieDao.getByProvider(7L)).thenReturn(
+            flowOf(
+                listOf(
+                    movieEntity(
+                        id = 1L,
+                        name = "TOP - The Meg",
+                        genre = "Action",
+                        categoryId = 10L,
+                        rating = 7.0f
+                    ).copy(year = "2018"),
+                    movieEntity(
+                        id = 2L,
+                        name = "The Meg",
+                        genre = "Action",
+                        categoryId = 10L,
+                        rating = 6.8f
+                    ).copy(year = "2018")
+                )
+            )
+        )
+
+        val result = createRepository().getMovies(7L).first()
+
+        assertThat(result).hasSize(1)
+    }
+
+    @Test
+    fun `getMovieVariants prefers higher quality copies first`() = runTest {
+        val targetMovie = movieEntity(
+            id = 1L,
+            name = "Apple Music Live: Lady Gaga MAYHEM Requiem",
+            genre = "Music",
+            categoryId = 10L,
+            rating = 7.0f
+        ).copy(year = "2026")
+        val fourKVariant = movieEntity(
+            id = 2L,
+            name = "4K-A+ - Apple Music Live: Lady Gaga MAYHEM Requiem",
+            genre = "Music",
+            categoryId = 10L,
+            rating = 7.0f
+        ).copy(year = "2026")
+        val hdVariant = movieEntity(
+            id = 3L,
+            name = "HD - Apple Music Live: Lady Gaga MAYHEM Requiem",
+            genre = "Music",
+            categoryId = 10L,
+            rating = 7.0f
+        ).copy(year = "2026")
+
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
+        whenever(movieDao.getById(targetMovie.id)).thenReturn(movieRecord(
+            id = targetMovie.id,
+            name = targetMovie.name,
+            genre = targetMovie.genre.orEmpty(),
+            categoryId = targetMovie.categoryId ?: 0L,
+            rating = targetMovie.rating
+        ).copy(year = targetMovie.year))
+        whenever(favoriteDao.getAllByType(7L, ContentType.MOVIE.name)).thenReturn(flowOf(emptyList()))
+        whenever(movieDao.getByProvider(7L)).thenReturn(flowOf(listOf(hdVariant, targetMovie, fourKVariant)))
+
+        val repository = createRepository()
+
+        val variants = repository.getMovieVariants(targetMovie.id)
+
+        assertThat(variants.map { it.id }).containsExactly(2L, 3L, 1L).inOrder()
     }
 
     @Test
@@ -414,6 +488,52 @@ class MovieRepositoryImplTest {
     }
 
     @Test
+    fun `movie category preview rows sort by newest year first`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(categoryDao.getByProviderAndType(7L, ContentType.MOVIE.name)).thenReturn(
+            flowOf(listOf(com.streamvault.data.local.entity.CategoryEntity(providerId = 7L, categoryId = 42L, name = "Action", type = ContentType.MOVIE)))
+        )
+        whenever(movieDao.getByCategoryPreview(7L, 42L, 2)).thenReturn(
+            flowOf(
+                listOf(
+                    movieEntity(id = 1L, name = "Older Movie", genre = "Action", categoryId = 42L, rating = 7.0f).copy(year = "2025"),
+                    movieEntity(id = 2L, name = "Newer Movie", genre = "Action", categoryId = 42L, rating = 6.0f).copy(year = "2026")
+                )
+            )
+        )
+        whenever(providerDao.getById(7L)).thenReturn(null)
+
+        val repository = createRepository()
+
+        val previews = repository.getCategoryPreviewRows(7L, listOf(42L), 2).first()
+
+        assertThat(previews[42L]?.map { it.name }).containsExactly("Newer Movie", "Older Movie").inOrder()
+    }
+
+    @Test
+    fun `movie category preview rows use year embedded in title when metadata is missing`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(categoryDao.getByProviderAndType(7L, ContentType.MOVIE.name)).thenReturn(
+            flowOf(listOf(com.streamvault.data.local.entity.CategoryEntity(providerId = 7L, categoryId = 42L, name = "Action", type = ContentType.MOVIE)))
+        )
+        whenever(movieDao.getByCategoryPreview(7L, 42L, 2)).thenReturn(
+            flowOf(
+                listOf(
+                    movieEntity(id = 1L, name = "AMZ - Milonga (2025)", genre = "Drama", categoryId = 42L, rating = 7.0f).copy(year = null, releaseDate = null),
+                    movieEntity(id = 2L, name = "Future Hit (2026)", genre = "Drama", categoryId = 42L, rating = 6.0f).copy(year = null, releaseDate = null)
+                )
+            )
+        )
+        whenever(providerDao.getById(7L)).thenReturn(null)
+
+        val repository = createRepository()
+
+        val previews = repository.getCategoryPreviewRows(7L, listOf(42L), 2).first()
+
+        assertThat(previews[42L]?.map { it.name }).containsExactly("Future Hit (2026)", "AMZ - Milonga (2025)").inOrder()
+    }
+
+    @Test
     fun `stalker movie category hydration preserves requested category when portal omits item category fields`() = runTest {
         val actionCategoryId = ("7/${ContentType.MOVIE.name}/42".hashCode().toLong() and 0x7fff_ffffL).coerceAtLeast(1L)
         whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
@@ -678,6 +798,90 @@ class MovieRepositoryImplTest {
         assertThat(result.items.map { it.name }).containsExactly("Released Later", "Added Later").inOrder()
         verify(movieDao).getReleasedPreview(7L, 100)
         verify(movieDao, never()).getFreshPreview(7L, 100)
+    }
+
+    @Test
+    fun `browseMovies release keeps current year titles when available`() = runTest {
+        val currentYear = Year.now().value.toString()
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))
+        whenever(movieDao.getCount(7L)).thenReturn(flowOf(2))
+        whenever(movieDao.getReleasedPreview(7L, 100)).thenReturn(
+            flowOf(
+                listOf(
+                    MovieBrowseEntity(
+                        id = 1L,
+                        streamId = 1L,
+                        name = "Last Year Title",
+                        providerId = 7L,
+                        categoryId = 10L,
+                        releaseDate = "2025-01-01",
+                        addedAt = 20_000L,
+                        streamUrl = "https://example.com/1.m3u8"
+                    ),
+                    MovieBrowseEntity(
+                        id = 2L,
+                        streamId = 2L,
+                        name = "This Year Title",
+                        providerId = 7L,
+                        categoryId = 10L,
+                        releaseDate = "$currentYear-03-01",
+                        addedAt = 10_000L,
+                        streamUrl = "https://example.com/2.m3u8"
+                    )
+                )
+            )
+        )
+        whenever(favoriteDao.getAllByType(7L, ContentType.MOVIE.name)).thenReturn(flowOf(emptyList()))
+        whenever(playbackHistoryDao.getByProvider(7L)).thenReturn(flowOf(emptyList()))
+
+        val repository = createRepository()
+
+        val result = repository.browseMovies(
+            LibraryBrowseQuery(
+                providerId = 7L,
+                sortBy = LibrarySortBy.RELEASE,
+                offset = 0,
+                limit = 20
+            )
+        ).first()
+
+        assertThat(result.items.map { it.name }).containsExactly("This Year Title").inOrder()
+    }
+
+    @Test
+    fun `getFreshPreview keeps current year titles when available`() = runTest {
+        val currentYear = Year.now().value.toString()
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(movieDao.getFreshPreview(7L, 2)).thenReturn(
+            flowOf(
+                listOf(
+                    MovieBrowseEntity(
+                        id = 1L,
+                        streamId = 1L,
+                        name = "Last Year Shelf Title",
+                        providerId = 7L,
+                        addedAt = 20_000L,
+                        releaseDate = "2025-02-01",
+                        streamUrl = "https://example.com/1.m3u8"
+                    ),
+                    MovieBrowseEntity(
+                        id = 2L,
+                        streamId = 2L,
+                        name = "This Year Shelf Title",
+                        providerId = 7L,
+                        addedAt = 10_000L,
+                        releaseDate = "$currentYear-04-01",
+                        streamUrl = "https://example.com/2.m3u8"
+                    )
+                )
+            )
+        )
+
+        val result = createRepository().getFreshPreview(7L, 2).first()
+
+        assertThat(result.map { it.name }).containsExactly("This Year Shelf Title").inOrder()
+        verify(movieDao).getFreshPreview(7L, 2)
     }
 
     @Test
