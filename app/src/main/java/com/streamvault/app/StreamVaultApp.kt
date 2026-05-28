@@ -48,14 +48,31 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
         CrashReportStore.install(this)
         runtimeDiagnosticsManager.start()
         applicationScope.launch {
-            // Clean up any timeshift temp directories left behind by crashes, OOM kills, or
-            // force-stops from the previous run. activeSessionDir = null means wipe everything.
-            TimeshiftDiskManager(applicationContext).cleanupStaleDirectories(activeSessionDir = null)
+            runCatching {
+                // Clean up any timeshift temp directories left behind by crashes, OOM kills, or
+                // force-stops from the previous run. activeSessionDir = null means wipe everything.
+                TimeshiftDiskManager(applicationContext).cleanupStaleDirectories(activeSessionDir = null)
+            }
         }
         applicationScope.launch {
-            refreshCachedAppUpdateIfNeeded()
+            runCatching { refreshCachedAppUpdateIfNeeded() }
         }
-        
+
+        scheduleStartupMaintenance()
+    }
+
+    override fun onTerminate() {
+        runtimeDiagnosticsManager.stop()
+        super.onTerminate()
+    }
+
+    private fun scheduleStartupMaintenance() {
+        runCatching {
+            enqueueStartupMaintenance()
+        }
+    }
+
+    private fun enqueueStartupMaintenance() {
         // Schedule daily data maintenance: EPG pruning, stale-favorite cleanup, and DB compaction checks.
         // BLD-H02: Require network + device idle so the worker doesn't drain battery.
         val gcConstraints = Constraints.Builder()
@@ -80,11 +97,6 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
         XtreamIndexWorker.enqueueLaunchStaleCheck(this)
         RecordingReconcileWorker.enqueuePeriodic(this)
         RecordingReconcileWorker.enqueueOneShot(this)
-    }
-
-    override fun onTerminate() {
-        runtimeDiagnosticsManager.stop()
-        super.onTerminate()
     }
 
     private suspend fun refreshCachedAppUpdateIfNeeded() {

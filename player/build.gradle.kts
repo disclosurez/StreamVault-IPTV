@@ -13,10 +13,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 27
+        minSdk = 25
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -113,6 +114,8 @@ tasks.named("preBuild").configure {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
+
     implementation(project(":domain"))
 
     // Media3

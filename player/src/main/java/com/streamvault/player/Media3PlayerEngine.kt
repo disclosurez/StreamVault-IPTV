@@ -106,6 +106,7 @@ class Media3PlayerEngine @Inject constructor(
     companion object {
         private const val TAG = "Media3PlayerEngine"
         private const val AUDIO_RENDERER_RECOVERY_COOLDOWN_MS = 15_000L
+        private const val LEGACY_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.N_MR1
         private const val TEXTURE_VIEW_STARTUP_TIMEOUT_MS = 9_000L
         private const val TEXTURE_VIEW_BUFFERED_STARTUP_THRESHOLD_MS = 4_000L
         private const val KNOWN_BAD_FAILURE_THRESHOLD = 3
@@ -1430,7 +1431,13 @@ class Media3PlayerEngine @Inject constructor(
         _renderSurfaceType.value = when (surfaceMode) {
             PlayerSurfaceMode.SURFACE_VIEW -> PlayerRenderSurfaceType.SURFACE_VIEW
             PlayerSurfaceMode.TEXTURE_VIEW -> PlayerRenderSurfaceType.TEXTURE_VIEW
-            PlayerSurfaceMode.AUTO -> PlayerRenderSurfaceType.SURFACE_VIEW
+            PlayerSurfaceMode.AUTO -> {
+                if (Build.VERSION.SDK_INT <= LEGACY_TEXTURE_VIEW_MAX_SDK) {
+                    PlayerRenderSurfaceType.TEXTURE_VIEW
+                } else {
+                    PlayerRenderSurfaceType.SURFACE_VIEW
+                }
+            }
         }
     }
 
