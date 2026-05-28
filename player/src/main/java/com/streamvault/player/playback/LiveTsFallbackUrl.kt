@@ -17,17 +17,23 @@ internal fun buildLiveTsFallbackStreamInfo(streamInfo: StreamInfo): StreamInfo? 
 internal fun shouldFallbackMalformedHlsToLiveTs(
     category: PlaybackErrorCategory,
     resolvedStreamType: ResolvedStreamType,
-    playbackStarted: Boolean
+    playbackStarted: Boolean,
+    liveTsFallbackAllowed: Boolean = true
 ): Boolean =
+    liveTsFallbackAllowed &&
     category == PlaybackErrorCategory.SOURCE_MALFORMED &&
         resolvedStreamType == ResolvedStreamType.HLS &&
         !playbackStarted
 
 internal fun shouldFallbackStalledHlsToLiveTs(
     resolvedStreamType: ResolvedStreamType,
-    recoveryAttempt: Int
+    recoveryAttempt: Int,
+    hasRenderedFirstVideoFrame: Boolean,
+    liveTsFallbackAllowed: Boolean = true
 ): Boolean =
+    liveTsFallbackAllowed &&
     resolvedStreamType == ResolvedStreamType.HLS &&
+        !hasRenderedFirstVideoFrame &&
         recoveryAttempt >= 2
 
 internal fun buildLiveTsFallbackUrl(url: String): String? {

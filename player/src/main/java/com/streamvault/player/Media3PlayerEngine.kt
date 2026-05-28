@@ -116,6 +116,8 @@ class Media3PlayerEngine @Inject constructor(
     companion object {
         private const val TAG = "Media3PlayerEngine"
         private const val AUDIO_RENDERER_RECOVERY_COOLDOWN_MS = 15_000L
+        private const val LEGACY_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.N_MR1
+        private const val FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.P
         private const val TEXTURE_VIEW_STARTUP_TIMEOUT_MS = 9_000L
         private const val TEXTURE_VIEW_BUFFERED_STARTUP_THRESHOLD_MS = 4_000L
         private const val KNOWN_BAD_FAILURE_THRESHOLD = 3
@@ -1498,8 +1500,31 @@ class Media3PlayerEngine @Inject constructor(
         _renderSurfaceType.value = when (surfaceMode) {
             PlayerSurfaceMode.SURFACE_VIEW -> PlayerRenderSurfaceType.SURFACE_VIEW
             PlayerSurfaceMode.TEXTURE_VIEW -> PlayerRenderSurfaceType.TEXTURE_VIEW
-            PlayerSurfaceMode.AUTO -> PlayerRenderSurfaceType.SURFACE_VIEW
+            PlayerSurfaceMode.AUTO -> {
+                if (shouldPreferTextureViewForAutoSurface()) {
+                    PlayerRenderSurfaceType.TEXTURE_VIEW
+                } else {
+                    PlayerRenderSurfaceType.SURFACE_VIEW
+                }
+            }
         }
+    }
+
+    private fun shouldPreferTextureViewForAutoSurface(): Boolean {
+        if (Build.VERSION.SDK_INT <= LEGACY_TEXTURE_VIEW_MAX_SDK) return true
+        val isAmazonFireTv = Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
+        val isMediaTek = Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
+        return isAmazonFireTv &&
+            isMediaTek &&
+            Build.VERSION.SDK_INT <= FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK
+    }
+
+    private fun shouldAllowLiveTsFallback(): Boolean {
+        val isAmazonFireTv = Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
+        val isMediaTek = Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
+        return !(isAmazonFireTv &&
+            isMediaTek &&
+            Build.VERSION.SDK_INT <= FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK)
     }
 
     private fun refreshKnownBadCompatibilityRecords() {
@@ -1592,7 +1617,9 @@ class Media3PlayerEngine @Inject constructor(
         if (
             shouldFallbackStalledHlsToLiveTs(
                 resolvedStreamType = currentResolvedStreamType,
-                recoveryAttempt = videoStallRecoveryAttempt
+                recoveryAttempt = videoStallRecoveryAttempt,
+                hasRenderedFirstVideoFrame = hasRenderedFirstVideoFrame,
+                liveTsFallbackAllowed = shouldAllowLiveTsFallback()
             )
         ) {
             val fallbackStreamInfo = buildLiveTsFallbackStreamInfo(streamInfo)
@@ -2092,7 +2119,8 @@ class Media3PlayerEngine @Inject constructor(
             shouldFallbackMalformedHlsToLiveTs(
                 category = category,
                 resolvedStreamType = currentResolvedStreamType,
-                playbackStarted = effectivePlaybackStarted
+                playbackStarted = effectivePlaybackStarted,
+                liveTsFallbackAllowed = shouldAllowLiveTsFallback()
             )
         ) {
             val fallbackStreamInfo = buildLiveTsFallbackStreamInfo(streamInfo)

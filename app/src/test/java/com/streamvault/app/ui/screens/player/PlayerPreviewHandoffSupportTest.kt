@@ -31,7 +31,6 @@ class PlayerPreviewHandoffSupportTest {
     fun `non ready preview renews fullscreen stream`() {
         val states = listOf(
             PlaybackState.IDLE,
-            PlaybackState.BUFFERING,
             PlaybackState.ENDED,
             PlaybackState.ERROR
         )
@@ -44,5 +43,15 @@ class PlayerPreviewHandoffSupportTest {
                 )
             ).isTrue()
         }
+    }
+
+    @Test
+    fun `buffering preview with rendered frame skips fullscreen renewal`() {
+        val shouldRenew = shouldRenewAdoptedPreviewOnFullscreen(
+            playbackState = PlaybackState.BUFFERING,
+            playerStats = PlayerStats(ttffMs = 250L)
+        )
+
+        assertThat(shouldRenew).isFalse()
     }
 }

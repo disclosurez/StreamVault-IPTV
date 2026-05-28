@@ -56,19 +56,57 @@ class LiveTsFallbackUrlTest {
         assertThat(
             shouldFallbackStalledHlsToLiveTs(
                 resolvedStreamType = ResolvedStreamType.HLS,
-                recoveryAttempt = 2
+                recoveryAttempt = 2,
+                hasRenderedFirstVideoFrame = false
             )
         ).isTrue()
         assertThat(
             shouldFallbackStalledHlsToLiveTs(
                 resolvedStreamType = ResolvedStreamType.HLS,
-                recoveryAttempt = 1
+                recoveryAttempt = 1,
+                hasRenderedFirstVideoFrame = false
             )
         ).isFalse()
         assertThat(
             shouldFallbackStalledHlsToLiveTs(
                 resolvedStreamType = ResolvedStreamType.MPEG_TS_LIVE,
-                recoveryAttempt = 3
+                recoveryAttempt = 3,
+                hasRenderedFirstVideoFrame = false
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `stalled hls does not switch to transport stream after first frame`() {
+        assertThat(
+            shouldFallbackStalledHlsToLiveTs(
+                resolvedStreamType = ResolvedStreamType.HLS,
+                recoveryAttempt = 2,
+                hasRenderedFirstVideoFrame = true
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `stalled hls does not switch to transport stream when fallback is disabled`() {
+        assertThat(
+            shouldFallbackStalledHlsToLiveTs(
+                resolvedStreamType = ResolvedStreamType.HLS,
+                recoveryAttempt = 2,
+                hasRenderedFirstVideoFrame = false,
+                liveTsFallbackAllowed = false
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `malformed hls does not switch to transport stream when fallback is disabled`() {
+        assertThat(
+            shouldFallbackMalformedHlsToLiveTs(
+                category = PlaybackErrorCategory.SOURCE_MALFORMED,
+                resolvedStreamType = ResolvedStreamType.HLS,
+                playbackStarted = false,
+                liveTsFallbackAllowed = false
             )
         ).isFalse()
     }
