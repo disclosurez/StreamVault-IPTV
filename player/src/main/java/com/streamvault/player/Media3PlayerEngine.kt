@@ -1,5 +1,6 @@
 package com.streamvault.player
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.Handler
@@ -107,6 +108,7 @@ class Media3PlayerEngine @Inject constructor(
         private const val TAG = "Media3PlayerEngine"
         private const val AUDIO_RENDERER_RECOVERY_COOLDOWN_MS = 15_000L
         private const val LEGACY_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.N_MR1
+        private const val FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.P
         private const val TEXTURE_VIEW_STARTUP_TIMEOUT_MS = 9_000L
         private const val TEXTURE_VIEW_BUFFERED_STARTUP_THRESHOLD_MS = 4_000L
         private const val KNOWN_BAD_FAILURE_THRESHOLD = 3
@@ -191,6 +193,12 @@ class Media3PlayerEngine @Inject constructor(
     private var currentBufferIsLive: Boolean? = null
     private var audioCodecUnsupportedReported = false
     private var lastSupportErrorMessage: String? = null
+    private val isLowMemoryPlaybackDevice: Boolean = run {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memoryClassMb = activityManager?.memoryClass ?: 256
+        val lowRam = activityManager?.isLowRamDevice ?: false
+        lowRam || memoryClassMb <= 256
+    }
 
     private val _playbackState = MutableStateFlow(PlaybackState.IDLE)
     override val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
@@ -318,7 +326,9 @@ class Media3PlayerEngine @Inject constructor(
                     audioVideoSyncEnabled = _audioVideoSyncEnabled.value,
                     audioVideoSyncSinkActive = audioVideoSyncSinkActive
                 )
-                playbackSupportSnapshotStore.write(buildPlaybackSupportSnapshot())
+                if (shouldRefreshPlaybackSupportSnapshot()) {
+                    playbackSupportSnapshotStore.write(buildPlaybackSupportSnapshot())
+                }
                 if (shouldFallbackTextureViewBeforeFirstFrame(stats)) {
                     fallbackTextureViewSurface("NO_FIRST_FRAME")
                     continue
@@ -980,7 +990,8 @@ class Media3PlayerEngine @Inject constructor(
         val renderersFactory = buildRenderersFactory()
         val bufferPolicy = PlaybackBufferPolicies.forPlayback(
             isLive = currentBufferIsLive == true,
-            compatibilityMode = activeDecoderPolicy == ActiveDecoderPolicy.COMPATIBILITY
+            compatibilityMode = activeDecoderPolicy == ActiveDecoderPolicy.COMPATIBILITY,
+            lowMemoryDevice = isLowMemoryPlaybackDevice
         )
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -989,7 +1000,7 @@ class Media3PlayerEngine @Inject constructor(
                 bufferPolicy.playbackBufferMs,
                 bufferPolicy.rebufferMs
             )
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setPrioritizeTimeOverSizeThresholds(!isLowMemoryPlaybackDevice)
             .build()
         val livePlaybackSpeedControl = DefaultLivePlaybackSpeedControl.Builder()
             .setFallbackMinPlaybackSpeed(1.0f)
@@ -1431,14 +1442,19 @@ class Media3PlayerEngine @Inject constructor(
         _renderSurfaceType.value = when (surfaceMode) {
             PlayerSurfaceMode.SURFACE_VIEW -> PlayerRenderSurfaceType.SURFACE_VIEW
             PlayerSurfaceMode.TEXTURE_VIEW -> PlayerRenderSurfaceType.TEXTURE_VIEW
-            PlayerSurfaceMode.AUTO -> {
-                if (Build.VERSION.SDK_INT <= LEGACY_TEXTURE_VIEW_MAX_SDK) {
-                    PlayerRenderSurfaceType.TEXTURE_VIEW
-                } else {
-                    PlayerRenderSurfaceType.SURFACE_VIEW
-                }
+            PlayerSurfaceMode.AUTO -> if (shouldPreferTextureViewForAutoSurface()) {
+                PlayerRenderSurfaceType.TEXTURE_VIEW
+            } else {
+                PlayerRenderSurfaceType.SURFACE_VIEW
             }
         }
+    }
+
+    private fun shouldPreferTextureViewForAutoSurface(): Boolean {
+        if (Build.VERSION.SDK_INT <= LEGACY_TEXTURE_VIEW_MAX_SDK) return true
+        return Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true) &&
+            Build.VERSION.SDK_INT <= FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK
     }
 
     private fun refreshKnownBadCompatibilityRecords() {
@@ -1814,6 +1830,11 @@ class Media3PlayerEngine @Inject constructor(
         appendLine("streamType=$currentResolvedStreamType")
         appendLine("target=${PlaybackLogSanitizer.sanitizeUrl(lastStreamInfo?.url)}")
         appendLine("lastError=${PlaybackLogSanitizer.sanitizeMessage(lastSupportErrorMessage)}")
+    }
+
+    private fun shouldRefreshPlaybackSupportSnapshot(): Boolean {
+        if (!isLowMemoryPlaybackDevice) return true
+        return _playbackState.value != PlaybackState.BUFFERING || _playerStats.value.ttffMs > 0L
     }
 
     private fun resolveStartupAudioOutputPath(): String = when {
