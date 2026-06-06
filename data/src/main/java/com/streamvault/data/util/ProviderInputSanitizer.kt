@@ -1,5 +1,7 @@
 package com.streamvault.data.util
 
+import com.streamvault.domain.util.ProviderUrlNormalizer
+
 object ProviderInputSanitizer {
     const val MAX_PROVIDER_NAME_LENGTH = 80
     const val MAX_URL_LENGTH = 2048
@@ -46,7 +48,8 @@ object ProviderInputSanitizer {
             .trim()
             .replace(WHITESPACE_REGEX, " ")
 
-    fun normalizeUrl(input: String): String = sanitizeRaw(input, MAX_URL_LENGTH).trim()
+    fun normalizeUrl(input: String): String =
+        ProviderUrlNormalizer.normalizeRemoteUrl(sanitizeRaw(input, MAX_URL_LENGTH))
 
     fun normalizeUsername(input: String): String = sanitizeSingleLine(input, MAX_USERNAME_LENGTH).trim()
 

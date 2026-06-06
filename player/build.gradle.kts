@@ -101,7 +101,9 @@ val verifyLocalFfmpegArtifact by tasks.registering {
     }
 }
 
-tasks.named("preBuild").configure {
+tasks.matching { task ->
+    task.name == "preReleaseBuild" || task.name == "preBetaBuild"
+}.configureEach {
     dependsOn(verifyLocalFfmpegArtifact)
 }
 

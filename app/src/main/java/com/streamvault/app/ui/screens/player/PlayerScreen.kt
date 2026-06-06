@@ -1444,8 +1444,20 @@ private fun PlayerControlsOverlayHost(
     onSeekPreviewPositionChanged: (Long?) -> Unit,
     onUserInteraction: () -> Unit
 ) {
-    val currentPosition by playerEngine.currentPosition.collectAsStateWithLifecycle()
-    val duration by playerEngine.duration.collectAsStateWithLifecycle()
+    val currentPosition by produceState(initialValue = playerEngine.currentPosition.value, visible, playerEngine) {
+        if (visible) {
+            playerEngine.currentPosition.collect { value = it }
+        } else {
+            value = playerEngine.currentPosition.value
+        }
+    }
+    val duration by produceState(initialValue = playerEngine.duration.value, visible, playerEngine) {
+        if (visible) {
+            playerEngine.duration.collect { value = it }
+        } else {
+            value = playerEngine.duration.value
+        }
+    }
 
     PlayerControlsOverlay(
         visible = visible,

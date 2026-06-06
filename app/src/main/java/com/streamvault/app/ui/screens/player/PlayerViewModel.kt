@@ -339,6 +339,8 @@ class PlayerViewModel @Inject constructor(
     private var defaultIdleStandbyTimerMinutes: Int = 0
     internal var playbackTimerDefaultsApplied = false
     internal var sleepTimerExitEmitted = false
+    internal var lastPlaybackProgressPersistAtMs: Long = 0L
+    internal var lastPlaybackProgressPersistPositionMs: Long = -1L
 
     val castConnectionState: StateFlow<CastConnectionState> = castManager.connectionState
 

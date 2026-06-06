@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 
 private const val LIFECYCLE_TOKEN_RENEWAL_LEAD_MS = 60_000L
 private const val LIFECYCLE_TOKEN_RENEWAL_CHECK_INTERVAL_MS = 10_000L
+private const val PLAYBACK_PROGRESS_PERSIST_MIN_INTERVAL_MS = 30_000L
 
 internal fun PlayerViewModel.startProgressTracking() {
     progressTrackingJob?.cancel()
@@ -23,19 +24,30 @@ internal fun PlayerViewModel.startProgressTracking() {
     }
 }
 
-internal suspend fun PlayerViewModel.persistPlaybackProgress() {
+internal suspend fun PlayerViewModel.persistPlaybackProgress(force: Boolean = false) {
+    val now = System.currentTimeMillis()
     val pos = playerEngine.currentPosition.value
     val dur = playerEngine.duration.value
 
-    if (pos > 0 && dur > 0) {
-        val history = buildPlaybackHistorySnapshot(pos, dur) ?: return
-        logRepositoryFailure(
-            operation = "Persist playback resume position",
-            result = playbackHistoryRepository.updateResumePosition(history)
-        )
-        watchNextManager.refreshWatchNext()
-        launcherRecommendationsManager.refreshRecommendations()
+    if (pos <= 0 || dur <= 0) return
+
+    if (!force) {
+        val movedEnough = lastPlaybackProgressPersistPositionMs < 0L ||
+            pos < lastPlaybackProgressPersistPositionMs ||
+            pos - lastPlaybackProgressPersistPositionMs >= PLAYBACK_PROGRESS_PERSIST_MIN_INTERVAL_MS
+        val timeEnough = now - lastPlaybackProgressPersistAtMs >= PLAYBACK_PROGRESS_PERSIST_MIN_INTERVAL_MS
+        if (!movedEnough && !timeEnough) return
     }
+
+    val history = buildPlaybackHistorySnapshot(pos, dur) ?: return
+    lastPlaybackProgressPersistAtMs = now
+    lastPlaybackProgressPersistPositionMs = pos
+    logRepositoryFailure(
+        operation = "Persist playback resume position",
+        result = playbackHistoryRepository.updateResumePosition(history)
+    )
+    watchNextManager.refreshWatchNext()
+    launcherRecommendationsManager.refreshRecommendations()
 }
 
 internal fun PlayerViewModel.startTokenRenewalMonitoring(expirationTime: Long?) {
@@ -75,7 +87,7 @@ fun PlayerViewModel.onAppBackgrounded() {
     }
     if (currentContentType != ContentType.LIVE) {
         viewModelScope.launch {
-            persistPlaybackProgress()
+            persistPlaybackProgress(force = true)
             playbackHistoryRepository.flushPendingProgress()
         }
     }
@@ -93,7 +105,7 @@ fun PlayerViewModel.onAppForegrounded() {
 fun PlayerViewModel.onPlayerScreenDisposed() {
     if (currentContentType != ContentType.LIVE) {
         viewModelScope.launch {
-            persistPlaybackProgress()
+            persistPlaybackProgress(force = true)
             playbackHistoryRepository.flushPendingProgress()
         }
     }
@@ -146,7 +158,7 @@ internal suspend fun PlayerViewModel.synchronizeStalkerPlaybackFetchDeferral(isP
 
 fun PlayerViewModel.handOffPlaybackToMultiView() {
     if (currentContentType != ContentType.LIVE) {
-        viewModelScope.launch { persistPlaybackProgress() }
+        viewModelScope.launch { persistPlaybackProgress(force = true) }
     }
     playerEngine.stopLiveTimeshift()
     stopActiveStalkerPlaybackFetchDeferral()
