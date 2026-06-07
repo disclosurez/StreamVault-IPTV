@@ -301,6 +301,12 @@ class MoviesViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            preferencesRepository.getTopRatedLensVisible(ContentType.MOVIE).collectLatest { visible ->
+                _uiState.update { it.copy(isTopRatedLensVisible = visible) }
+            }
+        }
+
+        viewModelScope.launch {
             providerRepository.getActiveProvider()
                 .filterNotNull()
                 .flatMapLatest { provider ->
@@ -611,6 +617,12 @@ class MoviesViewModel @Inject constructor(
                 canLoadMoreSelectedCategory = false,
                 isLoadingSelectedCategory = isLoadingSelectedCategory
             )
+        }
+    }
+
+    fun setTopRatedLensVisible(visible: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setTopRatedLensVisible(ContentType.MOVIE, visible)
         }
     }
 
@@ -1286,6 +1298,7 @@ data class MoviesUiState(
     val selectedLibrarySortBy: LibrarySortBy = LibrarySortBy.LIBRARY,
     val vodViewMode: VodViewMode = VodViewMode.MODERN,
     val vodInfiniteScroll: Boolean = true,
+    val isTopRatedLensVisible: Boolean = true,
     val continueWatching: List<PlaybackHistory> = emptyList(),
     val hasProviders: Boolean = false,
     val hasActiveProvider: Boolean = false,

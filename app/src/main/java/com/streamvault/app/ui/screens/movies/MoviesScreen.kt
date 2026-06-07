@@ -255,6 +255,7 @@ fun MoviesScreen(
                 onLoadMore = viewModel::loadMoreSelectedCategory,
                 onLoadMorePreviewRows = viewModel::loadMorePreviewRows,
                 onDismissReorder = viewModel::exitCategoryReorderMode,
+                onToggleTopRatedLensVisibility = viewModel::setTopRatedLensVisible,
                 initialFocusRequester = initialContentFocusRequester
             )
         }
@@ -348,6 +349,7 @@ private fun MoviesVodContent(
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
     onDismissReorder: () -> Unit,
+    onToggleTopRatedLensVisibility: (Boolean) -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
@@ -366,7 +368,8 @@ private fun MoviesVodContent(
     var showCategoryPicker by remember { mutableStateOf(false) }
     val favoriteMovies = uiState.moviesByCategory[uiState.favoriteCategoryName].orEmpty()
     val freshMovies = uiState.libraryLensRows[MovieLibraryLens.FRESH].orEmpty()
-    val topRatedMovies = uiState.libraryLensRows[MovieLibraryLens.TOP_RATED].orEmpty()
+    val rawTopRatedMovies = uiState.libraryLensRows[MovieLibraryLens.TOP_RATED].orEmpty()
+    val topRatedMovies = if (uiState.isTopRatedLensVisible) rawTopRatedMovies else emptyList()
     val continueWatching = uiState.continueWatching
     val heroMovie = freshMovies.firstOrNull() ?: topRatedMovies.firstOrNull() ?: favoriteMovies.firstOrNull()
     val categoryByName = remember(uiState.providerCategories, uiState.categories, uiState.favoriteCategoryName) {
@@ -542,6 +545,14 @@ private fun MoviesVodContent(
                                 onClick = { showCategoryPicker = true }
                             )
                         )
+                        add(
+                            VodActionChip(
+                                key = "hide_categories",
+                                label = stringResource(R.string.vod_hide_categories_title),
+                                detail = stringResource(R.string.vod_hide_categories_subtitle),
+                                onClick = { showCategoryPicker = true }
+                            )
+                        )
                         if (favoriteMovies.isNotEmpty()) {
                             add(
                                 VodActionChip(
@@ -562,13 +573,27 @@ private fun MoviesVodContent(
                                 )
                             )
                         }
-                        if (topRatedMovies.isNotEmpty()) {
+                        if (rawTopRatedMovies.isNotEmpty()) {
                             add(
                                 VodActionChip(
                                     key = MovieLibraryLens.TOP_RATED.name,
                                     label = stringResource(R.string.library_lens_top_rated),
-                                    detail = "${topRatedMovies.size} picks",
+                                    detail = "${rawTopRatedMovies.size} picks",
                                     onClick = onOpenTopRated
+                                )
+                            )
+                            add(
+                                VodActionChip(
+                                    key = "toggle_top_rated",
+                                    label = stringResource(
+                                        if (uiState.isTopRatedLensVisible) {
+                                            R.string.vod_hide_top_rated
+                                        } else {
+                                            R.string.vod_show_top_rated
+                                        }
+                                    ),
+                                    detail = null,
+                                    onClick = { onToggleTopRatedLensVisibility(!uiState.isTopRatedLensVisible) }
                                 )
                             )
                         }

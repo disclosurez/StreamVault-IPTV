@@ -18,6 +18,7 @@ interface MovieRepository {
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<Movie>>
     fun getRecommendations(providerId: Long, limit: Int): Flow<List<Movie>>
     fun getRelatedContent(providerId: Long, movieId: Long, limit: Int): Flow<List<Movie>>
+    suspend fun getMovieVariants(movieId: Long): List<Movie>
     fun getMoviesByIds(ids: List<Long>): Flow<List<Movie>>
     fun getCategories(providerId: Long): Flow<List<Category>>
     fun getCategoryItemCounts(providerId: Long): Flow<Map<Long, Int>>

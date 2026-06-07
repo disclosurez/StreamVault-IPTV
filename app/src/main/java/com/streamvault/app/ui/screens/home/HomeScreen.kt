@@ -376,13 +376,10 @@ fun HomeScreen(
                 val categoryFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
                 val channelFocusRequesters = remember { mutableMapOf<Long, FocusRequester>() }
                 val visibleCategories = remember(uiState.categories, uiState.categorySearchQuery) {
-                    uiState.categories
-                        .asSequence()
-                        .filter {
-                            uiState.categorySearchQuery.isEmpty() ||
-                                it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
-                        }
-                        .toList()
+                    uiState.categories.filter {
+                        uiState.categorySearchQuery.isEmpty() ||
+                            it.name.contains(uiState.categorySearchQuery, ignoreCase = true)
+                    }
                 }
                 val isCategoryLocked: (Category) -> Boolean = remember(uiState.parentalControlLevel, uiState.unlockedCategoryIds) {
                     { category ->

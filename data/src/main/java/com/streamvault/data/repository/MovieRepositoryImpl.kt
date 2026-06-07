@@ -30,6 +30,7 @@ import com.streamvault.data.security.CredentialCrypto
 import com.streamvault.data.sync.ContentCachePolicy
 import com.streamvault.data.sync.SyncManager
 import com.streamvault.data.util.rankSearchResults
+import com.streamvault.data.util.movieVariantGroupKey
 import com.streamvault.data.util.toFtsPrefixQuery
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ContentType
@@ -47,6 +48,7 @@ import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
+import com.streamvault.domain.util.movieVariantQualityScore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -64,6 +66,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.time.Year
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -101,6 +104,7 @@ class MovieRepositoryImpl @Inject constructor(
         const val CURSOR_BATCH_SIZE = 40
         const val STALKER_PREVIEW_REQUIRED_COUNT_THRESHOLD = 24
         const val STALKER_PREVIEW_MAX_REMOTE_PAGES = 2
+        val YEAR_IN_TITLE_REGEX = Regex("""(19|20)\d{2}""")
         const val DETAIL_REFRESH_TTL_MILLIS = 14L * 24L * 60L * 60L * 1000L
         const val CACHE_STATE_SUMMARY_ONLY = "SUMMARY_ONLY"
         const val CACHE_STATE_DETAIL_HYDRATED = "DETAIL_HYDRATED"
@@ -140,7 +144,7 @@ class MovieRepositoryImpl @Inject constructor(
         preferencesRepository.parentalControlLevel.flatMapLatest { level ->
             if (level >= 3) movieDao.getByProviderUnprotected(providerId)
             else movieDao.getByProvider(providerId)
-        }.map { list -> list.map { it.toDomain() } }
+        }.map { list -> list.distinctByMovieDedupKey().map { it.toDomain() } }
 
     override fun getMoviesByCategory(providerId: Long, categoryId: Long): Flow<List<Movie>> =
         flow {
@@ -149,7 +153,12 @@ class MovieRepositoryImpl @Inject constructor(
                 preferencesRepository.parentalControlLevel.flatMapLatest { level ->
                     if (level >= 3) movieDao.getByCategoryUnprotected(providerId, categoryId)
                     else movieDao.getByCategory(providerId, categoryId)
-                }.map { list -> list.map { it.toDomain() } }
+                }.map { list ->
+                    list
+                        .distinctByMovieDedupKey()
+                        .sortedByDescending(::movieReleaseScore)
+                        .map { it.toDomain() }
+                }
             )
         }
 
@@ -170,7 +179,12 @@ class MovieRepositoryImpl @Inject constructor(
                 } else {
                     entities
                 }
-            }.map { list -> list.map { it.toDomain() } }
+            }.map { list ->
+                list
+                    .distinctByMovieDedupKey()
+                    .sortedByDescending(::movieReleaseScore)
+                    .map { it.toDomain() }
+            }
         )
     }
 
@@ -187,7 +201,7 @@ class MovieRepositoryImpl @Inject constructor(
                     } else {
                         entities
                     }
-                }.map { list -> list.map { it.toDomain() } }
+                }.map { list -> list.distinctByMovieDedupKey().map { it.toDomain() } }
             )
         }
 
@@ -233,7 +247,10 @@ class MovieRepositoryImpl @Inject constructor(
                     movieDao.getByCategoryPreview(providerId, cat.categoryId, limitPerCategory)
                         .map { entities ->
                             val items = if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            (cat.categoryId as Long?) to items.map { it.toDomain() }
+                            (cat.categoryId as Long?) to items
+                                .distinctByMovieDedupKey()
+                                .sortedByDescending(::movieReleaseScore)
+                                .map { it.toDomain() }
                         }
                 }
                 combine(categoryGroupFlows) { pairs ->
@@ -254,7 +271,7 @@ class MovieRepositoryImpl @Inject constructor(
             } else {
                 entities
             }
-        }.map { list -> list.map { it.toDomain() } }
+        }.map { list -> list.distinctByMovieDedupKey().map { it.toDomain() } }
 
     override fun getFreshPreview(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
@@ -266,7 +283,12 @@ class MovieRepositoryImpl @Inject constructor(
             } else {
                 entities
             }
-        }.map { list -> list.map { it.toDomain() } }
+        }.map { list ->
+            list
+                .currentYearOrOriginalBrowse()
+                .distinctByMovieDedupKey()
+                .map { it.toDomain() }
+        }
 
     override fun getRecommendations(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
@@ -276,7 +298,7 @@ class MovieRepositoryImpl @Inject constructor(
             playbackHistoryDao.getRecentlyWatchedByProvider(providerId, limit = maxOf(limit * 4, 24))
         ) { topRated, fresh, favorites, history ->
             buildRecommendations(
-                movies = (topRated + fresh).distinctBy { it.id },
+                movies = (topRated + fresh).distinctMoviesByMovieDedupKey(),
                 favoriteIds = favorites.map { it.contentId }.toSet(),
                 recentlyWatchedIds = history
                     .asSequence()
@@ -303,15 +325,35 @@ class MovieRepositoryImpl @Inject constructor(
                 ) { categoryItems, topRated ->
                     buildRelatedContent(
                         target = targetMovie,
-                        candidates = (categoryItems + topRated).distinctBy { it.id }.filterNot { it.id == movieId },
+                        candidates = (categoryItems + topRated).distinctMoviesByMovieDedupKey().filterNot { it.id == movieId },
                         limit = limit
                     )
                 }
             )
         }
 
+    override suspend fun getMovieVariants(movieId: Long): List<Movie> {
+        val targetMovie = getMovie(movieId) ?: return emptyList()
+        val providerId = targetMovie.providerId.takeIf { it > 0L } ?: return listOf(targetMovie)
+        val groupKey = targetMovie.movieVariantGroupKey()
+        val favoriteIds = favoriteDao.getAllByType(providerId, ContentType.MOVIE.name)
+            .first()
+            .asSequence()
+            .filter { it.groupId == null }
+            .map { it.contentId }
+            .toSet()
+        return movieDao.getByProvider(providerId)
+            .first()
+            .asSequence()
+            .filter { it.movieVariantGroupKey() == groupKey }
+            .map { entity -> entity.toDomain() }
+            .map { movie -> if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie }
+            .sortedWith(movieVariantComparator())
+            .toList()
+    }
+
     override fun getMoviesByIds(ids: List<Long>): Flow<List<Movie>> =
-        movieDao.getByIds(ids).map { entities -> entities.map { it.toDomain() } }
+        movieDao.getByIds(ids).map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
 
     override fun getCategories(providerId: Long): Flow<List<Category>> =
         combine(
@@ -350,33 +392,39 @@ class MovieRepositoryImpl @Inject constructor(
         }.flowOn(Dispatchers.IO)
     }
 
-    override fun searchMovies(providerId: Long, query: String): Flow<List<Movie>> =
-        query.trim().takeIf { it.length >= MIN_SEARCH_QUERY_LENGTH }?.toFtsPrefixQuery().let { ftsQuery ->
-            if (ftsQuery.isNullOrBlank()) {
-            flowOf(emptyList())
-            } else combine(
-                safeMovieSearchFlow(
-                    source = movieDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT),
-                    fallback = {
-                        movieDao.searchFallback(providerId, query.trim().toSqlLikePattern(), SEARCH_RESULT_LIMIT)
-                    },
-                    rawQuery = query.trim()
-                ),
-                preferencesRepository.parentalControlLevel
-            ) { entities, level: Int ->
-                if (level >= 3) {
-                    entities.filter { !it.isUserProtected }
-                } else {
-                    entities
-                }
-            }.map { list ->
-                list.map { it.toDomain() }
-                    .rankSearchResults(query) { it.name }
-            }.combine(favoriteDao.getAllByType(providerId, ContentType.MOVIE.name)) { movies, favorites ->
-                val favoriteIds = favorites.map { it.contentId }.toSet()
-                movies.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
-            }
+    override fun searchMovies(providerId: Long, query: String): Flow<List<Movie>> {
+        val ftsQuery = query.trim().takeIf { it.length >= MIN_SEARCH_QUERY_LENGTH }?.toFtsPrefixQuery()
+            ?: return flowOf(emptyList())
+        if (ftsQuery.isBlank()) {
+            return flowOf(emptyList())
         }
+
+        val rankedResults: Flow<List<Movie>> = combine(
+            safeMovieSearchFlow(
+                source = movieDao.search(providerId, ftsQuery, SEARCH_RESULT_LIMIT),
+                fallback = {
+                    movieDao.searchFallback(providerId, query.trim().toSqlLikePattern(), SEARCH_RESULT_LIMIT)
+                },
+                rawQuery = query.trim()
+            ),
+            preferencesRepository.parentalControlLevel
+        ) { entities: List<MovieBrowseEntity>, level: Int ->
+            if (level >= 3) {
+                entities.filter { !it.isUserProtected }
+            } else {
+                entities
+            }
+        }.map { entities: List<MovieBrowseEntity> ->
+            val movies = entities.distinctByMovieDedupKey().map { movie: MovieBrowseEntity -> movie.toDomain() }
+            movies.rankSearchResults(query) { movie: Movie -> movie.name }
+        }
+
+        return rankedResults.combine(favoriteDao.getAllByType(providerId, ContentType.MOVIE.name)) { movies: List<Movie>, favorites ->
+            val favoriteIds = favorites.map { it.contentId }.toSet()
+            movies.map { movie -> if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie }
+                .distinctMoviesByMovieDedupKey()
+        }
+    }
 
     override suspend fun getMovie(movieId: Long): Movie? =
         movieDao.getById(movieId)?.toDomain()
@@ -590,6 +638,66 @@ class MovieRepositoryImpl @Inject constructor(
         return left.intersect(right).size.toFloat()
     }
 
+    private fun List<MovieBrowseEntity>.distinctByMovieDedupKey(): List<MovieBrowseEntity> =
+        groupBy { it.movieVariantGroupKey() }
+            .values
+            .map { group -> selectPreferredBrowseMovie(group) }
+
+    private fun List<Movie>.distinctMoviesByMovieDedupKey(): List<Movie> =
+        groupBy { it.movieVariantGroupKey() }
+            .values
+            .map { group -> selectPreferredMovie(group) }
+
+    private fun List<MovieBrowseEntity>.currentYearOrOriginalBrowse(): List<MovieBrowseEntity> {
+        val currentYear = currentYear()
+        val currentYearItems = filter { movieDisplayYear(it.year, it.releaseDate, it.name) == currentYear }
+        return if (currentYearItems.isNotEmpty()) currentYearItems else this
+    }
+
+    private fun List<Movie>.currentYearOrOriginalMovie(): List<Movie> {
+        val currentYear = currentYear()
+        val currentYearItems = filter { movieDisplayYear(it.year, it.releaseDate, it.name) == currentYear }
+        return if (currentYearItems.isNotEmpty()) currentYearItems else this
+    }
+
+    private fun selectPreferredBrowseMovie(group: List<MovieBrowseEntity>): MovieBrowseEntity {
+        val sorted = group.sortedWith(movieBrowseVariantComparator())
+        return sorted.first()
+    }
+
+    private fun selectPreferredMovie(group: List<Movie>): Movie {
+        val sorted = group.sortedWith(movieVariantComparator())
+        val canonical = sorted.first()
+        return if (group.any { it.isFavorite } && !canonical.isFavorite) canonical.copy(isFavorite = true) else canonical
+    }
+
+    private fun movieBrowseVariantComparator(): Comparator<MovieBrowseEntity> =
+        compareByDescending<MovieBrowseEntity> { movieDisplayYear(it.year, it.releaseDate, it.name) == currentYear() }
+            .thenByDescending { movieDisplayYear(it.year, it.releaseDate, it.name) ?: 0 }
+            .thenByDescending { it.addedAt }
+            .thenByDescending { it.rating }
+            .thenBy { it.name.lowercase() }
+            .thenBy { it.id }
+
+    private fun movieVariantComparator(): Comparator<Movie> =
+        compareByDescending<Movie> { movieVariantQualityScore(it.name) }
+            .thenByDescending { movieDisplayYear(it.year, it.releaseDate, it.name) == currentYear() }
+            .thenByDescending { movieDisplayYear(it.year, it.releaseDate, it.name) ?: 0 }
+            .thenByDescending { it.addedAt }
+            .thenByDescending { it.rating }
+            .thenBy { it.name.lowercase() }
+            .thenBy { it.id }
+
+    private fun movieDisplayYear(year: String?, releaseDate: String?, name: String?): Int? =
+        year?.trim()?.toIntOrNull()
+            ?: releaseDate?.filter(Char::isDigit)?.take(4)?.toIntOrNull()
+            ?: yearFromTitle(name)
+
+    private fun yearFromTitle(value: String?): Int? =
+        value?.let { YEAR_IN_TITLE_REGEX.find(it)?.value?.toIntOrNull() }
+
+    private fun currentYear(): Int = Year.now().value
+
     private fun movieBrowseSource(query: LibraryBrowseQuery): Flow<List<Movie>> {
         val normalizedSearch = query.searchQuery.trim()
         val fetchLimit = browseFetchLimit(query)
@@ -614,7 +722,7 @@ class MovieRepositoryImpl @Inject constructor(
                     ) { entities, level ->
                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
                     }.map { entities ->
-                        entities.map { it.toDomain() }
+                        entities.distinctByMovieDedupKey().map { it.toDomain() }
                             .rankSearchResults(normalizedSearch) { it.name }
                     }
                 } ?: searchMovies(query.providerId, normalizedSearch)
@@ -632,7 +740,7 @@ class MovieRepositoryImpl @Inject constructor(
                                         preferencesRepository.parentalControlLevel
                                     ) { entities, level ->
                                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                                    }.map { entities -> entities.map { it.toDomain() } }
+                                    }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                                 )
                             }
                         } ?: getTopRatedPreview(query.providerId, fetchLimit)
@@ -647,7 +755,12 @@ class MovieRepositoryImpl @Inject constructor(
                                         preferencesRepository.parentalControlLevel
                                     ) { entities, level ->
                                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                                    }.map { entities -> entities.map { it.toDomain() } }
+                                    }.map { entities ->
+                                        entities
+                                            .currentYearOrOriginalBrowse()
+                                            .distinctByMovieDedupKey()
+                                            .map { it.toDomain() }
+                                    }
                                 )
                             }
                         } ?: combine(
@@ -655,7 +768,12 @@ class MovieRepositoryImpl @Inject constructor(
                             preferencesRepository.parentalControlLevel
                         ) { entities, level ->
                             if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                        }.map { entities -> entities.map { it.toDomain() } }
+                        }.map { entities ->
+                            entities
+                            .currentYearOrOriginalBrowse()
+                            .distinctByMovieDedupKey()
+                            .map { it.toDomain() }
+                        }
                     }
                     query.sortBy == LibrarySortBy.UPDATED || query.filterBy.type == LibraryFilterType.RECENTLY_UPDATED -> {
                         query.categoryId?.let { categoryId ->
@@ -667,7 +785,7 @@ class MovieRepositoryImpl @Inject constructor(
                                         preferencesRepository.parentalControlLevel
                                     ) { entities, level ->
                                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                                    }.map { entities -> entities.map { it.toDomain() } }
+                                    }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                                 )
                             }
                         } ?: getFreshPreview(query.providerId, fetchLimit)
@@ -682,7 +800,7 @@ class MovieRepositoryImpl @Inject constructor(
                                         preferencesRepository.parentalControlLevel
                                     ) { entities, level ->
                                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                                    }.map { entities -> entities.map { it.toDomain() } }
+                                    }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                                 )
                             }
                         } ?: combine(
@@ -690,7 +808,7 @@ class MovieRepositoryImpl @Inject constructor(
                             preferencesRepository.parentalControlLevel
                         ) { entities, level ->
                             if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                        }.map { entities -> entities.map { it.toDomain() } }
+                        }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                     }
                 }
             }
@@ -706,7 +824,7 @@ class MovieRepositoryImpl @Inject constructor(
                                 preferencesRepository.parentalControlLevel
                             ) { entities, level ->
                                 if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            }.map { entities -> entities.map { it.toDomain() } }
+                            }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                         )
                     }
                 } ?: combine(
@@ -714,7 +832,7 @@ class MovieRepositoryImpl @Inject constructor(
                     preferencesRepository.parentalControlLevel
                 ) { entities, level ->
                     if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                }.map { entities -> entities.map { it.toDomain() } }
+                }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
             }
             normalizedSearch.isBlank() &&
                 query.filterBy.type == LibraryFilterType.IN_PROGRESS &&
@@ -728,7 +846,7 @@ class MovieRepositoryImpl @Inject constructor(
                                 preferencesRepository.parentalControlLevel
                             ) { entities, level ->
                                 if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            }.map { entities -> entities.map { it.toDomain() } }
+                            }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                         )
                     }
                 } ?: combine(
@@ -736,7 +854,7 @@ class MovieRepositoryImpl @Inject constructor(
                     preferencesRepository.parentalControlLevel
                 ) { entities, level ->
                     if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                }.map { entities -> entities.map { it.toDomain() } }
+                }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
             }
             normalizedSearch.isBlank() &&
                 query.filterBy.type == LibraryFilterType.UNWATCHED &&
@@ -750,7 +868,7 @@ class MovieRepositoryImpl @Inject constructor(
                                 preferencesRepository.parentalControlLevel
                             ) { entities, level ->
                                 if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            }.map { entities -> entities.map { it.toDomain() } }
+                            }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                         )
                     }
                 } ?: combine(
@@ -758,7 +876,7 @@ class MovieRepositoryImpl @Inject constructor(
                     preferencesRepository.parentalControlLevel
                 ) { entities, level ->
                     if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                }.map { entities -> entities.map { it.toDomain() } }
+                }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
             }
             normalizedSearch.isBlank() &&
                 query.filterBy.type == LibraryFilterType.ALL &&
@@ -772,7 +890,7 @@ class MovieRepositoryImpl @Inject constructor(
                                 preferencesRepository.parentalControlLevel
                             ) { entities, level ->
                                 if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                            }.map { entities -> entities.map { it.toDomain() } }
+                            }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
                         )
                     }
                 } ?: combine(
@@ -780,7 +898,7 @@ class MovieRepositoryImpl @Inject constructor(
                     preferencesRepository.parentalControlLevel
                 ) { entities, level ->
                     if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                }.map { entities -> entities.map { it.toDomain() } }
+                }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
             }
             else -> null
         }
@@ -807,7 +925,7 @@ class MovieRepositoryImpl @Inject constructor(
                     preferencesRepository.parentalControlLevel
                 ) { entities, level ->
                     if (level >= 3) entities.filter { !it.isUserProtected } else entities
-                }.map { entities -> entities.map { it.toDomain() } }
+                }.map { entities -> entities.distinctByMovieDedupKey().map { it.toDomain() } }
             )
         }
     }
@@ -1001,6 +1119,7 @@ class MovieRepositoryImpl @Inject constructor(
             .map { it.contentId }
             .toSet()
         val items = rows
+            .distinctByMovieDedupKey()
             .take(query.limit)
             .map { it.toDomain() }
             .map { movie -> if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie }
@@ -1069,6 +1188,7 @@ class MovieRepositoryImpl @Inject constructor(
     ) {
         var cursor: C? = null
         val targetVisibleCount = query.offset + query.limit
+        val seenKeys = HashSet<String>()
         while (collected.size < targetVisibleCount) {
             val batch = loadPage(CURSOR_BATCH_SIZE, cursor)
             if (batch.isEmpty()) {
@@ -1079,9 +1199,10 @@ class MovieRepositoryImpl @Inject constructor(
             } else {
                 batch
             }
-            collected += visibleBatch.map { entity ->
+            visibleBatch.forEach { entity ->
+                if (!seenKeys.add(entity.movieVariantGroupKey())) return@forEach
                 val movie = entity.toDomain()
-                if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie
+                collected += if (movie.id in favoriteIds) movie.copy(isFavorite = true) else movie
             }
             if (batch.size < CURSOR_BATCH_SIZE) {
                 return
@@ -1475,6 +1596,14 @@ class MovieRepositoryImpl @Inject constructor(
     private fun movieReleaseScore(movie: Movie): Long =
         movie.releaseDate?.filter { it.isDigit() }?.take(8)?.toLongOrNull()
             ?: movie.year?.toLongOrNull()
+            ?: yearFromTitle(movie.name)?.toLong()
+            ?: movie.addedAt.takeIf { it > 0L }
+            ?: 0L
+
+    private fun movieReleaseScore(movie: MovieBrowseEntity): Long =
+        movie.releaseDate?.filter { it.isDigit() }?.take(8)?.toLongOrNull()
+            ?: movie.year?.toLongOrNull()
+            ?: yearFromTitle(movie.name)?.toLong()
             ?: movie.addedAt.takeIf { it > 0L }
             ?: 0L
 
@@ -1546,4 +1675,5 @@ class MovieRepositoryImpl @Inject constructor(
         return progressMs >= (totalDurationMs * 0.95f).toLong()
     }
 }
+
 

@@ -349,10 +349,13 @@ class EpgRepositoryImpl @Inject constructor(
             }
         }
 
-        if (normalizedChannelId != null) {
-            return getProgramsForChannel(providerId, normalizedChannelId, startTime, endTime)
+        if (lookupKey != null) {
+            val localPrograms = getProgramsForChannel(providerId, lookupKey, startTime, endTime)
                 .first()
-                .sortedBy { it.startTime }
+
+            if (localPrograms.isNotEmpty()) {
+                return localPrograms.sortedBy { it.startTime }
+            }
         }
 
         return emptyList()

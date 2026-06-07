@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
-import com.streamvault.app.BuildConfig
 import com.streamvault.data.local.StreamVaultDatabase
 import com.streamvault.data.local.dao.*
 import com.streamvault.data.local.dao.ChannelPreferenceDao
@@ -18,8 +17,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
-    private const val DEBUG_SLOW_QUERY_THRESHOLD_MS = 100L
-
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): StreamVaultDatabase =
@@ -29,16 +26,7 @@ object DatabaseModule {
             "streamvault.db"
         )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .openHelperFactory(
-                if (BuildConfig.DEBUG) {
-                    SlowQueryLoggingOpenHelperFactory(
-                        delegate = FrameworkSQLiteOpenHelperFactory(),
-                        slowQueryThresholdMs = DEBUG_SLOW_QUERY_THRESHOLD_MS
-                    )
-                } else {
-                    FrameworkSQLiteOpenHelperFactory()
-                }
-            )
+            .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
             .addMigrations(
                 StreamVaultDatabase.MIGRATION_1_2,
                 StreamVaultDatabase.MIGRATION_2_3,

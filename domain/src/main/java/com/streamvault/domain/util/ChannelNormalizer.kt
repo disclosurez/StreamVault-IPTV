@@ -111,6 +111,9 @@ object ChannelNormalizer {
     fun getLogicalGroupId(channelName: String, providerId: Long): String =
         classify(channelName, providerId).logicalGroupId
 
+    fun hasTooManyHashCharacters(channelName: String): Boolean =
+        channelName.count { it == '#' } > 1
+
     fun classify(
         channelName: String,
         providerId: Long,

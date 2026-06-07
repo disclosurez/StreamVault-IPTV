@@ -111,6 +111,7 @@ fun PlayerControlsOverlay(
     subtitleTrackCount: Int,
     audioTrackCount: Int,
     videoQualityCount: Int,
+    streamFormatCount: Int = 0,
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     playbackSpeed: Float = 1f,
@@ -134,6 +135,7 @@ fun PlayerControlsOverlay(
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
+    onOpenStreamFormats: () -> Unit = {},
     onOpenPlaybackSpeed: () -> Unit = {},
     onOpenStopPlaybackTimer: () -> Unit = {},
     onOpenIdleStandbyTimer: () -> Unit = {},
@@ -201,6 +203,7 @@ fun PlayerControlsOverlay(
                 subtitleTrackCount = subtitleTrackCount,
                 audioTrackCount = audioTrackCount,
                 videoQualityCount = videoQualityCount,
+                streamFormatCount = streamFormatCount,
                 currentRecordingStatus = currentRecordingStatus,
                 isMuted = isMuted,
                 playbackSpeed = playbackSpeed,
@@ -221,6 +224,7 @@ fun PlayerControlsOverlay(
                 onOpenSubtitleTracks = onOpenSubtitleTracks,
                 onOpenAudioTracks = onOpenAudioTracks,
                 onOpenVideoTracks = onOpenVideoTracks,
+                onOpenStreamFormats = onOpenStreamFormats,
                 onOpenPlaybackSpeed = onOpenPlaybackSpeed,
                 onOpenStopPlaybackTimer = onOpenStopPlaybackTimer,
                 onOpenIdleStandbyTimer = onOpenIdleStandbyTimer,
@@ -531,6 +535,7 @@ private fun PlayerBottomBar(
     subtitleTrackCount: Int,
     audioTrackCount: Int,
     videoQualityCount: Int,
+    streamFormatCount: Int,
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     playbackSpeed: Float,
@@ -550,6 +555,7 @@ private fun PlayerBottomBar(
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
+    onOpenStreamFormats: () -> Unit,
     onOpenPlaybackSpeed: () -> Unit,
     onOpenStopPlaybackTimer: () -> Unit,
     onOpenIdleStandbyTimer: () -> Unit,
@@ -625,6 +631,7 @@ private fun PlayerBottomBar(
                         subtitleTrackCount = subtitleTrackCount,
                         audioTrackCount = audioTrackCount,
                         videoQualityCount = videoQualityCount,
+                        streamFormatCount = streamFormatCount,
                         currentRecordingStatus = currentRecordingStatus,
                         isMuted = isMuted,
                         mediaTitle = mediaTitle,
@@ -643,6 +650,7 @@ private fun PlayerBottomBar(
                         onOpenSubtitleTracks = onOpenSubtitleTracks,
                         onOpenAudioTracks = onOpenAudioTracks,
                         onOpenVideoTracks = onOpenVideoTracks,
+                        onOpenStreamFormats = onOpenStreamFormats,
                         onOpenStopPlaybackTimer = onOpenStopPlaybackTimer,
                         onOpenIdleStandbyTimer = onOpenIdleStandbyTimer,
                         onOpenAudioVideoSync = onOpenAudioVideoSync,
@@ -717,6 +725,7 @@ private fun PlayerLiveInfo(
     subtitleTrackCount: Int,
     audioTrackCount: Int,
     videoQualityCount: Int,
+    streamFormatCount: Int,
     currentRecordingStatus: RecordingStatus?,
     isMuted: Boolean,
     mediaTitle: String?,
@@ -735,6 +744,7 @@ private fun PlayerLiveInfo(
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
+    onOpenStreamFormats: () -> Unit,
     onOpenStopPlaybackTimer: () -> Unit,
     onOpenIdleStandbyTimer: () -> Unit,
     onOpenAudioVideoSync: () -> Unit,
@@ -814,6 +824,9 @@ private fun PlayerLiveInfo(
         }
         if (videoQualityCount > 0) {
             add(PlayerActionSpec(stringResource(R.string.player_video_quality), onOpenVideoTracks))
+        }
+        if (streamFormatCount > 1) {
+            add(PlayerActionSpec(stringResource(R.string.player_stream_format_short), onOpenStreamFormats))
         }
         if (audioVideoSyncEnabled && !isCastConnected) {
             add(PlayerActionSpec(stringResource(R.string.player_av_sync_short), onOpenAudioVideoSync))

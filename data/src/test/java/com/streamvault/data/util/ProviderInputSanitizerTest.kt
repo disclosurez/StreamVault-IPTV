@@ -28,4 +28,12 @@ class ProviderInputSanitizerTest {
             .isEqualTo("URLs cannot contain spaces or line breaks.")
         assertThat(ProviderInputSanitizer.validateUrl("https://example.com/a.m3u")).isNull()
     }
+
+    @Test
+    fun `normalizeUrl adds https scheme to bare provider hosts`() {
+        assertThat(ProviderInputSanitizer.normalizeUrl("ip.dreamworkz.net"))
+            .isEqualTo("https://ip.dreamworkz.net")
+        assertThat(ProviderInputSanitizer.normalizeUrl("//portal.example.com/c"))
+            .isEqualTo("https://portal.example.com/c")
+    }
 }

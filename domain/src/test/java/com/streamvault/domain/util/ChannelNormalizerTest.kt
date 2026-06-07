@@ -70,6 +70,14 @@ class ChannelNormalizerTest {
     }
 
     @Test
+    fun `detects names with more than one hash character`() {
+        assertThat(ChannelNormalizer.hasTooManyHashCharacters("BBC One")).isFalse()
+        assertThat(ChannelNormalizer.hasTooManyHashCharacters("BBC # One")).isFalse()
+        assertThat(ChannelNormalizer.hasTooManyHashCharacters("BBC ## One")).isTrue()
+        assertThat(ChannelNormalizer.hasTooManyHashCharacters("###")).isTrue()
+    }
+
+    @Test
     fun `strips colon-delimited country prefix`() {
         val id = ChannelNormalizer.getLogicalGroupId("FR: Canal+", 1L)
         assertThat(id).isEqualTo("1_canal")

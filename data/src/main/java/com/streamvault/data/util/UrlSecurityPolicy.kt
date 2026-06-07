@@ -1,6 +1,7 @@
 package com.streamvault.data.util
 
 import com.streamvault.domain.util.StreamEntryUrlPolicy
+import com.streamvault.domain.util.ProviderUrlNormalizer
 import java.net.URI
 import java.util.Locale
 
@@ -27,7 +28,7 @@ object UrlSecurityPolicy {
 
     fun validateXtreamServerUrl(url: String): String? {
         return validateRemoteUrl(
-            url = url,
+            url = ProviderUrlNormalizer.normalizeRemoteUrl(url),
             allowedSchemes = xtreamServerSchemes,
             invalidSchemeMessage = "Xtream server URLs must use HTTP or HTTPS.",
             missingHostMessage = "Xtream server URLs must include a host.",
@@ -39,7 +40,7 @@ object UrlSecurityPolicy {
 
     fun validateStalkerPortalUrl(url: String): String? {
         return validateRemoteUrl(
-            url = url,
+            url = ProviderUrlNormalizer.normalizeRemoteUrl(url),
             allowedSchemes = xtreamServerSchemes,
             invalidSchemeMessage = "Portal URLs must use HTTP or HTTPS.",
             missingHostMessage = "Portal URLs must include a host.",
@@ -51,7 +52,7 @@ object UrlSecurityPolicy {
 
     fun validateXtreamEpgUrl(url: String): String? {
         return validateRemoteUrl(
-            url = url,
+            url = ProviderUrlNormalizer.normalizeRemoteUrl(url),
             allowedSchemes = xtreamServerSchemes,
             invalidSchemeMessage = "Xtream EPG URLs must use HTTP or HTTPS.",
             missingHostMessage = "Xtream EPG URLs must include a host.",
@@ -65,12 +66,14 @@ object UrlSecurityPolicy {
         if (containsNewlines(url)) {
             return "Playlist sources must use HTTP, HTTPS, or point to a local file."
         }
-        val scheme = parseScheme(url) ?: return "Playlist sources must use HTTP, HTTPS, or point to a local file."
+        val normalizedUrl = ProviderUrlNormalizer.normalizeRemoteUrl(url)
+        val scheme = parseScheme(normalizedUrl)
+            ?: return "Playlist sources must use HTTP, HTTPS, or point to a local file."
         if (scheme in playlistLocalSchemes) {
             return null
         }
         return validateRemoteUrl(
-            url = url,
+            url = normalizedUrl,
             allowedSchemes = playlistSourceSchemes,
             invalidSchemeMessage = "Playlist sources must use HTTP, HTTPS, or point to a local file.",
             missingHostMessage = "Playlist sources must include a host.",
@@ -86,7 +89,7 @@ object UrlSecurityPolicy {
             url.startsWith("content://") -> null  // SAF local file; validated by OS file picker
             // Allow http:// as well as https:// — many IPTV portals serve their XMLTV
             // EPG endpoint over plain HTTP on non-standard ports (same policy as playlists).
-            !containsNewlines(url) && hasAllowedScheme(url, playlistSourceSchemes) -> null
+            !containsNewlines(url) && hasAllowedScheme(ProviderUrlNormalizer.normalizeRemoteUrl(url), playlistSourceSchemes) -> null
             else -> "EPG URLs must use HTTP, HTTPS, or select a local file."
         }
     }

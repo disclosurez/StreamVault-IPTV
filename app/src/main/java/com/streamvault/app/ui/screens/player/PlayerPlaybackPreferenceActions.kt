@@ -74,6 +74,31 @@ fun PlayerViewModel.selectVideoQuality(trackId: String) {
     playerEngine.selectVideoTrack(trackId)
 }
 
+fun PlayerViewModel.selectStreamFormat(streamUrl: String) {
+    val channel = currentChannelFlow.value?.sanitizedForPlayer() ?: return
+    val selectedOption = channel.qualityOptions.firstOrNull { it.url == streamUrl } ?: return
+    val selectedUrl = selectedOption.url?.takeIf { it.isNotBlank() } ?: return
+    if (selectedUrl == currentStreamUrl || selectedUrl == currentResolvedPlaybackUrl) return
+
+    val requestVersion = beginPlaybackSession()
+    triedAlternativeStreams.clear()
+    currentContentId = channel.id
+    currentStreamUrl = selectedUrl
+    updateStreamClass("Stream format")
+
+    viewModelScope.launch {
+        val streamInfo = resolvePlaybackStreamInfo(
+            logicalUrl = selectedUrl,
+            internalContentId = channel.id,
+            providerId = channel.providerId,
+            contentType = ContentType.LIVE
+        ) ?: return@launch
+        if (!isActivePlaybackSession(requestVersion, selectedUrl)) return@launch
+        if (!preparePlayer(streamInfo.copy(title = streamInfo.title ?: currentTitle), requestVersion)) return@launch
+        playerEngine.play()
+    }
+}
+
 fun PlayerViewModel.selectLiveVariant(rawChannelId: Long) {
     val currentChannel = currentChannelFlow.value?.sanitizedForPlayer() ?: return
     val updatedChannel = currentChannel.withSelectedVariant(rawChannelId)?.sanitizedForPlayer() ?: return
