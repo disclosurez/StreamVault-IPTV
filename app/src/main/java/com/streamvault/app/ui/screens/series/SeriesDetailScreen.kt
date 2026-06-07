@@ -51,6 +51,7 @@ import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.R
+import com.streamvault.app.device.isFireTvDevice
 import com.streamvault.app.device.rememberIsTelevisionDevice
 import com.streamvault.app.ui.components.rememberCrossfadeImageModel
 import com.streamvault.app.util.formatPositionMs
@@ -479,6 +480,7 @@ private fun SeriesDetailActions(
     downloadItem: OfflineDownloadItem?,
     onToggleFavorite: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val canPlayDownload = downloadItem?.isPlayable == true
     val canResumeDownload = downloadStatus == OfflineDownloadStatus.PAUSED
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -506,35 +508,37 @@ private fun SeriesDetailActions(
                 }
             )
         }
-        TvButton(
-            onClick = {
-                if (canPlayDownload) {
-                    onResumeClick(resumeEpisode.copy(streamUrl = checkNotNull(downloadItem).localUri))
-                } else {
-                    onDownloadEpisode(resumeEpisode)
-                }
-            },
-            enabled = canPlayDownload || canResumeDownload || (!isDownloading && downloadStatus == null),
-            colors = ButtonDefaults.colors(
-                containerColor = AppColors.SurfaceEmphasis,
-                contentColor = AppColors.TextPrimary,
-                disabledContainerColor = AppColors.SurfaceElevated,
-                disabledContentColor = AppColors.TextTertiary
-            )
-        ) {
-            Icon(imageVector = Icons.Filled.Download, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isDownloading) {
-                    stringResource(R.string.vod_download_downloading)
-                } else if (canPlayDownload) {
-                    stringResource(R.string.settings_downloads_play)
-                } else if (downloadStatus != null) {
-                    downloadStatus.buttonLabel(downloadItem)
-                } else {
-                    stringResource(R.string.vod_download)
-                }
-            )
+        if (!androidx.compose.ui.platform.LocalContext.current.isFireTvDevice()) {
+            TvButton(
+                onClick = {
+                    if (canPlayDownload) {
+                        onResumeClick(resumeEpisode.copy(streamUrl = checkNotNull(downloadItem).localUri))
+                    } else {
+                        onDownloadEpisode(resumeEpisode)
+                    }
+                },
+                enabled = canPlayDownload || canResumeDownload || (!isDownloading && downloadStatus == null),
+                colors = ButtonDefaults.colors(
+                    containerColor = AppColors.SurfaceEmphasis,
+                    contentColor = AppColors.TextPrimary,
+                    disabledContainerColor = AppColors.SurfaceElevated,
+                    disabledContentColor = AppColors.TextTertiary
+                )
+            ) {
+                Icon(imageVector = Icons.Filled.Download, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isDownloading) {
+                        stringResource(R.string.vod_download_downloading)
+                    } else if (canPlayDownload) {
+                        stringResource(R.string.settings_downloads_play)
+                    } else if (downloadStatus != null) {
+                        downloadStatus.buttonLabel(downloadItem)
+                    } else {
+                        stringResource(R.string.vod_download)
+                    }
+                )
+            }
         }
         SeriesDetailFavoriteAction(series = series, onToggleFavorite = onToggleFavorite)
     }
@@ -605,6 +609,7 @@ fun EpisodeItem(
     downloadStatus: OfflineDownloadStatus?,
     downloadItem: OfflineDownloadItem?
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val canPlayDownload = downloadItem?.isPlayable == true
     val canResumeDownload = downloadStatus == OfflineDownloadStatus.PAUSED
     Row(
@@ -626,35 +631,37 @@ fun EpisodeItem(
                 modifier = Modifier.fillMaxWidth()
             )
         }
-        TvButton(
-            onClick = {
-                if (canPlayDownload) {
-                    onPlayDownload(checkNotNull(downloadItem))
-                } else {
-                    onDownload()
-                }
-            },
-            enabled = canPlayDownload || canResumeDownload || (!isDownloading && downloadStatus == null),
-            colors = ButtonDefaults.colors(
-                containerColor = AppColors.SurfaceEmphasis,
-                contentColor = AppColors.TextPrimary,
-                disabledContainerColor = AppColors.SurfaceElevated,
-                disabledContentColor = AppColors.TextTertiary
-            )
-        ) {
-            Icon(imageVector = Icons.Filled.Download, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isDownloading) {
-                    stringResource(R.string.vod_download_downloading)
-                } else if (canPlayDownload) {
-                    stringResource(R.string.settings_downloads_play)
-                } else if (downloadStatus != null) {
-                    downloadStatus.buttonLabel(downloadItem)
-                } else {
-                    stringResource(R.string.vod_download)
-                }
-            )
+        if (!androidx.compose.ui.platform.LocalContext.current.isFireTvDevice()) {
+            TvButton(
+                onClick = {
+                    if (canPlayDownload) {
+                        onPlayDownload(checkNotNull(downloadItem))
+                    } else {
+                        onDownload()
+                    }
+                },
+                enabled = canPlayDownload || canResumeDownload || (!isDownloading && downloadStatus == null),
+                colors = ButtonDefaults.colors(
+                    containerColor = AppColors.SurfaceEmphasis,
+                    contentColor = AppColors.TextPrimary,
+                    disabledContainerColor = AppColors.SurfaceElevated,
+                    disabledContentColor = AppColors.TextTertiary
+                )
+            ) {
+                Icon(imageVector = Icons.Filled.Download, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isDownloading) {
+                        stringResource(R.string.vod_download_downloading)
+                    } else if (canPlayDownload) {
+                        stringResource(R.string.settings_downloads_play)
+                    } else if (downloadStatus != null) {
+                        downloadStatus.buttonLabel(downloadItem)
+                    } else {
+                        stringResource(R.string.vod_download)
+                    }
+                )
+            }
         }
     }
 }
