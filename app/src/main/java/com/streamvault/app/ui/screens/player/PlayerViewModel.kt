@@ -1,5 +1,6 @@
 package com.streamvault.app.ui.screens.player
 
+import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -37,6 +38,7 @@ import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.model.StreamInfo
+import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.model.VideoFormat
 import com.streamvault.domain.usecase.GetCustomCategories
@@ -61,6 +63,7 @@ import com.streamvault.player.timeshift.LiveTimeshiftState
 import com.streamvault.player.timeshift.LiveTimeshiftStatus
 import com.streamvault.player.timeshift.TimeshiftConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -69,6 +72,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import android.content.Context
 import javax.inject.Inject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -76,6 +80,8 @@ import okhttp3.Request
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModel @Inject constructor(
+    @ApplicationContext
+    private val appContext: Context,
     @param:MainPlayerEngine
     private val mainPlayerEngine: PlayerEngine,
     internal val epgRepository: EpgRepository,
@@ -724,19 +730,38 @@ class PlayerViewModel @Inject constructor(
         recoveryJob?.cancel()
         if (error is PlayerError.DecoderError && !hasRetriedWithSoftwareDecoder) {
             if (!isActivePlaybackSession(requestVersion, playbackUrl)) return
-            hasRetriedWithSoftwareDecoder = true
-            android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
-            playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
-            updateDecoderMode(DecoderMode.SOFTWARE)
-            setLastFailureReason(error.message)
-            appendRecoveryAction("Switched to software decoder")
-            playerEngine.play()
-            showPlayerNotice(
-                message = "Retrying with software decoding for this stream.",
-                recoveryType = PlayerRecoveryType.DECODER,
-                actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
-            )
-            return
+            val currentLiveHlsSession = currentContentType == ContentType.LIVE &&
+                currentResolvedStreamInfo?.streamType == StreamType.HLS
+            if (currentLiveHlsSession) {
+                val channel = currentChannelFlow.value?.sanitizedForPlayer()
+                if (channel != null &&
+                    tryAlternateStreamInternal(
+                        channel = channel,
+                        preferXtreamTsFallback = false,
+                        allowXtreamTsFallback = false
+                    )
+                ) {
+                    return
+                }
+                android.util.Log.w(
+                    "PlayerVM",
+                    "Decoder error on live HLS. Keeping hardware path to match Sparkle-like playback on ${appContext.packageName}."
+                )
+            } else {
+                hasRetriedWithSoftwareDecoder = true
+                android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
+                playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
+                updateDecoderMode(DecoderMode.SOFTWARE)
+                setLastFailureReason(error.message)
+                appendRecoveryAction("Switched to software decoder")
+                playerEngine.play()
+                showPlayerNotice(
+                    message = "Retrying with software decoding for this stream.",
+                    recoveryType = PlayerRecoveryType.DECODER,
+                    actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
+                )
+                return
+            }
         }
         recoveryJob = viewModelScope.launch {
             if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
@@ -1092,6 +1117,16 @@ class PlayerViewModel @Inject constructor(
             providerId = providerId.takeIf { it > 0L }
         ) ?: return false
 
+        if (shouldBypassPreviewHandoffForFireTvLiveHls(session.streamInfo)) {
+            android.util.Log.i(
+                "PlayerVM",
+                "Skipping preview handoff for Fire TV live HLS; fullscreen will prepare a fresh session."
+            )
+            livePreviewHandoffManager.clear(session.engine)
+            session.engine.release()
+            return false
+        }
+
         val adoptedEngine = session.engine
         return runCatching {
             // Detach the Home preview surface before Player binds its own.
@@ -1120,11 +1155,10 @@ class PlayerViewModel @Inject constructor(
                         url = session.streamInfo.url
                     )
                 )
-                // Re-prime the adopted engine against the fullscreen surface path at
-                // the live edge. Renewing in-place preserves the preview timeline
-                // position, which can strand HLS live playback in buffering after the
-                // fullscreen surface binds.
-                playerEngine.prepare(session.streamInfo)
+                adoptedEngine.resetLiveHandoffGrace()
+                // Keep the already-playing preview session intact. Re-preparing on the
+                // fullscreen transition can renegotiate the stream and strand HLS live
+                // playback in buffering even though preview was already stable.
                 playerEngine.play()
                 startTokenRenewalMonitoring(session.streamInfo.expirationTime)
                 maybeStartLiveTimeshift(session.streamInfo)
@@ -1138,6 +1172,14 @@ class PlayerViewModel @Inject constructor(
             adoptedEngine.release()
             false
         }
+    }
+
+    private fun shouldBypassPreviewHandoffForFireTvLiveHls(streamInfo: StreamInfo): Boolean {
+        val isAmazonMediaTek = Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
+        val isHls = streamInfo.streamType == StreamType.HLS ||
+            streamInfo.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        return isAmazonMediaTek && isHls
     }
 
     internal suspend fun preparePlayer(

@@ -121,6 +121,7 @@ class Media3PlayerEngine @Inject constructor(
         private const val FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK = Build.VERSION_CODES.P
         private const val TEXTURE_VIEW_STARTUP_TIMEOUT_MS = 9_000L
         private const val TEXTURE_VIEW_BUFFERED_STARTUP_THRESHOLD_MS = 4_000L
+        private const val LIVE_HLS_STARTUP_GRACE_MS = 15_000L
         private const val KNOWN_BAD_FAILURE_THRESHOLD = 3
         private const val MEDIA_SESSION_ID_PREFIX = "streamvault"
         private val nextMediaSessionInstanceId = AtomicLong(1L)
@@ -364,7 +365,16 @@ class Media3PlayerEngine @Inject constructor(
                     fallbackTextureViewSurface("NO_FIRST_FRAME")
                     continue
                 }
-                if (stalled) handleVideoStall()
+                if (stalled) {
+                    if (shouldIgnoreLiveHlsStartupStall()) {
+                        Log.w(
+                            TAG,
+                            "video-stall startup grace retained for live-hls surface=${_renderSurfaceType.value} target=${PlaybackLogSanitizer.sanitizeUrl(lastStreamInfo?.url)}"
+                        )
+                    } else {
+                        handleVideoStall()
+                    }
+                }
             }
         }
     }
@@ -763,6 +773,18 @@ class Media3PlayerEngine @Inject constructor(
 
     override fun releaseRenderView(renderView: android.view.View) {
         viewBinder.release(renderView)
+    }
+
+    override fun resetLiveHandoffGrace() {
+        if (isDisposed) return
+        prepareStartMs = System.currentTimeMillis()
+        videoStallDetector.reset()
+        videoStallRecoveryAttempt = 0
+        videoStallSafeRecoveryPerformed = false
+        liveBufferingRecoveryArmed = false
+        playbackStartedRecoveryArmed = false
+        retryAttempt = 0
+        lastRetryCategory = null
     }
 
     override fun release() {
@@ -1672,6 +1694,14 @@ class Media3PlayerEngine @Inject constructor(
         )
     }
 
+    private fun shouldIgnoreLiveHlsStartupStall(): Boolean {
+        if (currentResolvedStreamType != ResolvedStreamType.HLS) return false
+        if (!isCurrentStreamLive()) return false
+        if (hasRenderedFirstVideoFrame) return false
+        if (prepareStartMs <= 0L) return false
+        return System.currentTimeMillis() - prepareStartMs < LIVE_HLS_STARTUP_GRACE_MS
+    }
+
     private fun tryVideoStallDecoderFallback(
         streamInfo: StreamInfo,
         seekPositionMs: Long?,
@@ -2113,7 +2143,12 @@ class Media3PlayerEngine @Inject constructor(
         }
 
         if (category == PlaybackErrorCategory.DECODER || category == PlaybackErrorCategory.FORMAT_UNSUPPORTED) {
-            val fallbackMode = decoderPreferencePolicy.onDecoderInitFailure(requestedDecoderMode, mediaId)
+            val keepHardwareForLiveHls = currentResolvedStreamType == ResolvedStreamType.HLS && isCurrentStreamLive()
+            val fallbackMode = if (keepHardwareForLiveHls) {
+                null
+            } else {
+                decoderPreferencePolicy.onDecoderInitFailure(requestedDecoderMode, mediaId)
+            }
             if (fallbackMode != null) {
                 Log.w(
                     TAG,
@@ -2122,6 +2157,11 @@ class Media3PlayerEngine @Inject constructor(
                 activeDecoderMode = fallbackMode
                 prepareInternal(streamInfo, preserveRetryState = false, seekPositionMs = exoPlayer?.currentPosition, autoPlay = true)
                 return
+            } else if (keepHardwareForLiveHls) {
+                Log.w(
+                    TAG,
+                    "decoder-preference retained-hardware live-hls target=${PlaybackLogSanitizer.sanitizeUrl(streamInfo.url)}"
+                )
             }
         }
 
