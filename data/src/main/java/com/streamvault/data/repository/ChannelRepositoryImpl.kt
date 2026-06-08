@@ -81,7 +81,7 @@ class ChannelRepositoryImpl @Inject constructor(
         observeChannels(channelDao.getByProvider(providerId), providerId)
 
     override fun getChannelCount(providerId: Long): Flow<Int> =
-        channelDao.getCount(providerId)
+        getChannels(providerId).map { channels -> channels.size }
 
     override fun getChannelsByCategory(providerId: Long, categoryId: Long): Flow<List<Channel>> =
         observeChannels(channelFlow(providerId, categoryId), providerId)
@@ -643,10 +643,13 @@ class ChannelRepositoryImpl @Inject constructor(
     ): List<ChannelBrowseEntity> = if (level >= 3) {
         entities.filter { entity ->
             val isUnlocked = entity.categoryId != null && unlockedCats.contains(entity.categoryId)
-            (!entity.isAdult && !entity.isUserProtected) || isUnlocked
+            val isBrowsable = !ChannelNormalizer.hasTooManyHashCharacters(entity.name)
+            ((!entity.isAdult && !entity.isUserProtected) || isUnlocked) && isBrowsable
         }
     } else {
-        entities
+        entities.filterNot { entity ->
+            ChannelNormalizer.hasTooManyHashCharacters(entity.name)
+        }
     }
 
     private fun sortChannelsByNumber(channels: List<Channel>): List<Channel> =
