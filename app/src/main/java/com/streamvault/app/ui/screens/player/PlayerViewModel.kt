@@ -1,7 +1,7 @@
 package com.streamvault.app.ui.screens.player
 
+import android.os.Build
 import android.os.SystemClock
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.streamvault.app.cast.CastConnectionState
@@ -17,7 +17,6 @@ import com.streamvault.app.tv.WatchNextManager
 import com.streamvault.data.remote.stalker.StalkerUrlFactory
 import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
 import com.streamvault.data.security.CredentialDecryptionException
-import com.streamvault.data.sync.SyncManager
 import com.streamvault.domain.manager.RecordingManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ChannelNumberingMode
@@ -38,6 +37,7 @@ import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.model.StreamInfo
+import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.model.VirtualCategoryIds
 import com.streamvault.domain.model.VideoFormat
 import com.streamvault.domain.usecase.GetCustomCategories
@@ -62,6 +62,7 @@ import com.streamvault.player.timeshift.LiveTimeshiftState
 import com.streamvault.player.timeshift.LiveTimeshiftStatus
 import com.streamvault.player.timeshift.TimeshiftConfig
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -70,6 +71,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import android.content.Context
 import javax.inject.Inject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -77,6 +79,8 @@ import okhttp3.Request
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModel @Inject constructor(
+    @ApplicationContext
+    private val appContext: Context,
     @param:MainPlayerEngine
     private val mainPlayerEngine: PlayerEngine,
     internal val epgRepository: EpgRepository,
@@ -99,11 +103,9 @@ class PlayerViewModel @Inject constructor(
     internal val xtreamStreamUrlResolver: XtreamStreamUrlResolver,
     internal val seekThumbnailProvider: SeekThumbnailProvider,
     internal val livePreviewHandoffManager: LivePreviewHandoffManager,
-    internal val syncManager: SyncManager,
     private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
     companion object {
-        private const val TAG = "PlayerViewModel"
         private const val MAX_PROGRAM_HISTORY_ITEMS = 18
         private const val MAX_UPCOMING_PROGRAM_ITEMS = 24
         private const val PLAYER_EPG_REFRESH_INTERVAL_MS = 30_000L
@@ -237,10 +239,10 @@ class PlayerViewModel @Inject constructor(
     internal var numericInputBuffer: String = ""
     internal val triedAlternativeStreams = mutableSetOf<String>()
     internal val failedStreamsThisSession = mutableMapOf<String, Int>()
+    internal val livePreloadCooldownProviderIds = mutableSetOf<Long>()
     internal var hasRetriedWithSoftwareDecoder = false
     internal var hasRetriedXtreamAuthRefresh = false
     internal val probePassedPlaybackKeys = mutableSetOf<String>()
-    internal val livePreloadCooldownProviderIds = mutableSetOf<Long>()
     private val notifiedRecordingFailureIds = mutableSetOf<String>()
     internal var lastRecordedLivePlaybackKey: Pair<Long, Long>? = null
     private var currentStreamClassLabel: String = "Primary"
@@ -251,6 +253,7 @@ class PlayerViewModel @Inject constructor(
     internal var currentResolvedPlaybackUrl: String = ""
     internal var currentResolvedStreamInfo: StreamInfo? = null
     internal var pendingCatchUpUrls: List<String> = emptyList()
+    internal var livePlaybackReadyForCurrentSession: Boolean = false
     internal var channelNumberingMode: ChannelNumberingMode = ChannelNumberingMode.GROUP
         set(value) {
             field = value
@@ -339,7 +342,6 @@ class PlayerViewModel @Inject constructor(
     private var defaultIdleStandbyTimerMinutes: Int = 0
     internal var playbackTimerDefaultsApplied = false
     internal var sleepTimerExitEmitted = false
-    internal var activeStalkerPlaybackProviderId: Long? = null
 
     val castConnectionState: StateFlow<CastConnectionState> = castManager.connectionState
 
@@ -400,7 +402,7 @@ class PlayerViewModel @Inject constructor(
             playerEngine.stopLiveTimeshift()
             return
         }
-        if (currentStreamClassLabel == "Catch-up") {
+        if (!shouldStartLiveTimeshiftForStreamClass(currentStreamClassLabel)) {
             playerEngine.stopLiveTimeshift()
             return
         }
@@ -456,6 +458,7 @@ class PlayerViewModel @Inject constructor(
                     zapBufferWatchdogJob?.cancel()
                     dismissRecoveredNoticeIfPresent()
                     if (currentContentType == ContentType.LIVE) {
+                        livePlaybackReadyForCurrentSession = true
                         recordActiveLivePlayback()
                         currentChannelFlow.value?.sanitizedForPlayer()?.let { channel ->
                             if (channel.errorCount > 0) {
@@ -470,14 +473,6 @@ class PlayerViewModel @Inject constructor(
                     }
                 }
             }
-        }
-        viewModelScope.launch {
-            activePlayerEngineFlow
-                .flatMapLatest { it.isPlaying }
-                .distinctUntilChanged()
-                .collect { isPlaying ->
-                    synchronizeStalkerPlaybackFetchDeferral(isPlaying)
-                }
         }
         viewModelScope.launch {
             activePlayerEngineFlow.flatMapLatest { it.retryStatus }.collect { status ->
@@ -557,6 +552,11 @@ class PlayerViewModel @Inject constructor(
             preferencesRepository.playerMediaSessionEnabled
                 .combine(activePlayerEngineFlow) { enabled, engine -> engine to enabled }
                 .collect { (engine, enabled) -> engine.setMediaSessionEnabled(enabled) }
+        }
+        viewModelScope.launch {
+            preferencesRepository.playerFastRetryOnTransientFailures
+                .combine(activePlayerEngineFlow) { enabled, engine -> engine to enabled }
+                .collect { (engine, enabled) -> engine.setFastRetryOnTransientFailures(enabled) }
         }
         viewModelScope.launch {
             currentChannelFlow
@@ -716,22 +716,47 @@ class PlayerViewModel @Inject constructor(
             currentResolvedPlaybackUrl = currentResolvedPlaybackUrl,
             currentStreamUrl = currentStreamUrl
         )
+        android.util.Log.i(
+            "PlayerVM",
+            "handle-playback-error type=${error::class.java.simpleName} contentType=$currentContentType " +
+                "hasChannel=${currentChannelFlow.value != null} requestVersion=$requestVersion " +
+                "active=${isActivePlaybackSession(requestVersion, playbackUrl)}"
+        )
         recoveryJob?.cancel()
         if (error is PlayerError.DecoderError && !hasRetriedWithSoftwareDecoder) {
             if (!isActivePlaybackSession(requestVersion, playbackUrl)) return
-            hasRetriedWithSoftwareDecoder = true
-            android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
-            playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
-            updateDecoderMode(DecoderMode.SOFTWARE)
-            setLastFailureReason(error.message)
-            appendRecoveryAction("Switched to software decoder")
-            playerEngine.play()
-            showPlayerNotice(
-                message = "Retrying with software decoding for this stream.",
-                recoveryType = PlayerRecoveryType.DECODER,
-                actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
-            )
-            return
+            val currentLiveHlsSession = currentContentType == ContentType.LIVE &&
+                currentResolvedStreamInfo?.streamType == StreamType.HLS
+            if (currentLiveHlsSession) {
+                val channel = currentChannelFlow.value?.sanitizedForPlayer()
+                if (channel != null &&
+                    tryAlternateStreamInternal(
+                        channel = channel,
+                        preferXtreamTsFallback = false,
+                        allowXtreamTsFallback = false
+                    )
+                ) {
+                    return
+                }
+                android.util.Log.w(
+                    "PlayerVM",
+                    "Decoder error on live HLS. Keeping hardware path to match Sparkle-like playback on ${appContext.packageName}."
+                )
+            } else {
+                hasRetriedWithSoftwareDecoder = true
+                android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
+                playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
+                updateDecoderMode(DecoderMode.SOFTWARE)
+                setLastFailureReason(error.message)
+                appendRecoveryAction("Switched to software decoder")
+                playerEngine.play()
+                showPlayerNotice(
+                    message = "Retrying with software decoding for this stream.",
+                    recoveryType = PlayerRecoveryType.DECODER,
+                    actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
+                )
+                return
+            }
         }
         recoveryJob = viewModelScope.launch {
             if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
@@ -741,6 +766,11 @@ class PlayerViewModel @Inject constructor(
 
             val recoveryType = classifyPlaybackError(error)
             val channel = currentChannelFlow.value?.sanitizedForPlayer()
+            android.util.Log.i(
+                "PlayerVM",
+                "recovery-dispatch type=$recoveryType live=${currentContentType == ContentType.LIVE} " +
+                    "hasChannel=${channel != null}"
+            )
 
             if (recoveryType == PlayerRecoveryType.DRM) {
                 if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
@@ -798,9 +828,6 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
 
-            if (shouldCooldownLivePreloadAfterError(error.message)) {
-                cooldownLivePreloadForCurrentProvider("playback error")
-            }
             markStreamFailure(currentStreamUrl)
             setLastFailureReason(error.message)
             logRepositoryFailure(
@@ -811,7 +838,11 @@ class PlayerViewModel @Inject constructor(
             val switched = when (recoveryType) {
                 PlayerRecoveryType.NETWORK,
                 PlayerRecoveryType.SOURCE,
-                PlayerRecoveryType.BUFFER_TIMEOUT -> tryAlternateStreamInternal(channel)
+                PlayerRecoveryType.BUFFER_TIMEOUT -> tryAlternateStreamInternal(
+                    channel = channel,
+                    preferXtreamTsFallback = recoveryType == PlayerRecoveryType.SOURCE,
+                    allowXtreamTsFallback = !livePlaybackReadyForCurrentSession
+                )
                 else -> false
             }
 
@@ -826,6 +857,10 @@ class PlayerViewModel @Inject constructor(
                 )
                 return@launch
             }
+            android.util.Log.w(
+                "PlayerVM",
+                "recovery-no-switch type=$recoveryType hasLastChannel=${hasLastChannel()}"
+            )
 
             if (fallbackToPreviousChannel("Recovery path exhausted for ${recoveryType.name.lowercase()}")) {
                 appendRecoveryAction("Returned to last channel")
@@ -913,6 +948,7 @@ class PlayerViewModel @Inject constructor(
         thumbnailPreloadJob?.cancel()
         hasRetriedXtreamAuthRefresh = false
         lastRecordedVariantObservationSignature = null
+        livePlaybackReadyForCurrentSession = false
         readySideEffectsRequestVersion = null
         playerEngine.setScrubbingMode(false)
         return ++prepareRequestVersion
@@ -1060,6 +1096,7 @@ class PlayerViewModel @Inject constructor(
         )
         playerEngine.setSurfaceMode(preferencesRepository.playerSurfaceMode.first())
         playerEngine.setVodHttpProtocolMode(preferencesRepository.playerVodHttpProtocolMode.first())
+        playerEngine.setFastRetryOnTransientFailures(preferencesRepository.playerFastRetryOnTransientFailures.first())
         playerEngine.setAudioVideoOffsetMs(_audioVideoOffsetUiState.value.effectiveOffsetMs)
     }
 
@@ -1075,12 +1112,18 @@ class PlayerViewModel @Inject constructor(
             providerId = providerId.takeIf { it > 0L }
         ) ?: return false
 
+        if (shouldBypassPreviewHandoffForFireTvLiveHls(session.streamInfo)) {
+            android.util.Log.i(
+                "PlayerVM",
+                "Skipping preview handoff for Fire TV live HLS; fullscreen will prepare a fresh session."
+            )
+            livePreviewHandoffManager.clear(session.engine)
+            session.engine.release()
+            return false
+        }
+
         val adoptedEngine = session.engine
         return runCatching {
-            val shouldRenewAdoptedPreview = shouldRenewAdoptedPreviewOnFullscreen(
-                playbackState = adoptedEngine.playbackState.value,
-                playerStats = adoptedEngine.playerStats.value
-            )
             // Detach the Home preview surface before Player binds its own.
             adoptedEngine.clearRenderBinding()
             // Media3 requires a globally unique session ID. Release the main engine's
@@ -1107,13 +1150,10 @@ class PlayerViewModel @Inject constructor(
                         url = session.streamInfo.url
                     )
                 )
-                if (shouldRenewAdoptedPreview) {
-                    // Re-prime when the preview has not produced video yet. This keeps
-                    // the previous audio-only/stale-surface recovery path without
-                    // rebuffering a preview that is already rendering after the
-                    // PlayerView handoff switches targets in Media3's recommended order.
-                    playerEngine.renewStreamUrl(session.streamInfo)
-                }
+                adoptedEngine.resetLiveHandoffGrace()
+                // Keep the already-playing preview session intact. Re-preparing on the
+                // fullscreen transition can renegotiate the stream and strand HLS live
+                // playback in buffering even though preview was already stable.
                 playerEngine.play()
                 startTokenRenewalMonitoring(session.streamInfo.expirationTime)
                 maybeStartLiveTimeshift(session.streamInfo)
@@ -1127,6 +1167,14 @@ class PlayerViewModel @Inject constructor(
             adoptedEngine.release()
             false
         }
+    }
+
+    private fun shouldBypassPreviewHandoffForFireTvLiveHls(streamInfo: StreamInfo): Boolean {
+        val isAmazonMediaTek = Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
+        val isHls = streamInfo.streamType == StreamType.HLS ||
+            streamInfo.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        return isAmazonMediaTek && isHls
     }
 
     internal suspend fun preparePlayer(
@@ -1193,31 +1241,13 @@ class PlayerViewModel @Inject constructor(
         readySideEffectsRequestVersion = requestVersion
         playerEngine.prepare(preparedStreamInfo)
         startTokenRenewalMonitoring(preparedStreamInfo.expirationTime)
+        maybeStartLiveTimeshift(preparedStreamInfo)
         return true
     }
 
     private suspend fun probePlaybackUrl(streamInfo: com.streamvault.domain.model.StreamInfo): PlaybackProbeFailure? {
         val url = streamInfo.url
-        val providerId = currentProviderId.takeIf { it > 0L } ?: return null
-        val provider = providerRepository.getProvider(providerId) ?: return null
-        if (!shouldProbePlaybackUrl(url, provider)) return null
-        if (shouldSkipPlaybackProbe(provider.type, url)) {
-            Log.i(
-                TAG,
-                "Skipping playback probe provider=${provider.type.name} host=${runCatching { java.net.URI(url).host }.getOrNull().orEmpty()} " +
-                    "path=${runCatching { java.net.URI(url).path }.getOrNull().orEmpty()} reason=connection-sensitive-provider-link"
-            )
-            return null
-        }
-
-        Log.d(
-            TAG,
-            "Playback probe request provider=${provider.type.name} host=${runCatching { java.net.URI(url).host }.getOrNull().orEmpty()} " +
-                "path=${runCatching { java.net.URI(url).path }.getOrNull().orEmpty()} range=true " +
-                "ua=${!streamInfo.userAgent.isNullOrBlank()} referer=${streamInfo.headers.containsKey("Referer")} " +
-                "cookie=${streamInfo.headers.containsKey("Cookie")} auth=${streamInfo.headers.containsKey("Authorization")} " +
-                "xua=${streamInfo.headers.containsKey("X-User-Agent")}"
-        )
+        if (!shouldProbePlaybackUrl(url)) return null
 
         return runCatching {
             withContext(Dispatchers.IO) {
@@ -1239,11 +1269,10 @@ class PlayerViewModel @Inject constructor(
         }.getOrNull()
     }
 
-    private fun shouldProbePlaybackUrl(
-        url: String,
-        provider: com.streamvault.domain.model.Provider
-    ): Boolean {
+    private suspend fun shouldProbePlaybackUrl(url: String): Boolean {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+        val providerId = currentProviderId.takeIf { it > 0L } ?: return false
+        val provider = providerRepository.getProvider(providerId) ?: return false
         val cacheKey = resolvePlaybackProbeCacheKey(
             currentStreamUrl = currentStreamUrl,
             url = url
@@ -1384,8 +1413,6 @@ class PlayerViewModel @Inject constructor(
                         }
                     }
                 }
-
-                maybeStartLiveTimeshift(streamInfo)
             }
         }
         
@@ -1588,11 +1615,6 @@ class PlayerViewModel @Inject constructor(
             xtreamStreamUrlResolver = xtreamStreamUrlResolver
         )
         resolution.credentialFailureMessage?.let { message ->
-            setLastFailureReason(message)
-            showPlayerNotice(message = message, recoveryType = PlayerRecoveryType.SOURCE)
-            return null
-        }
-        resolution.resolutionFailureMessage?.let { message ->
             setLastFailureReason(message)
             showPlayerNotice(message = message, recoveryType = PlayerRecoveryType.SOURCE)
             return null

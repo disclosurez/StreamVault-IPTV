@@ -74,6 +74,7 @@ interface PlayerEngine {
     fun setSurfaceMode(mode: PlayerSurfaceMode)
     fun setVodHttpProtocolMode(mode: VodHttpProtocolMode)
     fun setMediaSessionEnabled(enabled: Boolean)
+    fun setFastRetryOnTransientFailures(enabled: Boolean)
     fun setVolume(volume: Float)
     fun setMuted(muted: Boolean)
     fun setPlaybackSpeed(speed: Float)
@@ -126,6 +127,7 @@ interface PlayerEngine {
     fun bindRenderView(renderView: View, resizeMode: PlayerSurfaceResizeMode)
     fun clearRenderBinding()
     fun releaseRenderView(renderView: View)
+    fun resetLiveHandoffGrace() {}
 }
 
 data class PlayerRetryStatus(
