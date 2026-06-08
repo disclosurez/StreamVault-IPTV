@@ -114,9 +114,9 @@ class MainActivity : ComponentActivity() {
         handleExternalIntent(intent)
         if (isTelevisionDevice()) {
             lifecycleScope.launch {
-                watchNextManager.refreshWatchNext()
-                launcherRecommendationsManager.refreshRecommendations()
-                tvInputChannelSyncManager.refreshTvInputCatalog()
+                runCatching { watchNextManager.refreshWatchNext() }
+                runCatching { launcherRecommendationsManager.refreshRecommendations() }
+                runCatching { tvInputChannelSyncManager.refreshTvInputCatalog() }
             }
         }
         setContent {

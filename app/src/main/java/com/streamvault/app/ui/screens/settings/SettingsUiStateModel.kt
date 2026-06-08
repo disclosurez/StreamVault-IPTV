@@ -3,6 +3,7 @@ package com.streamvault.app.ui.screens.settings
 import com.streamvault.app.ui.model.LiveTvChannelMode
 import com.streamvault.app.ui.model.LiveTvQuickFilterVisibilityMode
 import com.streamvault.app.ui.model.VodViewMode
+import com.streamvault.app.download.OfflineDownloadItem
 import com.streamvault.domain.manager.BackupImportPlan
 import com.streamvault.domain.manager.BackupPreview
 import com.streamvault.domain.manager.DriveAuthState
@@ -60,6 +61,7 @@ data class SettingsUiState(
     val appTimeFormat: AppTimeFormat = AppTimeFormat.SYSTEM,
     val preferredAudioLanguage: String = "auto",
     val playerMediaSessionEnabled: Boolean = true,
+    val playerFastRetryOnTransientFailures: Boolean = false,
     val playerDecoderMode: DecoderMode = DecoderMode.AUTO,
     val playerAudioOutputPreference: AudioOutputPreference = AudioOutputPreference.AUTO,
     val playerCompatibilityMemoryEnabled: Boolean = true,
@@ -104,6 +106,8 @@ data class SettingsUiState(
     val wifiOnlyRecording: Boolean = false,
     val recordingPaddingBeforeMinutes: Int = 0,
     val recordingPaddingAfterMinutes: Int = 0,
+    val offlineDownloads: List<OfflineDownloadItem> = emptyList(),
+    val selectedOfflineDownloadIds: Set<Long> = emptySet(),
     val isIncognitoMode: Boolean = false,
     val useXtreamTextClassification: Boolean = true,
     val xtreamBase64TextCompatibility: Boolean = false,

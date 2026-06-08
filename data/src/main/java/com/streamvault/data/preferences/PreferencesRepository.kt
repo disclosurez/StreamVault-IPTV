@@ -104,6 +104,8 @@ class PreferencesRepository @Inject constructor(
         val LIVE_VARIANT_OBSERVATIONS = stringPreferencesKey("live_variant_observations")
         val VOD_VIEW_MODE = stringPreferencesKey("vod_view_mode")
         val VOD_INFINITE_SCROLL = booleanPreferencesKey("vod_infinite_scroll")
+        val VOD_TOP_RATED_VISIBLE_MOVIE = booleanPreferencesKey("vod_top_rated_visible_movie")
+        val VOD_TOP_RATED_VISIBLE_SERIES = booleanPreferencesKey("vod_top_rated_visible_series")
         val GUIDE_DENSITY = stringPreferencesKey("guide_density")
         val GUIDE_CHANNEL_MODE = stringPreferencesKey("guide_channel_mode")
         val GUIDE_DEFAULT_CATEGORY_ID = longPreferencesKey("guide_default_category_id")
@@ -118,6 +120,8 @@ class PreferencesRepository @Inject constructor(
         val IS_INCOGNITO_MODE = booleanPreferencesKey("is_incognito_mode")
         val PLAYER_MUTED = booleanPreferencesKey("player_muted")
         val PLAYER_MEDIA_SESSION_ENABLED = booleanPreferencesKey("player_media_session_enabled")
+        val PLAYER_FAST_RETRY_ON_TRANSIENT_FAILURES =
+            booleanPreferencesKey("player_fast_retry_on_transient_failures")
         val PLAYER_DECODER_MODE = stringPreferencesKey("player_decoder_mode")
         val PLAYER_VOD_HTTP_PROTOCOL_MODE = stringPreferencesKey("player_vod_http_protocol_mode")
         val LEGACY_PLAYER_MOVIE_HTTP_PROTOCOL_MODE = stringPreferencesKey("player_movie_http_protocol_mode")
@@ -266,6 +270,10 @@ class PreferencesRepository @Inject constructor(
 
     val playerMediaSessionEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[PreferencesKeys.PLAYER_MEDIA_SESSION_ENABLED] ?: true
+    }
+
+    val playerFastRetryOnTransientFailures: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.PLAYER_FAST_RETRY_ON_TRANSIENT_FAILURES] ?: false
     }
 
     val playerDecoderMode: Flow<DecoderMode> = context.dataStore.data.map { preferences ->
@@ -779,6 +787,12 @@ class PreferencesRepository @Inject constructor(
     suspend fun setPlayerMediaSessionEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.PLAYER_MEDIA_SESSION_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setPlayerFastRetryOnTransientFailures(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PLAYER_FAST_RETRY_ON_TRANSIENT_FAILURES] = enabled
         }
     }
 
@@ -1339,6 +1353,28 @@ class PreferencesRepository @Inject constructor(
     suspend fun setVodInfiniteScroll(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.VOD_INFINITE_SCROLL] = enabled
+        }
+    }
+
+    fun getTopRatedLensVisible(type: ContentType): Flow<Boolean> {
+        val key = when (type) {
+            ContentType.MOVIE -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_MOVIE
+            ContentType.SERIES -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_SERIES
+            else -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_MOVIE
+        }
+        return context.dataStore.data.map { preferences ->
+            preferences[key] ?: true
+        }
+    }
+
+    suspend fun setTopRatedLensVisible(type: ContentType, visible: Boolean) {
+        val key = when (type) {
+            ContentType.MOVIE -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_MOVIE
+            ContentType.SERIES -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_SERIES
+            else -> PreferencesKeys.VOD_TOP_RATED_VISIBLE_MOVIE
+        }
+        context.dataStore.edit { preferences ->
+            preferences[key] = visible
         }
     }
 
