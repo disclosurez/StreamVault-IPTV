@@ -95,12 +95,14 @@ fun ChannelInfoOverlay(
     subtitleTrackCount: Int = 0,
     audioTrackCount: Int = 0,
     videoQualityCount: Int = 0,
+    streamFormatCount: Int = 0,
     channelVariantCount: Int = 0,
     isMuted: Boolean = false,
     onToggleMute: () -> Unit = {},
     onOpenSubtitleTracks: () -> Unit = {},
     onOpenAudioTracks: () -> Unit = {},
     onOpenVideoTracks: () -> Unit = {},
+    onOpenStreamFormats: () -> Unit = {},
     onOpenVariants: () -> Unit = {},
     onOpenAudioVideoSync: () -> Unit = {},
     audioVideoSyncEnabled: Boolean = false,
@@ -436,6 +438,16 @@ fun ChannelInfoOverlay(
                             icon = stringResource(R.string.player_action_quality),
                             label = stringResource(R.string.player_quality_short),
                             onClick = onOpenVideoTracks,
+                            onInteraction = { handleMainActionFocus(null) }
+                        )
+                    }
+                }
+                if (streamFormatCount > 1) {
+                    item {
+                        QuickActionButton(
+                            icon = stringResource(R.string.player_action_format),
+                            label = stringResource(R.string.player_stream_format_short),
+                            onClick = onOpenStreamFormats,
                             onInteraction = { handleMainActionFocus(null) }
                         )
                     }

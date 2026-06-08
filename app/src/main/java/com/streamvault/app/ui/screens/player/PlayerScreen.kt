@@ -82,6 +82,7 @@ import com.streamvault.app.ui.design.requestFocusSafely
 import com.streamvault.app.ui.notifications.rememberNotificationPermissionGate
 import com.streamvault.app.ui.screens.player.overlay.ChannelInfoOverlay
 import com.streamvault.app.ui.screens.player.overlay.ChannelVariantSelectionDialog
+import com.streamvault.app.ui.screens.player.overlay.ChannelQualityOptionSelectionDialog
 import com.streamvault.app.ui.screens.player.overlay.CategoryListOverlay
 import com.streamvault.app.ui.screens.player.overlay.ChannelListOverlay
 import com.streamvault.app.ui.screens.player.overlay.DiagnosticsOverlay
@@ -219,6 +220,7 @@ fun PlayerScreen(
 
     var showTrackSelection by remember { mutableStateOf<TrackType?>(null) }
     var showVariantSelection by remember { mutableStateOf(false) }
+    var showStreamFormatSelection by remember { mutableStateOf(false) }
     var showSpeedSelection by remember { mutableStateOf(false) }
     var showAudioVideoOffsetDialog by remember { mutableStateOf(false) }
     var showStopPlaybackTimerDialog by remember { mutableStateOf(false) }
@@ -321,7 +323,7 @@ fun PlayerScreen(
     // Consolidated focus management for all overlays
     val liveOverlayVisible = contentType == "LIVE" && (showChannelListOverlay || showCategoryListOverlay || showEpgOverlay || showChannelInfoOverlay)
     val nextEpisodeCountdownVisible = !isInPictureInPictureMode && autoPlayCountdown != null
-    val anyOverlayVisible = liveOverlayVisible || nextEpisodeCountdownVisible || showTrackSelection != null || showVariantSelection || showSpeedSelection || showAudioVideoOffsetDialog || showStopPlaybackTimerDialog || showIdleStandbyTimerDialog || showProgramHistory || showSplitDialog || showEpisodePicker || showDiagnostics
+    val anyOverlayVisible = liveOverlayVisible || nextEpisodeCountdownVisible || showTrackSelection != null || showVariantSelection || showStreamFormatSelection || showSpeedSelection || showAudioVideoOffsetDialog || showStopPlaybackTimerDialog || showIdleStandbyTimerDialog || showProgramHistory || showSplitDialog || showEpisodePicker || showDiagnostics
 
     LaunchedEffect(contentType, showCategoryListOverlay, showChannelListOverlay, showEpgOverlay, showChannelInfoOverlay) {
         if (contentType == "LIVE" && (showCategoryListOverlay || showChannelListOverlay || showEpgOverlay || showChannelInfoOverlay)) {
@@ -992,6 +994,7 @@ fun PlayerScreen(
             subtitleTrackCount = availableSubtitleTracks.size,
             audioTrackCount = availableAudioTracks.size,
             videoQualityCount = availableVideoQualities.size,
+            streamFormatCount = currentChannel?.qualityOptions?.size ?: 0,
             currentRecordingStatus = currentChannelRecording?.status,
             isMuted = isMuted,
             playbackSpeed = playbackSpeed,
@@ -1032,6 +1035,7 @@ fun PlayerScreen(
             onOpenSubtitleTracks = { showTrackSelection = TrackType.TEXT },
             onOpenAudioTracks = { showTrackSelection = TrackType.AUDIO },
             onOpenVideoTracks = { showTrackSelection = TrackType.VIDEO },
+            onOpenStreamFormats = { showStreamFormatSelection = true },
             onOpenPlaybackSpeed = { showSpeedSelection = true },
             onOpenStopPlaybackTimer = { showStopPlaybackTimerDialog = true },
             onOpenIdleStandbyTimer = { showIdleStandbyTimerDialog = true },
@@ -1130,6 +1134,13 @@ fun PlayerScreen(
                 onSelectAudio = viewModel::selectAudioTrack,
                 onSelectVideo = viewModel::selectVideoQuality,
                 onSelectSubtitle = viewModel::selectSubtitleTrack
+            )
+            ChannelQualityOptionSelectionDialog(
+                visible = showStreamFormatSelection,
+                channel = currentChannel,
+                selectedUrl = currentChannel?.streamUrl,
+                onDismiss = { showStreamFormatSelection = false },
+                onSelectQualityOption = viewModel::selectStreamFormat
             )
             ChannelVariantSelectionDialog(
                 visible = showVariantSelection,
@@ -1343,12 +1354,14 @@ fun PlayerScreen(
                     subtitleTrackCount = availableSubtitleTracks.size,
                     audioTrackCount = availableAudioTracks.size,
                     videoQualityCount = availableVideoQualities.size,
+                    streamFormatCount = currentChannel?.qualityOptions?.size ?: 0,
                     channelVariantCount = currentChannel?.variants?.size ?: 0,
                     isMuted = isMuted,
                     onToggleMute = viewModel::toggleMute,
                     onOpenSubtitleTracks = { showTrackSelection = TrackType.TEXT },
                     onOpenAudioTracks = { showTrackSelection = TrackType.AUDIO },
                     onOpenVideoTracks = { showTrackSelection = TrackType.VIDEO },
+                    onOpenStreamFormats = { showStreamFormatSelection = true },
                     onOpenVariants = { showVariantSelection = true },
                     onOpenAudioVideoSync = { showAudioVideoOffsetDialog = true },
                     audioVideoSyncEnabled = audioVideoSyncEnabled,
@@ -1400,6 +1413,7 @@ private fun PlayerControlsOverlayHost(
     subtitleTrackCount: Int,
     audioTrackCount: Int,
     videoQualityCount: Int,
+    streamFormatCount: Int,
     currentRecordingStatus: com.streamvault.domain.model.RecordingStatus?,
     isMuted: Boolean,
     playbackSpeed: Float,
@@ -1424,6 +1438,7 @@ private fun PlayerControlsOverlayHost(
     onOpenSubtitleTracks: () -> Unit,
     onOpenAudioTracks: () -> Unit,
     onOpenVideoTracks: () -> Unit,
+    onOpenStreamFormats: () -> Unit,
     onOpenPlaybackSpeed: () -> Unit,
     onOpenStopPlaybackTimer: () -> Unit,
     onOpenIdleStandbyTimer: () -> Unit,
@@ -1444,8 +1459,20 @@ private fun PlayerControlsOverlayHost(
     onSeekPreviewPositionChanged: (Long?) -> Unit,
     onUserInteraction: () -> Unit
 ) {
-    val currentPosition by playerEngine.currentPosition.collectAsStateWithLifecycle()
-    val duration by playerEngine.duration.collectAsStateWithLifecycle()
+    val currentPosition by produceState(initialValue = playerEngine.currentPosition.value, visible, playerEngine) {
+        if (visible) {
+            playerEngine.currentPosition.collect { value = it }
+        } else {
+            value = playerEngine.currentPosition.value
+        }
+    }
+    val duration by produceState(initialValue = playerEngine.duration.value, visible, playerEngine) {
+        if (visible) {
+            playerEngine.duration.collect { value = it }
+        } else {
+            value = playerEngine.duration.value
+        }
+    }
 
     PlayerControlsOverlay(
         visible = visible,
@@ -1462,6 +1489,7 @@ private fun PlayerControlsOverlayHost(
         subtitleTrackCount = subtitleTrackCount,
         audioTrackCount = audioTrackCount,
         videoQualityCount = videoQualityCount,
+        streamFormatCount = streamFormatCount,
         currentRecordingStatus = currentRecordingStatus,
         isMuted = isMuted,
         playbackSpeed = playbackSpeed,
@@ -1486,6 +1514,7 @@ private fun PlayerControlsOverlayHost(
         onOpenSubtitleTracks = onOpenSubtitleTracks,
         onOpenAudioTracks = onOpenAudioTracks,
         onOpenVideoTracks = onOpenVideoTracks,
+        onOpenStreamFormats = onOpenStreamFormats,
         onOpenPlaybackSpeed = onOpenPlaybackSpeed,
         onOpenStopPlaybackTimer = onOpenStopPlaybackTimer,
         onOpenIdleStandbyTimer = onOpenIdleStandbyTimer,

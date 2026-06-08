@@ -79,6 +79,7 @@ import com.streamvault.app.ui.theme.SurfaceHighlight
 import com.streamvault.app.ui.theme.PrimaryLight
 import com.streamvault.app.ui.theme.TextSecondary
 import com.streamvault.domain.model.Channel
+import com.streamvault.domain.model.ChannelQualityOption
 import com.streamvault.domain.model.Episode
 import com.streamvault.domain.model.LiveChannelVariant
 import com.streamvault.domain.model.Season
@@ -420,6 +421,93 @@ fun ChannelVariantSelectionDialog(
                                 onDismiss()
                             },
                             modifier = if (variant.rawChannelId == initiallyFocusedVariantId) {
+                                Modifier.focusRequester(firstItemFocusRequester)
+                            } else {
+                                Modifier
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelQualityOptionSelectionDialog(
+    visible: Boolean,
+    channel: Channel?,
+    selectedUrl: String?,
+    onDismiss: () -> Unit,
+    onSelectQualityOption: (String) -> Unit
+) {
+    val options = channel?.qualityOptions.orEmpty()
+    if (!visible || channel == null || options.size <= 1) return
+
+    val firstItemFocusRequester = remember(channel.logicalGroupId, selectedUrl) { FocusRequester() }
+    val initiallyFocusedOptionUrl = options.firstOrNull { it.url == selectedUrl }?.url
+        ?: options.firstOrNull()?.url
+
+    LaunchedEffect(visible, channel.logicalGroupId, selectedUrl) {
+        firstItemFocusRequester.requestFocusSafely(
+            tag = "ChannelQualityOptionSelectionDialog",
+            target = "Selected stream format option"
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.8f))
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 360.dp, max = 520.dp)
+                    .background(SurfaceElevated, RoundedCornerShape(12.dp))
+                    .padding(24.dp)
+                    .onPreviewKeyEvent { event ->
+                        if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                        when (event.nativeKeyEvent.keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP,
+                            KeyEvent.KEYCODE_DPAD_DOWN,
+                            KeyEvent.KEYCODE_DPAD_LEFT,
+                            KeyEvent.KEYCODE_DPAD_RIGHT,
+                            KeyEvent.KEYCODE_DPAD_CENTER,
+                            KeyEvent.KEYCODE_ENTER,
+                            KeyEvent.KEYCODE_NUMPAD_ENTER,
+                            KeyEvent.KEYCODE_BACK -> false
+                            else -> true
+                        }
+                    }
+            ) {
+                Text(
+                    text = stringResource(R.string.player_stream_format),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
+                Text(
+                    text = channel.canonicalName.ifBlank { channel.name },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OnSurfaceDim,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 16.dp)
+                )
+
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(options, key = { _, option -> option.url ?: "${option.height}:${option.label}" }) { _, option ->
+                        TrackSelectionItem(
+                            name = buildQualityOptionSelectionLabel(option),
+                            isSelected = option.url != null && option.url == selectedUrl,
+                            onClick = {
+                                option.url?.let(onSelectQualityOption)
+                                onDismiss()
+                            },
+                            modifier = if (option.url == initiallyFocusedOptionUrl) {
                                 Modifier.focusRequester(firstItemFocusRequester)
                             } else {
                                 Modifier
@@ -1226,6 +1314,12 @@ private fun buildVariantSelectionLabel(variant: LiveChannelVariant): String {
             append(metaParts.joinToString(" • "))
         }
     }
+}
+
+private fun buildQualityOptionSelectionLabel(option: ChannelQualityOption): String {
+    val label = option.label.trim()
+    if (label.isNotBlank()) return label
+    return option.height?.takeIf { it > 0 }?.let { "${it}p" } ?: option.url.orEmpty()
 }
 
 @Composable
