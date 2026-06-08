@@ -92,12 +92,14 @@ class WelcomeViewModel @Inject constructor(
     }
 
     private suspend fun maybeSeedDevProvider() {
-        if (providerRepository.getProviders().first().isNotEmpty()) return
-
         val xtreamServer = BuildConfig.XTREAM_DEV_SERVER
         val xtreamUser = BuildConfig.XTREAM_DEV_USERNAME
         val xtreamPass = BuildConfig.XTREAM_DEV_PASSWORD
         if (xtreamServer.isNotBlank() && xtreamUser.isNotBlank() && xtreamPass.isNotBlank()) {
+            val alreadySeeded = providerRepository.getProviders().first().any { provider ->
+                provider.serverUrl == xtreamServer && provider.username == xtreamUser
+            }
+            if (alreadySeeded) return
             validateAndAddProvider.loginXtream(
                 XtreamProviderSetupCommand(
                     serverUrl = xtreamServer,

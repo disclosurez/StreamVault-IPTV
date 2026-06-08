@@ -53,6 +53,49 @@ class ProviderSetupInputValidatorImplTest {
 
     // ── Stalker semantic validation ──────────────────────────────────────────
 
+    @Test
+    fun `validateXtream accepts bare hosts and resolves https scheme`() {
+        val result = validator.validateXtream(
+            serverUrl = "ip.dreamworkz.net",
+            username = "alice",
+            password = "secret",
+            allowBlankPassword = false,
+            name = "Premium"
+        )
+
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+        assertThat((result as Result.Success).data.serverUrl).isEqualTo("https://ip.dreamworkz.net")
+    }
+
+    @Test
+    fun `validateM3u accepts bare hosts and resolves https scheme`() {
+        val result = validator.validateM3u(
+            url = "playlist.example.com/list.m3u",
+            name = "Playlist"
+        )
+
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+        assertThat((result as Result.Success).data.url).isEqualTo("https://playlist.example.com/list.m3u")
+    }
+
+    @Test
+    fun `validateStalker accepts bare hosts and resolves https scheme`() {
+        val result = validator.validateStalker(
+            portalUrl = "portal.example.com/stalker_portal/c/",
+            macAddress = "00:1A:79:12:34:56",
+            name = "MAG",
+            authMode = StalkerAuthMode.AUTO,
+            username = "",
+            password = "",
+            deviceProfile = "",
+            timezone = "",
+            locale = ""
+        )
+
+        assertThat(result).isInstanceOf(Result.Success::class.java)
+        assertThat((result as Result.Success).data.portalUrl).isEqualTo("https://portal.example.com/stalker_portal/c/")
+    }
+
     private fun stalkerResult(
         timezone: String = "UTC",
         locale: String = "en",

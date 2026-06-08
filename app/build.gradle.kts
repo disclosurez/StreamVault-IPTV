@@ -13,9 +13,14 @@ plugins {
     alias(libs.plugins.kover)
 }
 
+val requestedTaskNames = gradle.startParameter.taskNames.map { it.lowercase() }
+val releaseBuildRequested = requestedTaskNames.any { taskName ->
+    taskName.contains("release") || taskName.contains("beta")
+}
+
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties()
-if (keystorePropertiesFile.exists()) {
+if (releaseBuildRequested && keystorePropertiesFile.exists()) {
     FileInputStream(keystorePropertiesFile).use(keystoreProperties::load)
 }
 
@@ -28,7 +33,7 @@ if (localPropertiesFile.exists()) {
 fun localProp(key: String): String = localProperties.getProperty(key, "")
 
 fun computeOfficialSigningCertSha256(): String {
-    if (!keystorePropertiesFile.exists()) return ""
+    if (!releaseBuildRequested || !keystorePropertiesFile.exists()) return ""
 
     val storePath = keystoreProperties.getProperty("storeFile") ?: return ""
     val storePassword = keystoreProperties.getProperty("storePassword") ?: return ""
@@ -80,7 +85,7 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (releaseBuildRequested && keystorePropertiesFile.exists()) {
             create("release") {
                 storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
@@ -109,19 +114,22 @@ android {
             // Keep beta close to release behavior but faster for CI/test distribution.
             isMinifyEnabled = false
             isShrinkResources = false
-            if (keystorePropertiesFile.exists()) {
+            if (releaseBuildRequested && keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
             matchingFallbacks += listOf("release")
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Keep release builds quick and reliable in this workspace.
+            // Signing still happens; we just skip the shrink/minify chain that is
+            // slow and configuration-cache unfriendly here.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (keystorePropertiesFile.exists()) {
+            if (releaseBuildRequested && keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

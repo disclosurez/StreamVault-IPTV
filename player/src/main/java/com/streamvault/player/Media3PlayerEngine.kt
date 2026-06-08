@@ -1522,7 +1522,7 @@ class Media3PlayerEngine @Inject constructor(
 
     private fun updateRenderSurfaceForMode() {
         val surfaceMode = when {
-            shouldForceSurfaceViewForFireTvLiveHls() -> PlayerSurfaceMode.SURFACE_VIEW
+            shouldForceSurfaceViewForLiveHls() -> PlayerSurfaceMode.SURFACE_VIEW
             else -> sessionSurfaceModeOverride
             ?: when {
                 requestedSurfaceMode == PlayerSurfaceMode.TEXTURE_VIEW &&
@@ -1550,11 +1550,8 @@ class Media3PlayerEngine @Inject constructor(
             Build.VERSION.SDK_INT <= FIRE_TV_MEDIATEK_TEXTURE_VIEW_MAX_SDK
     }
 
-    private fun shouldForceSurfaceViewForFireTvLiveHls(): Boolean {
-        return Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
-            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true) &&
-            currentResolvedStreamType == ResolvedStreamType.HLS
-    }
+    private fun shouldForceSurfaceViewForLiveHls(): Boolean =
+        currentResolvedStreamType == ResolvedStreamType.HLS
 
     private fun refreshKnownBadCompatibilityRecords() {
         if (!shouldUseCompatibilityHistory()) {

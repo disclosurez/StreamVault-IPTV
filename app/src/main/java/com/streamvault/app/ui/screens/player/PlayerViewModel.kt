@@ -1,6 +1,5 @@
 package com.streamvault.app.ui.screens.player
 
-import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -17,6 +16,7 @@ import com.streamvault.app.tv.WatchNextManager
 import com.streamvault.data.remote.stalker.StalkerUrlFactory
 import com.streamvault.data.remote.xtream.XtreamStreamUrlResolver
 import com.streamvault.data.security.CredentialDecryptionException
+import com.streamvault.data.sync.SyncManager
 import com.streamvault.domain.manager.RecordingManager
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.ChannelNumberingMode
@@ -90,6 +90,7 @@ class PlayerViewModel @Inject constructor(
     internal val favoriteRepository: com.streamvault.domain.repository.FavoriteRepository,
     internal val playbackHistoryRepository: PlaybackHistoryRepository,
     internal val providerRepository: com.streamvault.domain.repository.ProviderRepository,
+    internal val syncManager: SyncManager,
     internal val combinedM3uRepository: CombinedM3uRepository,
     internal val preferencesRepository: com.streamvault.data.preferences.PreferencesRepository,
     internal val getCustomCategories: GetCustomCategories,
@@ -242,6 +243,7 @@ class PlayerViewModel @Inject constructor(
     internal val livePreloadCooldownProviderIds = mutableSetOf<Long>()
     internal var hasRetriedWithSoftwareDecoder = false
     internal var hasRetriedXtreamAuthRefresh = false
+    internal var activeStalkerPlaybackProviderId: Long? = null
     internal val probePassedPlaybackKeys = mutableSetOf<String>()
     private val notifiedRecordingFailureIds = mutableSetOf<String>()
     internal var lastRecordedLivePlaybackKey: Pair<Long, Long>? = null
@@ -342,6 +344,8 @@ class PlayerViewModel @Inject constructor(
     private var defaultIdleStandbyTimerMinutes: Int = 0
     internal var playbackTimerDefaultsApplied = false
     internal var sleepTimerExitEmitted = false
+    internal var lastPlaybackProgressPersistAtMs: Long = 0L
+    internal var lastPlaybackProgressPersistPositionMs: Long = -1L
 
     val castConnectionState: StateFlow<CastConnectionState> = castManager.connectionState
 
@@ -1112,10 +1116,10 @@ class PlayerViewModel @Inject constructor(
             providerId = providerId.takeIf { it > 0L }
         ) ?: return false
 
-        if (shouldBypassPreviewHandoffForFireTvLiveHls(session.streamInfo)) {
+        if (shouldBypassPreviewHandoffForLiveHls(session.streamInfo)) {
             android.util.Log.i(
                 "PlayerVM",
-                "Skipping preview handoff for Fire TV live HLS; fullscreen will prepare a fresh session."
+                "Skipping preview handoff for live HLS; fullscreen will prepare a fresh session."
             )
             livePreviewHandoffManager.clear(session.engine)
             session.engine.release()
@@ -1169,12 +1173,9 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun shouldBypassPreviewHandoffForFireTvLiveHls(streamInfo: StreamInfo): Boolean {
-        val isAmazonMediaTek = Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
-            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
-        val isHls = streamInfo.streamType == StreamType.HLS ||
+    private fun shouldBypassPreviewHandoffForLiveHls(streamInfo: StreamInfo): Boolean {
+        return streamInfo.streamType == StreamType.HLS ||
             streamInfo.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-        return isAmazonMediaTek && isHls
     }
 
     internal suspend fun preparePlayer(

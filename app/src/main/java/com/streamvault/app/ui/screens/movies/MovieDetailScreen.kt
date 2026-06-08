@@ -50,6 +50,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.R
+import com.streamvault.app.device.isFireTvDevice
 import com.streamvault.app.device.rememberIsTelevisionDevice
 import com.streamvault.app.ui.components.rememberCrossfadeImageModel
 import com.streamvault.app.util.formatPositionMs
@@ -499,30 +500,32 @@ private fun MovieDetailHeroText(
                     Text(stringResource(R.string.movie_detail_trailer))
                 }
             }
-            TvButton(
-                onClick = onDownload,
-                enabled = !isDownloadQueued && (downloadStatus == null || downloadStatus == OfflineDownloadStatus.PAUSED),
-                colors = ButtonDefaults.colors(
-                    containerColor = AppColors.SurfaceEmphasis,
-                    contentColor = AppColors.TextPrimary,
-                    disabledContainerColor = AppColors.SurfaceElevated,
-                    disabledContentColor = AppColors.TextTertiary
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Download,
-                    contentDescription = null
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (isDownloadQueued) {
-                        stringResource(R.string.vod_download_preparing)
-                    } else if (downloadStatus != null) {
-                        downloadStatus.buttonLabel(downloadItem)
-                    } else {
-                        stringResource(R.string.vod_download)
-                    }
-                )
+            if (!LocalContext.current.isFireTvDevice()) {
+                TvButton(
+                    onClick = onDownload,
+                    enabled = !isDownloadQueued && (downloadStatus == null || downloadStatus == OfflineDownloadStatus.PAUSED),
+                    colors = ButtonDefaults.colors(
+                        containerColor = AppColors.SurfaceEmphasis,
+                        contentColor = AppColors.TextPrimary,
+                        disabledContainerColor = AppColors.SurfaceElevated,
+                        disabledContentColor = AppColors.TextTertiary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Download,
+                        contentDescription = null
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isDownloadQueued) {
+                            stringResource(R.string.vod_download_preparing)
+                        } else if (downloadStatus != null) {
+                            downloadStatus.buttonLabel(downloadItem)
+                        } else {
+                            stringResource(R.string.vod_download)
+                        }
+                    )
+                }
             }
             TvIconButton(
                 onClick = onToggleFavorite,

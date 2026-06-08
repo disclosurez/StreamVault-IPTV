@@ -1068,10 +1068,13 @@
     <string name="player_recording_scheduled_badge">Scheduled</string>
     <string name="player_subs">Subs</string>
     <string name="player_audio">Audio</string>
+    <string name="player_stream_format">Stream Format</string>
+    <string name="player_stream_format_short">Format</string>
     <string name="player_action_mute">Mute</string>
     <string name="player_action_cast">Cast</string>
     <string name="player_action_pip">PiP</string>
     <string name="player_action_quality">Quality</string>
+    <string name="player_action_format">Format</string>
     <string name="player_mute">Mute</string>
     <string name="player_muted_badge">Muted</string>
     <string name="player_cast">Cast</string>

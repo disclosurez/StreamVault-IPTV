@@ -31,8 +31,26 @@ fun Context.isTelevisionDevice(): Boolean {
     return !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN) && screenWidthDp >= 900
 }
 
+fun Context.isFireTvDevice(): Boolean {
+    val packageManager = packageManager
+    if (packageManager.hasSystemFeature("amazon.hardware.fire_tv")) {
+        return true
+    }
+
+    val manufacturer = android.os.Build.MANUFACTURER.orEmpty()
+    val model = android.os.Build.MODEL.orEmpty()
+    return manufacturer.equals("Amazon", ignoreCase = true) ||
+        model.contains("AFT", ignoreCase = true)
+}
+
 @Composable
 fun rememberIsTelevisionDevice(): Boolean {
     val context = LocalContext.current
     return remember(context) { context.isTelevisionDevice() }
+}
+
+@Composable
+fun rememberIsFireTvDevice(): Boolean {
+    val context = LocalContext.current
+    return remember(context) { context.isFireTvDevice() }
 }

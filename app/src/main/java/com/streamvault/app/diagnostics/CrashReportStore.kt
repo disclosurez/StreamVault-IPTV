@@ -40,7 +40,7 @@ object CrashReportStore {
         if (!installed.compareAndSet(false, true)) return
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            if (writingCrash.compareAndSet(false, true)) {
+            if (!throwable.isOutOfMemoryError() && writingCrash.compareAndSet(false, true)) {
                 runCatching {
                     latestReportFile(application).writeText(
                         buildReport(application, thread, throwable),
@@ -168,4 +168,13 @@ object CrashReportStore {
             .firstOrNull { it.startsWith("$field: ") }
             ?.substringAfter(": ")
             ?.takeIf { it.isNotBlank() }
+
+    private fun Throwable.isOutOfMemoryError(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is OutOfMemoryError) return true
+            current = current.cause
+        }
+        return false
+    }
 }
