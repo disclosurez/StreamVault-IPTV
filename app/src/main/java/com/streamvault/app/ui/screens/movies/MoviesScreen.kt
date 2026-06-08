@@ -63,6 +63,7 @@ import com.streamvault.app.ui.components.ReorderTopBar
 import com.streamvault.app.ui.components.dialogs.DeleteGroupDialog
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import com.streamvault.app.ui.components.shell.BrowseSearchLaunchCard
@@ -111,6 +112,7 @@ fun MoviesScreen(
     var pinError by remember { mutableStateOf<String?>(null) }
     var pendingMovie by remember { mutableStateOf<Movie?>(null) }
     var pendingCategory by remember { mutableStateOf<Category?>(null) }
+    var showClearContinueWatchingDialog by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     HandleVodUserMessage(
@@ -242,6 +244,7 @@ fun MoviesScreen(
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.LIBRARY)
                     viewModel.selectFullLibraryBrowse()
                 },
+                onClearContinueWatching = { showClearContinueWatchingDialog = true },
                 onOpenTopRated = {
                     viewModel.setSelectedLibraryFilterType(LibraryFilterType.TOP_RATED)
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
@@ -324,6 +327,29 @@ fun MoviesScreen(
             onConfirmDelete = { viewModel.confirmDeleteGroup() }
         )
     }
+
+    if (showClearContinueWatchingDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearContinueWatchingDialog = false },
+            title = { Text(text = stringResource(R.string.continue_watching_clear_dialog_title)) },
+            text = { Text(text = stringResource(R.string.continue_watching_clear_dialog_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showClearContinueWatchingDialog = false
+                        viewModel.clearContinueWatching()
+                    }
+                ) {
+                    Text(text = stringResource(R.string.continue_watching_clear_confirm), color = Primary)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showClearContinueWatchingDialog = false }) {
+                    Text(text = stringResource(R.string.settings_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -344,6 +370,7 @@ private fun MoviesVodContent(
     onSelectCategory: (String?) -> Unit,
     onSelectFullLibraryBrowse: () -> Unit,
     onOpenContinueWatching: () -> Unit,
+    onClearContinueWatching: () -> Unit,
     onOpenTopRated: () -> Unit,
     onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -615,7 +642,8 @@ private fun MoviesVodContent(
             item(key = "continue_watching") {
                 ContinueWatchingRow(
                         items = continueWatching,
-                        onItemClick = onContinueWatchingPlay
+                        onItemClick = onContinueWatchingPlay,
+                        onClearClick = onClearContinueWatching
                     )
             }
             }

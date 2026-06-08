@@ -61,6 +61,7 @@ import com.streamvault.app.R
 import androidx.compose.foundation.border
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import com.streamvault.app.ui.components.ReorderTopBar
@@ -110,6 +111,7 @@ fun SeriesScreen(
     var pinError by remember { mutableStateOf<String?>(null) }
     var pendingSeriesId by remember { mutableStateOf<Long?>(null) }
     var pendingCategory by remember { mutableStateOf<Category?>(null) }
+    var showClearContinueWatchingDialog by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     HandleVodUserMessage(
@@ -240,6 +242,7 @@ fun SeriesScreen(
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.LIBRARY)
                     viewModel.selectFullLibraryBrowse()
                 },
+                onClearContinueWatching = { showClearContinueWatchingDialog = true },
                 onOpenTopRated = {
                     viewModel.setSelectedLibraryFilterType(LibraryFilterType.TOP_RATED)
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
@@ -320,6 +323,29 @@ fun SeriesScreen(
             onConfirm = { name -> viewModel.confirmRenameGroup(name) }
         )
     }
+
+    if (showClearContinueWatchingDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearContinueWatchingDialog = false },
+            title = { Text(text = stringResource(R.string.continue_watching_clear_dialog_title)) },
+            text = { Text(text = stringResource(R.string.continue_watching_clear_dialog_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showClearContinueWatchingDialog = false
+                        viewModel.clearContinueWatching()
+                    }
+                ) {
+                    Text(text = stringResource(R.string.continue_watching_clear_confirm), color = Primary)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showClearContinueWatchingDialog = false }) {
+                    Text(text = stringResource(R.string.settings_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -339,6 +365,7 @@ private fun SeriesVodContent(
     onSelectCategory: (String?) -> Unit,
     onSelectFullLibraryBrowse: () -> Unit,
     onOpenContinueWatching: () -> Unit,
+    onClearContinueWatching: () -> Unit,
     onOpenTopRated: () -> Unit,
     onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -610,7 +637,8 @@ private fun SeriesVodContent(
             item(key = "continue_watching") {
                 ContinueWatchingRow(
                         items = continueWatching,
-                        onItemClick = { history -> onSeriesClick(history.seriesId ?: history.contentId) }
+                        onItemClick = { history -> onSeriesClick(history.seriesId ?: history.contentId) },
+                        onClearClick = onClearContinueWatching
                     )
             }
             }
