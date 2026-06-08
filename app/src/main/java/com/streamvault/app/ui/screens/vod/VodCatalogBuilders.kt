@@ -3,6 +3,9 @@ package com.streamvault.app.ui.screens.vod
 import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Favorite
 import com.streamvault.app.ui.screens.vod.matchesVodGroupMembership
+import com.streamvault.app.ui.model.categoryDisplayGroupKey
+import com.streamvault.app.ui.model.canonicalCategoryDisplayName
+import com.streamvault.app.ui.model.mergeSimilarCategories
 
 data class VodCatalogSnapshot<Item>(
     val grouped: Map<String, List<Item>>,
@@ -31,6 +34,8 @@ suspend fun <Item> buildVodPreviewCatalog(
         .toSet()
     val previewRows = linkedMapOf<String, List<Item>>()
     val countMap = linkedMapOf<String, Int>()
+    val displayProviderCategories = mergeSimilarCategories(providerCategories)
+    val providerCategoriesByGroupKey = providerCategories.groupBy { categoryDisplayGroupKey(it.name) }
 
     val favoritesIds = allFavorites
         .asSequence()
@@ -82,17 +87,19 @@ suspend fun <Item> buildVodPreviewCatalog(
         }
     }
 
-    val requestedProviderCategoryIds = providerPreviews.keys.filterNotNull().toSet()
-    providerCategories.forEach { category ->
-        countMap[category.name] = providerCategoryCounts[category.id] ?: providerPreviews[category.id]?.size ?: 0
-    }
-    providerCategories
-        .filter { category -> category.id in requestedProviderCategoryIds }
-        .forEach { category ->
-            val preview = providerPreviews[category.id].orEmpty()
-                .let { items -> markVodFavorites(items, globalFavoriteIds, itemId, copyWithFavorite) }
-            previewRows[category.name] = preview
+    displayProviderCategories.forEach { displayCategory ->
+        val groupKey = categoryDisplayGroupKey(displayCategory.name)
+        val rawCategories = providerCategoriesByGroupKey[groupKey].orEmpty()
+        val preview = rawCategories
+            .flatMap { rawCategory -> providerPreviews[rawCategory.id].orEmpty() }
+            .distinctBy(itemId)
+            .let { items -> markVodFavorites(items, globalFavoriteIds, itemId, copyWithFavorite) }
+        val count = rawCategories.sumOf { rawCategory -> providerCategoryCounts[rawCategory.id] ?: rawCategory.count }
+        countMap[displayCategory.name] = count
+        if (preview.isNotEmpty()) {
+            previewRows[displayCategory.name] = preview
         }
+    }
 
     return VodCatalogSnapshot(
         grouped = previewRows,
@@ -125,13 +132,20 @@ fun <Item> buildVodSearchCatalog(
         itemId,
         copyWithFavorite
     )
-    val grouped = enrichedItems
-        .groupBy { itemCategoryName(it) ?: uncategorizedName }
-        .toMutableMap()
+    val displayProviderCategories = mergeSimilarCategories(providerCategories)
+    val providerNamesByGroupKey = displayProviderCategories
+        .associateBy({ categoryDisplayGroupKey(it.name) }, { it.name })
+    val groupedLists = linkedMapOf<String, MutableList<Item>>()
+    enrichedItems.forEach { item ->
+        val rawName = itemCategoryName(item) ?: uncategorizedName
+        val groupKey = categoryDisplayGroupKey(rawName)
+        val displayName = providerNamesByGroupKey[groupKey] ?: canonicalCategoryDisplayName(rawName)
+        groupedLists.getOrPut(displayName) { mutableListOf() }.add(item)
+    }
 
     val favoriteMatches = enrichedItems.filter { item -> itemId(item) in globalFavoriteIds }
     if (favoriteMatches.isNotEmpty()) {
-        grouped[VodBrowseDefaults.FAVORITES_CATEGORY] = favoriteMatches
+        groupedLists[VodBrowseDefaults.FAVORITES_CATEGORY] = favoriteMatches.toMutableList()
     }
 
     customCategories
@@ -142,35 +156,37 @@ fun <Item> buildVodSearchCatalog(
                 .filter { matchesVodGroupMembership(it.groupId, customCategory.id) }
                 .map(Favorite::contentId)
                 .toSet()
-            grouped[customCategory.name] = enrichedItems.filter { itemId(it) in itemIdsInGroup }
+            groupedLists[customCategory.name] = enrichedItems
+                .filter { itemId(it) in itemIdsInGroup }
+                .toMutableList()
         }
 
     val customNames = customCategories.map(Category::name).toSet()
-    val preferredProviderNames = providerCategories.map(Category::name)
+    val preferredProviderNames = displayProviderCategories.map(Category::name)
     val orderedNames = buildList {
-        if (grouped.containsKey(VodBrowseDefaults.FAVORITES_CATEGORY)) {
+        if (groupedLists.containsKey(VodBrowseDefaults.FAVORITES_CATEGORY)) {
             add(VodBrowseDefaults.FAVORITES_CATEGORY)
         }
         customCategories.forEach { category ->
-            if (grouped.containsKey(category.name)) {
+            if (groupedLists.containsKey(category.name)) {
                 add(category.name)
             }
         }
         preferredProviderNames.forEach { categoryName ->
-            if (grouped.containsKey(categoryName)) {
+            if (groupedLists.containsKey(categoryName)) {
                 add(categoryName)
             }
         }
-        grouped.keys
+        groupedLists.keys
             .filterNot { it == VodBrowseDefaults.FAVORITES_CATEGORY || it in customNames || it in preferredProviderNames }
             .sortedBy { it.lowercase() }
             .forEach(::add)
     }
 
     return VodCatalogSnapshot(
-        grouped = grouped,
+        grouped = groupedLists.mapValues { it.value.toList() },
         categoryNames = orderedNames,
-        categoryCounts = orderedNames.associateWith { name -> grouped[name]?.size ?: 0 },
+        categoryCounts = orderedNames.associateWith { name -> groupedLists[name]?.size ?: 0 },
         libraryCount = items.size
     )
 }
