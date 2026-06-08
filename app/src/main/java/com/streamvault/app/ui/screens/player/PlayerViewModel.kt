@@ -241,6 +241,7 @@ class PlayerViewModel @Inject constructor(
     internal val failedStreamsThisSession = mutableMapOf<String, Int>()
     internal val livePreloadCooldownProviderIds = mutableSetOf<Long>()
     internal var hasRetriedWithSoftwareDecoder = false
+    internal var hasRetriedWithAvcMovieVariant = false
     internal var hasRetriedXtreamAuthRefresh = false
     internal val probePassedPlaybackKeys = mutableSetOf<String>()
     private val notifiedRecordingFailureIds = mutableSetOf<String>()
@@ -725,24 +726,49 @@ class PlayerViewModel @Inject constructor(
         recoveryJob?.cancel()
         if (error is PlayerError.DecoderError && !hasRetriedWithSoftwareDecoder) {
             if (!isActivePlaybackSession(requestVersion, playbackUrl)) return
-            val currentLiveHlsSession = currentContentType == ContentType.LIVE &&
-                currentResolvedStreamInfo?.streamType == StreamType.HLS
-            if (currentLiveHlsSession) {
-                val channel = currentChannelFlow.value?.sanitizedForPlayer()
-                if (channel != null &&
-                    tryAlternateStreamInternal(
-                        channel = channel,
-                        preferXtreamTsFallback = false,
-                        allowXtreamTsFallback = false
+            if (currentContentType == ContentType.LIVE) {
+                val currentLiveHlsSession = currentResolvedStreamInfo?.streamType == StreamType.HLS
+                if (currentLiveHlsSession) {
+                    val channel = currentChannelFlow.value?.sanitizedForPlayer()
+                    if (channel != null &&
+                        tryAlternateStreamInternal(
+                            channel = channel,
+                            preferXtreamTsFallback = false,
+                            allowXtreamTsFallback = false
+                        )
+                    ) {
+                        return
+                    }
+                    android.util.Log.w(
+                        "PlayerVM",
+                        "Decoder error on live HLS. Keeping hardware path to match Sparkle-like playback on ${appContext.packageName}."
                     )
-                ) {
+                } else {
+                    hasRetriedWithSoftwareDecoder = true
+                    android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
+                    playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
+                    updateDecoderMode(DecoderMode.SOFTWARE)
+                    setLastFailureReason(error.message)
+                    appendRecoveryAction("Switched to software decoder")
+                    playerEngine.play()
+                    showPlayerNotice(
+                        message = "Retrying with software decoding for this stream.",
+                        recoveryType = PlayerRecoveryType.DECODER,
+                        actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
+                    )
                     return
                 }
-                android.util.Log.w(
-                    "PlayerVM",
-                    "Decoder error on live HLS. Keeping hardware path to match Sparkle-like playback on ${appContext.packageName}."
-                )
-            } else {
+            }
+        }
+        recoveryJob = viewModelScope.launch {
+            if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
+            if (error is PlayerError.DecoderError && currentContentType == ContentType.MOVIE && !hasRetriedWithAvcMovieVariant) {
+                if (tryFallbackToAvcMovieVariant(requestVersion, playbackUrl)) {
+                    return@launch
+                }
+            }
+            if (error is PlayerError.DecoderError && !hasRetriedWithSoftwareDecoder && currentContentType != ContentType.LIVE) {
+                if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
                 hasRetriedWithSoftwareDecoder = true
                 android.util.Log.w("PlayerVM", "Decoder error detected. Retrying with software decoder mode.")
                 playerEngine.setDecoderMode(DecoderMode.SOFTWARE)
@@ -755,11 +781,8 @@ class PlayerViewModel @Inject constructor(
                     recoveryType = PlayerRecoveryType.DECODER,
                     actions = buildRecoveryActions(PlayerRecoveryType.DECODER)
                 )
-                return
+                return@launch
             }
-        }
-        recoveryJob = viewModelScope.launch {
-            if (!isActivePlaybackSession(requestVersion, playbackUrl)) return@launch
             if (tryRefreshXtreamPlaybackAfterAuthError(error, requestVersion, playbackUrl)) {
                 return@launch
             }

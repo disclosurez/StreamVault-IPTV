@@ -125,6 +125,7 @@ internal fun PlayerViewModel.applyPrepareSessionState(
     }
 
     hasRetriedWithSoftwareDecoder = false
+    hasRetriedWithAvcMovieVariant = false
     playerEngine.setDecoderMode(preferredDecoderMode)
     playerEngine.setSurfaceMode(preferredSurfaceMode)
     updateDecoderMode(preferredDecoderMode)
