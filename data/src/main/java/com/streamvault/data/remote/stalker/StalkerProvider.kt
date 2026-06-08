@@ -1181,7 +1181,9 @@ class StalkerProvider(
             )
         } ?: directStreamUrl
             ?: return null
-        val resolvedName = item.name.ifBlank { "Channel $numericId" }
+        val rawName = item.name.trim()
+        if (rawName.isNotEmpty() && ChannelNormalizer.hasTooManyHashCharacters(rawName)) return null
+        val resolvedName = rawName.ifBlank { "Channel $numericId" }
         val catchUpSupported = item.archiveAvailable == true ||
             item.portalCapabilities.archiveAvailable ||
             item.allowLocalTimeshift == true ||

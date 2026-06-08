@@ -289,6 +289,29 @@ class SeriesRepositoryImplTest {
     }
 
     @Test
+    fun `series category preview rows sort by newest year first`() = runTest {
+        whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
+        whenever(categoryDao.getByProviderAndType(7L, ContentType.SERIES.name)).thenReturn(
+            flowOf(listOf(com.streamvault.data.local.entity.CategoryEntity(providerId = 7L, categoryId = 77L, name = "Drama", type = ContentType.SERIES)))
+        )
+        whenever(seriesDao.getByCategoryPreview(7L, 77L, 2)).thenReturn(
+            flowOf(
+                listOf(
+                    SeriesBrowseEntity(id = 1L, seriesId = 101L, name = "Older Series", providerId = 7L, lastModified = 10_000L, releaseDate = "2025-01-01"),
+                    SeriesBrowseEntity(id = 2L, seriesId = 102L, name = "Newer Series", providerId = 7L, lastModified = 9_000L, releaseDate = "2026-01-01")
+                )
+            )
+        )
+        whenever(providerDao.getById(7L)).thenReturn(null)
+
+        val repository = createRepository()
+
+        val previews = repository.getCategoryPreviewRows(7L, listOf(77L), 2).first()
+
+        assertThat(previews[77L]?.map { it.name }).containsExactly("Newer Series", "Older Series").inOrder()
+    }
+
+    @Test
     fun `browseSeries recently updated excludes stale entries and uses filtered total count`() = runTest {
         whenever(preferencesRepository.parentalControlLevel).thenReturn(flowOf(0))
         whenever(preferencesRepository.xtreamBase64TextCompatibility).thenReturn(flowOf(false))

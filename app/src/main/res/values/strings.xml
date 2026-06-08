@@ -250,8 +250,13 @@
     <string name="movies_saved_empty_hint">Favorite a movie or add it to a custom group to see it here.</string>
     <string name="movies_filter_subtitle">Refine the selected movie category without rebuilding the whole library.</string>
     <string name="movies_library_lens_subtitle">Surface favorites, in-progress, top-rated, and fresh movies across the whole library.</string>
+    <string name="vod_hide_categories_title">Hide categories</string>
+    <string name="vod_hide_categories_subtitle">Open the category picker and long-press a category to hide it.</string>
+    <string name="vod_hide_top_rated">Hide Top Rated</string>
+    <string name="vod_show_top_rated">Show Top Rated</string>
     <string name="movies_reorder_title">Reordering %1$s</string>
     <string name="movies_reorder_subtitle">Use the remote to move posters, then save the shelf order for this group.</string>
+    <string name="movie_detail_versions">Versions</string>
     <string name="library_full_browse_title_movies">Browse Full Movie Library</string>
     <string name="library_full_browse_subtitle">%1$d titles available in the current provider</string>
 

@@ -86,6 +86,7 @@ class MovieDetailViewModel @Inject constructor(
                         )
                     }.also {
                         loadExternalRatings(result.data)
+                        loadMovieVariants()
                         loadRelatedContent(effectiveProviderId)
                     }
                     is Result.Error -> _uiState.update {
@@ -149,6 +150,12 @@ class MovieDetailViewModel @Inject constructor(
             _uiState.update { it.copy(relatedContent = related) }
         }
     }
+    private fun loadMovieVariants() {
+        viewModelScope.launch {
+            val variants = movieRepository.getMovieVariants(movieId)
+            _uiState.update { it.copy(movieVariants = variants) }
+        }
+    }
 }
 
 data class MovieDetailUiState(
@@ -159,5 +166,6 @@ data class MovieDetailUiState(
     val resumePositionMs: Long = 0L,
     val isLoadingExternalRatings: Boolean = false,
     val externalRatings: ExternalRatings = ExternalRatings.unavailable(),
+    val movieVariants: List<Movie> = emptyList(),
     val relatedContent: List<Movie> = emptyList()
 )
