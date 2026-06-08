@@ -190,6 +190,12 @@
 
     <string name="category_see_all">See all</string>
     <string name="continue_watching_title">Continue Watching</string>
+    <string name="continue_watching_clear">Clear</string>
+    <string name="continue_watching_cleared">Continue Watching cleared</string>
+    <string name="continue_watching_clear_error">Failed to clear Continue Watching: %1$s</string>
+    <string name="continue_watching_clear_dialog_title">Clear Continue Watching?</string>
+    <string name="continue_watching_clear_dialog_body">This will remove movie and series resume progress from Continue Watching. Live TV recents will be kept.</string>
+    <string name="continue_watching_clear_confirm">Clear</string>
     <string name="continue_watching_season_episode">S%1$d E%2$d</string>
 
     <string name="playlist_no_provider">No Provider</string>

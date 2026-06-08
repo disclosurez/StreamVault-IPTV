@@ -17,6 +17,7 @@ import com.streamvault.domain.model.PlaybackHistory
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.model.ProviderStatus
 import com.streamvault.domain.model.ProviderType
+import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.model.VirtualCategoryIds
@@ -588,6 +589,24 @@ class DashboardViewModel @Inject constructor(
                     )
                 }
                 else -> Unit
+            }
+        }
+    }
+
+    fun clearContinueWatching() {
+        viewModelScope.launch {
+            when (val result = playbackHistoryRepository.clearContinueWatchingHistory()) {
+                is Result.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        userMessage = appContext.getString(R.string.continue_watching_cleared)
+                    )
+                }
+                is Result.Error -> {
+                    _uiState.value = _uiState.value.copy(
+                        userMessage = appContext.getString(R.string.continue_watching_clear_error, result.message)
+                    )
+                }
+                Result.Loading -> Unit
             }
         }
     }

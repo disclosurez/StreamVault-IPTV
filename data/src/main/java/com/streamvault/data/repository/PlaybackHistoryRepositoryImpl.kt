@@ -237,6 +237,20 @@ class PlaybackHistoryRepositoryImpl @Inject constructor(
         Result.error("Failed to clear playback history", e)
     }
 
+    override suspend fun clearContinueWatchingHistory(): Result<Unit> = try {
+        val vodTypes = listOf(ContentType.MOVIE, ContentType.SERIES, ContentType.SERIES_EPISODE)
+        val vodTypeNames = vodTypes.map { it.name }
+        pendingResumeUpdates.keys.removeIf { it.contentType in vodTypes }
+        transactionRunner.inTransaction {
+            dao.deleteByTypes(vodTypeNames)
+            movieDao.resetAllWatchProgress()
+            episodeDao.resetAllWatchProgress()
+        }
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error("Failed to clear continue watching history", e)
+    }
+
     override suspend fun clearHistoryForProvider(providerId: Long): Result<Unit> = try {
         pendingResumeUpdates.keys.removeIf { it.providerId == providerId }
         transactionRunner.inTransaction {
