@@ -63,6 +63,7 @@ import com.streamvault.app.ui.components.ReorderTopBar
 import com.streamvault.app.ui.components.dialogs.DeleteGroupDialog
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import com.streamvault.app.ui.components.shell.BrowseSearchLaunchCard
@@ -111,6 +112,7 @@ fun MoviesScreen(
     var pinError by remember { mutableStateOf<String?>(null) }
     var pendingMovie by remember { mutableStateOf<Movie?>(null) }
     var pendingCategory by remember { mutableStateOf<Category?>(null) }
+    var showClearContinueWatchingDialog by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     HandleVodUserMessage(
@@ -242,6 +244,7 @@ fun MoviesScreen(
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.LIBRARY)
                     viewModel.selectFullLibraryBrowse()
                 },
+                onClearContinueWatching = { showClearContinueWatchingDialog = true },
                 onOpenTopRated = {
                     viewModel.setSelectedLibraryFilterType(LibraryFilterType.TOP_RATED)
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
@@ -255,6 +258,7 @@ fun MoviesScreen(
                 onLoadMore = viewModel::loadMoreSelectedCategory,
                 onLoadMorePreviewRows = viewModel::loadMorePreviewRows,
                 onDismissReorder = viewModel::exitCategoryReorderMode,
+                onToggleTopRatedLensVisibility = viewModel::setTopRatedLensVisible,
                 initialFocusRequester = initialContentFocusRequester
             )
         }
@@ -323,6 +327,29 @@ fun MoviesScreen(
             onConfirmDelete = { viewModel.confirmDeleteGroup() }
         )
     }
+
+    if (showClearContinueWatchingDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearContinueWatchingDialog = false },
+            title = { Text(text = stringResource(R.string.continue_watching_clear_dialog_title)) },
+            text = { Text(text = stringResource(R.string.continue_watching_clear_dialog_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showClearContinueWatchingDialog = false
+                        viewModel.clearContinueWatching()
+                    }
+                ) {
+                    Text(text = stringResource(R.string.continue_watching_clear_confirm), color = Primary)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showClearContinueWatchingDialog = false }) {
+                    Text(text = stringResource(R.string.settings_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -343,11 +370,13 @@ private fun MoviesVodContent(
     onSelectCategory: (String?) -> Unit,
     onSelectFullLibraryBrowse: () -> Unit,
     onOpenContinueWatching: () -> Unit,
+    onClearContinueWatching: () -> Unit,
     onOpenTopRated: () -> Unit,
     onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
     onDismissReorder: () -> Unit,
+    onToggleTopRatedLensVisibility: (Boolean) -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
@@ -366,7 +395,8 @@ private fun MoviesVodContent(
     var showCategoryPicker by remember { mutableStateOf(false) }
     val favoriteMovies = uiState.moviesByCategory[uiState.favoriteCategoryName].orEmpty()
     val freshMovies = uiState.libraryLensRows[MovieLibraryLens.FRESH].orEmpty()
-    val topRatedMovies = uiState.libraryLensRows[MovieLibraryLens.TOP_RATED].orEmpty()
+    val rawTopRatedMovies = uiState.libraryLensRows[MovieLibraryLens.TOP_RATED].orEmpty()
+    val topRatedMovies = if (uiState.isTopRatedLensVisible) rawTopRatedMovies else emptyList()
     val continueWatching = uiState.continueWatching
     val heroMovie = freshMovies.firstOrNull() ?: topRatedMovies.firstOrNull() ?: favoriteMovies.firstOrNull()
     val categoryByName = remember(uiState.providerCategories, uiState.categories, uiState.favoriteCategoryName) {
@@ -542,6 +572,14 @@ private fun MoviesVodContent(
                                 onClick = { showCategoryPicker = true }
                             )
                         )
+                        add(
+                            VodActionChip(
+                                key = "hide_categories",
+                                label = stringResource(R.string.vod_hide_categories_title),
+                                detail = stringResource(R.string.vod_hide_categories_subtitle),
+                                onClick = { showCategoryPicker = true }
+                            )
+                        )
                         if (favoriteMovies.isNotEmpty()) {
                             add(
                                 VodActionChip(
@@ -562,13 +600,27 @@ private fun MoviesVodContent(
                                 )
                             )
                         }
-                        if (topRatedMovies.isNotEmpty()) {
+                        if (rawTopRatedMovies.isNotEmpty()) {
                             add(
                                 VodActionChip(
                                     key = MovieLibraryLens.TOP_RATED.name,
                                     label = stringResource(R.string.library_lens_top_rated),
-                                    detail = "${topRatedMovies.size} picks",
+                                    detail = "${rawTopRatedMovies.size} picks",
                                     onClick = onOpenTopRated
+                                )
+                            )
+                            add(
+                                VodActionChip(
+                                    key = "toggle_top_rated",
+                                    label = stringResource(
+                                        if (uiState.isTopRatedLensVisible) {
+                                            R.string.vod_hide_top_rated
+                                        } else {
+                                            R.string.vod_show_top_rated
+                                        }
+                                    ),
+                                    detail = null,
+                                    onClick = { onToggleTopRatedLensVisibility(!uiState.isTopRatedLensVisible) }
                                 )
                             )
                         }
@@ -590,7 +642,8 @@ private fun MoviesVodContent(
             item(key = "continue_watching") {
                 ContinueWatchingRow(
                         items = continueWatching,
-                        onItemClick = onContinueWatchingPlay
+                        onItemClick = onContinueWatchingPlay,
+                        onClearClick = onClearContinueWatching
                     )
             }
             }

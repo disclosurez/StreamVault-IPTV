@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,8 +28,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,6 +106,7 @@ fun DashboardScreen(
     val scheduledChannelIds by viewModel.scheduledChannelIds.collectAsStateWithLifecycle()
     val provider = uiState.provider
     val snackbarHostState = remember { SnackbarHostState() }
+    var showClearContinueWatchingDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let { message ->
@@ -201,7 +205,8 @@ fun DashboardScreen(
 
                     DashboardHomeSection.CONTINUE_WATCHING -> ContinueWatchingRow(
                         items = uiState.continueWatching,
-                        onItemClick = onPlaybackHistoryClick
+                        onItemClick = onPlaybackHistoryClick,
+                        onClearClick = { showClearContinueWatchingDialog = true }
                     )
 
                     DashboardHomeSection.RECENT_MOVIES -> CategoryRow(
@@ -238,6 +243,29 @@ fun DashboardScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 16.dp)
+        )
+    }
+
+    if (showClearContinueWatchingDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearContinueWatchingDialog = false },
+            title = { Text(text = stringResource(R.string.continue_watching_clear_dialog_title)) },
+            text = { Text(text = stringResource(R.string.continue_watching_clear_dialog_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showClearContinueWatchingDialog = false
+                        viewModel.clearContinueWatching()
+                    }
+                ) {
+                    Text(text = stringResource(R.string.continue_watching_clear_confirm), color = Primary)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showClearContinueWatchingDialog = false }) {
+                    Text(text = stringResource(R.string.settings_cancel))
+                }
+            }
         )
     }
 }

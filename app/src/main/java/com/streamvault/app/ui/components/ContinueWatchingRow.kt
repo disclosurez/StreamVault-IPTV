@@ -1,6 +1,7 @@
 package com.streamvault.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +17,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -27,14 +31,22 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.app.R
 import com.streamvault.app.ui.components.rememberCrossfadeImageModel
+import com.streamvault.app.ui.interaction.mouseClickable
 import com.streamvault.app.ui.theme.AccentCyan
+import com.streamvault.app.ui.theme.FocusBorder
 import com.streamvault.app.ui.theme.GradientOverlayBottom
+import com.streamvault.app.ui.theme.OnSurface
+import com.streamvault.app.ui.theme.Primary
 import com.streamvault.app.ui.theme.SurfaceElevated
+import com.streamvault.app.ui.theme.SurfaceHighlight
 import com.streamvault.app.ui.theme.TextPrimary
 import com.streamvault.app.ui.theme.TextSecondary
 import com.streamvault.app.ui.theme.TextTertiary
@@ -46,11 +58,13 @@ import com.streamvault.domain.model.PlaybackHistory
 fun ContinueWatchingRow(
     items: List<PlaybackHistory>,
     onItemClick: (PlaybackHistory) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onClearClick: (() -> Unit)? = null
 ) {
     if (items.isEmpty()) return
 
     Column(modifier = modifier.fillMaxWidth().suppressParentVerticalScroll()) {
+        val clearFocusRequester = remember { FocusRequester() }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -63,6 +77,36 @@ fun ContinueWatchingRow(
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary
             )
+            if (onClearClick != null) {
+                Surface(
+                    onClick = onClearClick,
+                    modifier = Modifier
+                        .focusRequester(clearFocusRequester)
+                        .mouseClickable(
+                            focusRequester = clearFocusRequester,
+                            onClick = onClearClick
+                        ),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = SurfaceElevated,
+                        focusedContainerColor = SurfaceHighlight,
+                        contentColor = Primary,
+                        focusedContentColor = OnSurface
+                    ),
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(999.dp)),
+                    border = ClickableSurfaceDefaults.border(
+                        focusedBorder = Border(
+                            border = BorderStroke(2.dp, FocusBorder),
+                            shape = RoundedCornerShape(999.dp)
+                        )
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.continue_watching_clear),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
         }
 
         LazyRow(
