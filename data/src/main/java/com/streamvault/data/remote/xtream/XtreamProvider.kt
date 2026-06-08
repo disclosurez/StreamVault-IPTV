@@ -868,7 +868,9 @@ class XtreamProvider(
         if (streamId <= 0) return null
         val category = resolveXtreamCategory(ContentType.LIVE, categoryId, categoryName)
         val primaryContainerExtension = preferredLiveContainerExtension(containerExtension)
-        val resolvedName = decodeXtreamNullableText(name, XtreamTextDecodeMode.RAW)?.ifBlank { null } ?: "Channel $streamId"
+        val decodedName = decodeXtreamNullableText(name, XtreamTextDecodeMode.RAW)?.trim()
+        if (decodedName != null && ChannelNormalizer.hasTooManyHashCharacters(decodedName)) return null
+        val resolvedName = decodedName?.ifBlank { null } ?: "Channel $streamId"
         val sanitizedLogoUrl = sanitizeAssetValue(streamIcon)
         val sanitizedEpgChannelId = decodeXtreamNullableText(epgChannelId, XtreamTextDecodeMode.RAW)
         val sanitizedDirectSource = if (includePlaybackVariants) sanitizeAssetValue(directSource) else null
