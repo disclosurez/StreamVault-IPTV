@@ -25,6 +25,7 @@ interface PlaybackHistoryRepository {
     suspend fun flushPendingProgress(): Result<Unit>
     suspend fun removeFromHistory(contentId: Long, contentType: ContentType, providerId: Long): Result<Unit>
     suspend fun clearAllHistory(): Result<Unit>
+    suspend fun clearContinueWatchingHistory(): Result<Unit>
     suspend fun clearHistoryForProvider(providerId: Long): Result<Unit>
     suspend fun clearLiveHistoryForProvider(providerId: Long): Result<Unit>
 }

@@ -1117,10 +1117,10 @@ class PlayerViewModel @Inject constructor(
             providerId = providerId.takeIf { it > 0L }
         ) ?: return false
 
-        if (shouldBypassPreviewHandoffForFireTvLiveHls(session.streamInfo)) {
+        if (shouldBypassPreviewHandoffForLiveHls(session.streamInfo)) {
             android.util.Log.i(
                 "PlayerVM",
-                "Skipping preview handoff for Fire TV live HLS; fullscreen will prepare a fresh session."
+                "Skipping preview handoff for live HLS; fullscreen will prepare a fresh session."
             )
             livePreviewHandoffManager.clear(session.engine)
             session.engine.release()
@@ -1174,12 +1174,9 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun shouldBypassPreviewHandoffForFireTvLiveHls(streamInfo: StreamInfo): Boolean {
-        val isAmazonMediaTek = Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
-            Build.HARDWARE.orEmpty().startsWith("mt", ignoreCase = true)
-        val isHls = streamInfo.streamType == StreamType.HLS ||
+    private fun shouldBypassPreviewHandoffForLiveHls(streamInfo: StreamInfo): Boolean {
+        return streamInfo.streamType == StreamType.HLS ||
             streamInfo.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-        return isAmazonMediaTek && isHls
     }
 
     internal suspend fun preparePlayer(

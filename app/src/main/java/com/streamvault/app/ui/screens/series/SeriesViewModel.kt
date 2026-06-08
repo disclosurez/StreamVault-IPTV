@@ -1,7 +1,9 @@
 package com.streamvault.app.ui.screens.series
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.streamvault.app.R
 import com.streamvault.app.ui.model.applyProviderCategoryDisplayPreferences
 import com.streamvault.app.ui.model.VodViewMode
 import com.streamvault.data.preferences.PreferencesRepository
@@ -44,6 +46,7 @@ import com.streamvault.app.ui.screens.vod.setVodFavorite
 import com.streamvault.app.ui.screens.vod.updateVodGroupMembership
 import com.streamvault.app.ui.screens.vod.VodBrowseDefaults
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -73,6 +76,7 @@ enum class SeriesLibraryLens {
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class SeriesViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val providerRepository: ProviderRepository,
     private val seriesRepository: SeriesRepository,
     private val preferencesRepository: PreferencesRepository,
@@ -879,6 +883,24 @@ class SeriesViewModel @Inject constructor(
 
     fun userMessageShown() {
         _uiState.update { it.copy(userMessage = null) }
+    }
+
+    fun clearContinueWatching() {
+        viewModelScope.launch {
+            when (val result = playbackHistoryRepository.clearContinueWatchingHistory()) {
+                is Result.Success -> {
+                    _uiState.update {
+                        it.copy(userMessage = appContext.getString(R.string.continue_watching_cleared))
+                    }
+                }
+                is Result.Error -> {
+                    _uiState.update {
+                        it.copy(userMessage = appContext.getString(R.string.continue_watching_clear_error, result.message))
+                    }
+                }
+                Result.Loading -> Unit
+            }
+        }
     }
 
     fun enterCategoryReorderMode(category: Category) {
