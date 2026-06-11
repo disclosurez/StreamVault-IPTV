@@ -34,6 +34,7 @@ import com.streamvault.domain.model.StreamInfo
 import com.streamvault.domain.model.StreamType
 import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.model.VirtualCategoryIds
+import com.streamvault.domain.model.supportsLiveTv
 import com.streamvault.domain.repository.CategoryRepository
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.CombinedM3uRepository
@@ -140,7 +141,7 @@ class HomeViewModel @Inject constructor(
                 providerRepository.getActiveProvider()
             ) { activeSource, activeProvider ->
                 Pair(
-                    activeSource ?: activeProvider?.id?.let { ActiveLiveSource.ProviderSource(it) },
+                    activeSource ?: activeProvider?.takeIf { it.supportsLiveTv() }?.id?.let { ActiveLiveSource.ProviderSource(it) },
                     activeProvider
                 )
             }.distinctUntilChanged { old, new ->

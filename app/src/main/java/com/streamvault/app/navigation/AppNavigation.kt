@@ -357,7 +357,8 @@ fun AppNavigation(mainActivity: MainActivity) {
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.PROVIDER_SETUP) { inclusive = true }
                     }
-                }
+                },
+                onLoginJellyfinQuickConnect = {}
             )
         }
 // ...

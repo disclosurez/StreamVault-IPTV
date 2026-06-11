@@ -21,6 +21,7 @@ import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.model.SyncState
 import com.streamvault.domain.model.VirtualCategoryIds
+import com.streamvault.domain.model.supportsLiveTv
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.FavoriteRepository
@@ -110,7 +111,7 @@ class DashboardViewModel @Inject constructor(
                 combinedM3uRepository.getActiveLiveSource(),
                 providerRepository.getActiveProvider()
             ) { activeSource, activeProvider ->
-                Pair(activeSource ?: activeProvider?.id?.let { ActiveLiveSource.ProviderSource(it) }, activeProvider)
+                Pair(activeSource ?: activeProvider?.takeIf { it.supportsLiveTv() }?.id?.let { ActiveLiveSource.ProviderSource(it) }, activeProvider)
             }
                 .distinctUntilChanged { old, new ->
                     old.first == new.first && old.second?.id == new.second?.id

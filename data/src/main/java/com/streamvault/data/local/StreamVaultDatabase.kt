@@ -49,7 +49,7 @@ import com.streamvault.data.local.entity.*
         XtreamIndexJobEntity::class,
         XtreamLiveOnboardingStateEntity::class
     ],
-    version = 57,
+    version = 58,
     exportSchema = true   // ← was false; schema JSON now tracked in version control
 )
 @TypeConverters(RoomEnumConverters::class)
@@ -2614,6 +2614,121 @@ abstract class StreamVaultDatabase : RoomDatabase() {
                     "ALTER TABLE providers ADD COLUMN stalker_playback_backend_hint TEXT NOT NULL DEFAULT 'AUTO'"
                 )
                 validateForeignKeys(database, "providers")
+            }
+        }
+
+        val MIGRATION_57_58 = object : Migration(57, 58) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Room now expects explicit defaults for movie/series cache-state columns.
+                // Rebuild the affected tables so existing installs pick up the new schema
+                // metadata without losing any catalog data.
+
+                database.execSQL(
+                    """
+                    CREATE TABLE movies_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        stream_id INTEGER NOT NULL DEFAULT 0,
+                        name TEXT NOT NULL,
+                        poster_url TEXT,
+                        backdrop_url TEXT,
+                        category_id INTEGER,
+                        category_name TEXT,
+                        stream_url TEXT NOT NULL DEFAULT '',
+                        container_extension TEXT,
+                        plot TEXT,
+                        "cast" TEXT,
+                        director TEXT,
+                        genre TEXT,
+                        release_date TEXT,
+                        duration TEXT,
+                        duration_seconds INTEGER NOT NULL DEFAULT 0,
+                        rating REAL NOT NULL DEFAULT 0,
+                        year TEXT,
+                        tmdb_id INTEGER,
+                        youtube_trailer TEXT,
+                        provider_id INTEGER NOT NULL DEFAULT 0,
+                        watch_progress INTEGER NOT NULL DEFAULT 0,
+                        watch_count INTEGER NOT NULL DEFAULT 0,
+                        last_watched_at INTEGER NOT NULL DEFAULT 0,
+                        is_adult INTEGER NOT NULL DEFAULT 0,
+                        is_user_protected INTEGER NOT NULL DEFAULT 0,
+                        sync_fingerprint TEXT NOT NULL DEFAULT '',
+                        added_at INTEGER NOT NULL DEFAULT 0,
+                        cache_state TEXT NOT NULL DEFAULT 'DETAIL_HYDRATED',
+                        detail_hydrated_at INTEGER NOT NULL DEFAULT 0,
+                        remote_stale_at INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("INSERT INTO movies_new SELECT * FROM movies")
+                database.execSQL("DROP TABLE movies")
+                database.execSQL("ALTER TABLE movies_new RENAME TO movies")
+                database.execSQL("CREATE INDEX index_movies_provider_id ON movies(provider_id)")
+                database.execSQL("CREATE INDEX index_movies_provider_id_category_id ON movies(provider_id, category_id)")
+                database.execSQL("CREATE UNIQUE INDEX index_movies_provider_id_stream_id ON movies(provider_id, stream_id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_movies_provider_id_name_id ON movies(provider_id, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_movies_provider_id_category_id_name_id ON movies(provider_id, category_id, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_movies_provider_id_rating_name_id ON movies(provider_id, rating, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_movies_provider_id_added_at_release_date_name_id ON movies(provider_id, added_at, release_date, name, id)")
+
+                database.execSQL(
+                    """
+                    CREATE TABLE series_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        series_id INTEGER NOT NULL DEFAULT 0,
+                        provider_series_id TEXT,
+                        name TEXT NOT NULL,
+                        poster_url TEXT,
+                        backdrop_url TEXT,
+                        category_id INTEGER,
+                        category_name TEXT,
+                        plot TEXT,
+                        "cast" TEXT,
+                        director TEXT,
+                        genre TEXT,
+                        release_date TEXT,
+                        rating REAL NOT NULL DEFAULT 0,
+                        tmdb_id INTEGER,
+                        youtube_trailer TEXT,
+                        episode_run_time TEXT,
+                        last_modified INTEGER NOT NULL DEFAULT 0,
+                        provider_id INTEGER NOT NULL DEFAULT 0,
+                        is_adult INTEGER NOT NULL DEFAULT 0,
+                        is_user_protected INTEGER NOT NULL DEFAULT 0,
+                        sync_fingerprint TEXT NOT NULL DEFAULT '',
+                        cache_state TEXT NOT NULL DEFAULT 'DETAIL_HYDRATED',
+                        detail_hydrated_at INTEGER NOT NULL DEFAULT 0,
+                        remote_stale_at INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("INSERT INTO series_new SELECT * FROM series")
+                database.execSQL("DROP TABLE series")
+                database.execSQL("ALTER TABLE series_new RENAME TO series")
+                database.execSQL("CREATE INDEX index_series_provider_id ON series(provider_id)")
+                database.execSQL("CREATE INDEX index_series_provider_id_category_id ON series(provider_id, category_id)")
+                database.execSQL("CREATE UNIQUE INDEX index_series_provider_id_series_id ON series(provider_id, series_id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_series_provider_id_name_id ON series(provider_id, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_series_provider_id_category_id_name_id ON series(provider_id, category_id, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_series_provider_id_rating_name_id ON series(provider_id, rating, name, id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_series_provider_id_last_modified_name_id ON series(provider_id, last_modified, name, id)")
+
+                database.execSQL("DROP TABLE IF EXISTS movies_fts")
+                database.execSQL("DROP TABLE IF EXISTS series_fts")
+                database.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS movies_fts USING fts4(name, content='movies')")
+                database.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS series_fts USING fts4(name, content='series')")
+                database.execSQL("INSERT INTO movies_fts(movies_fts) VALUES('rebuild')")
+                database.execSQL("INSERT INTO series_fts(series_fts) VALUES('rebuild')")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS movies_ai AFTER INSERT ON movies BEGIN INSERT INTO movies_fts(rowid, name) VALUES (new.id, new.name); END")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS movies_ad AFTER DELETE ON movies BEGIN DELETE FROM movies_fts WHERE rowid = old.id; END")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS movies_au AFTER UPDATE OF name ON movies BEGIN UPDATE movies_fts SET name = new.name WHERE rowid = old.id; END")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS series_ai AFTER INSERT ON series BEGIN INSERT INTO series_fts(rowid, name) VALUES (new.id, new.name); END")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS series_ad AFTER DELETE ON series BEGIN DELETE FROM series_fts WHERE rowid = old.id; END")
+                database.execSQL("CREATE TRIGGER IF NOT EXISTS series_au AFTER UPDATE OF name ON series BEGIN UPDATE series_fts SET name = new.name WHERE rowid = old.id; END")
+
+                validateForeignKeys(database, "movies", "series")
             }
         }
 

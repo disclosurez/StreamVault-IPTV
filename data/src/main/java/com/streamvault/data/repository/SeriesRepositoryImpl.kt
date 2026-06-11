@@ -371,6 +371,7 @@ class SeriesRepositoryImpl @Inject constructor(
                     seriesEntity.providerSeriesId?.takeIf { it.isNotBlank() } ?: seriesEntity.seriesId.toString()
                 )
                 ProviderType.M3U -> return Result.success(buildSeriesWithPersistedEpisodes(seriesEntity))
+                ProviderType.JELLYFIN -> return Result.success(buildSeriesWithPersistedEpisodes(seriesEntity))
             }
         } catch (e: Exception) {
             if (provider.type == ProviderType.XTREAM_CODES) {

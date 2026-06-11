@@ -573,7 +573,10 @@ interface CatalogSyncDao {
             is_adult,
             is_user_protected,
             sync_fingerprint,
-            added_at
+            added_at,
+            cache_state,
+            detail_hydrated_at,
+            remote_stale_at
         )
         SELECT
             stage.stream_id,
@@ -602,7 +605,10 @@ interface CatalogSyncDao {
             stage.is_adult,
             0,
             stage.sync_fingerprint,
-            stage.added_at
+            stage.added_at,
+            'SUMMARY_ONLY',
+            0,
+            0
         FROM movie_import_stage AS stage
         WHERE stage.session_id = :sessionId
           AND stage.provider_id = :providerId
@@ -796,7 +802,10 @@ interface CatalogSyncDao {
             provider_id,
             is_adult,
             is_user_protected,
-            sync_fingerprint
+            sync_fingerprint,
+            cache_state,
+            detail_hydrated_at,
+            remote_stale_at
         )
         SELECT
             stage.series_id,
@@ -819,7 +828,10 @@ interface CatalogSyncDao {
             stage.provider_id,
             stage.is_adult,
             0,
-            stage.sync_fingerprint
+            stage.sync_fingerprint,
+            'SUMMARY_ONLY',
+            0,
+            0
         FROM series_import_stage AS stage
         WHERE stage.session_id = :sessionId
           AND stage.provider_id = :providerId

@@ -8,6 +8,7 @@ import com.streamvault.domain.model.ProviderEpgSyncMode
 import com.streamvault.domain.model.ProviderType
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.model.SyncMetadata
+import com.streamvault.domain.model.supportsLiveTv
 import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.ProviderRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
@@ -56,7 +57,9 @@ internal class SettingsProviderActions(
             }
             // Repository write succeeded – now persist the UI-layer preferences and refresh.
             preferencesRepository.setLastActiveProviderId(providerId)
-            combinedM3uRepository.setActiveLiveSource(ActiveLiveSource.ProviderSource(providerId))
+            if (provider.type.supportsLiveTv()) {
+                combinedM3uRepository.setActiveLiveSource(ActiveLiveSource.ProviderSource(providerId))
+            }
             watchNextManager.refreshWatchNext()
             launcherRecommendationsManager.refreshRecommendations(force = true)
             tvInputChannelSyncManager.refreshTvInputCatalog()

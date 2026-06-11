@@ -100,6 +100,7 @@ internal fun shouldPreloadAdjacentChannel(
     return when (providerType) {
         ProviderType.M3U -> true
         ProviderType.XTREAM_CODES,
+        ProviderType.JELLYFIN,
         ProviderType.STALKER_PORTAL -> maxConnections >= 2
         null -> false
     }

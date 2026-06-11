@@ -192,6 +192,22 @@ class XtreamStreamUrlResolver @Inject constructor(
                     userAgent = playbackInfo.userAgent
                 )
             }
+            ProviderType.JELLYFIN -> url.takeIf { it.isNotBlank() }?.let { passthroughUrl ->
+                val apiKey = credentialCrypto.decryptIfNeeded(resolvedProvider.password)
+                resolvedProvider.applyPlaybackRequestProfile(
+                    ResolvedStreamUrl(
+                        url = passthroughUrl,
+                        expirationTime = extractStreamExpirationTime(passthroughUrl),
+                        headers = mapOf(
+                            "Authorization" to com.streamvault.data.remote.jellyfin.buildJellyfinAuthorizationHeader(
+                                resolvedProvider.serverUrl,
+                                resolvedProvider.username,
+                                apiKey
+                            )
+                        )
+                    )
+                )
+            }
             ProviderType.M3U -> url.takeIf { it.isNotBlank() }?.let { passthroughUrl ->
                 resolvedProvider.applyPlaybackRequestProfile(
                     ResolvedStreamUrl(

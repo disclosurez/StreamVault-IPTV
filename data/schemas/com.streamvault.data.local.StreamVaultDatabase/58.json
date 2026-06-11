@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 57,
-    "identityHash": "a2b2e934afe5748dd2f6ee8e481ffb33",
+    "version": 58,
+    "identityHash": "263f5af1a5bc644164116fd9e1079dc9",
     "entities": [
       {
         "tableName": "providers",
@@ -590,7 +590,7 @@
       },
       {
         "tableName": "movies",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `stream_id` INTEGER NOT NULL, `name` TEXT NOT NULL, `poster_url` TEXT, `backdrop_url` TEXT, `category_id` INTEGER, `category_name` TEXT, `stream_url` TEXT NOT NULL, `container_extension` TEXT, `plot` TEXT, `cast` TEXT, `director` TEXT, `genre` TEXT, `release_date` TEXT, `duration` TEXT, `duration_seconds` INTEGER NOT NULL, `rating` REAL NOT NULL, `year` TEXT, `tmdb_id` INTEGER, `youtube_trailer` TEXT, `provider_id` INTEGER NOT NULL, `watch_progress` INTEGER NOT NULL, `watch_count` INTEGER NOT NULL, `last_watched_at` INTEGER NOT NULL, `is_adult` INTEGER NOT NULL, `is_user_protected` INTEGER NOT NULL, `sync_fingerprint` TEXT NOT NULL, `added_at` INTEGER NOT NULL, `cache_state` TEXT NOT NULL DEFAULT 'DETAIL_HYDRATED', `detail_hydrated_at` INTEGER NOT NULL DEFAULT 0, `remote_stale_at` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`provider_id`) REFERENCES `providers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `stream_id` INTEGER NOT NULL, `name` TEXT NOT NULL, `poster_url` TEXT, `backdrop_url` TEXT, `category_id` INTEGER, `category_name` TEXT, `stream_url` TEXT NOT NULL, `container_extension` TEXT, `plot` TEXT, `cast` TEXT, `director` TEXT, `genre` TEXT, `release_date` TEXT, `duration` TEXT, `duration_seconds` INTEGER NOT NULL, `rating` REAL NOT NULL, `year` TEXT, `tmdb_id` INTEGER, `youtube_trailer` TEXT, `provider_id` INTEGER NOT NULL, `watch_progress` INTEGER NOT NULL, `watch_count` INTEGER NOT NULL, `last_watched_at` INTEGER NOT NULL, `is_adult` INTEGER NOT NULL, `is_user_protected` INTEGER NOT NULL, `sync_fingerprint` TEXT NOT NULL, `added_at` INTEGER NOT NULL, `cache_state` TEXT NOT NULL, `detail_hydrated_at` INTEGER NOT NULL, `remote_stale_at` INTEGER NOT NULL, FOREIGN KEY(`provider_id`) REFERENCES `providers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -750,22 +750,19 @@
             "fieldPath": "cacheState",
             "columnName": "cache_state",
             "affinity": "TEXT",
-            "notNull": true,
-            "defaultValue": "'DETAIL_HYDRATED'"
+            "notNull": true
           },
           {
             "fieldPath": "detailHydratedAt",
             "columnName": "detail_hydrated_at",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           },
           {
             "fieldPath": "remoteStaleAt",
             "columnName": "remote_stale_at",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -902,7 +899,7 @@
       },
       {
         "tableName": "series",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `series_id` INTEGER NOT NULL, `provider_series_id` TEXT, `name` TEXT NOT NULL, `poster_url` TEXT, `backdrop_url` TEXT, `category_id` INTEGER, `category_name` TEXT, `plot` TEXT, `cast` TEXT, `director` TEXT, `genre` TEXT, `release_date` TEXT, `rating` REAL NOT NULL, `tmdb_id` INTEGER, `youtube_trailer` TEXT, `episode_run_time` TEXT, `last_modified` INTEGER NOT NULL, `provider_id` INTEGER NOT NULL, `is_adult` INTEGER NOT NULL, `is_user_protected` INTEGER NOT NULL, `sync_fingerprint` TEXT NOT NULL, `cache_state` TEXT NOT NULL DEFAULT 'DETAIL_HYDRATED', `detail_hydrated_at` INTEGER NOT NULL DEFAULT 0, `remote_stale_at` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`provider_id`) REFERENCES `providers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `series_id` INTEGER NOT NULL, `provider_series_id` TEXT, `name` TEXT NOT NULL, `poster_url` TEXT, `backdrop_url` TEXT, `category_id` INTEGER, `category_name` TEXT, `plot` TEXT, `cast` TEXT, `director` TEXT, `genre` TEXT, `release_date` TEXT, `rating` REAL NOT NULL, `tmdb_id` INTEGER, `youtube_trailer` TEXT, `episode_run_time` TEXT, `last_modified` INTEGER NOT NULL, `provider_id` INTEGER NOT NULL, `is_adult` INTEGER NOT NULL, `is_user_protected` INTEGER NOT NULL, `sync_fingerprint` TEXT NOT NULL, `cache_state` TEXT NOT NULL, `detail_hydrated_at` INTEGER NOT NULL, `remote_stale_at` INTEGER NOT NULL, FOREIGN KEY(`provider_id`) REFERENCES `providers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -1027,22 +1024,19 @@
             "fieldPath": "cacheState",
             "columnName": "cache_state",
             "affinity": "TEXT",
-            "notNull": true,
-            "defaultValue": "'DETAIL_HYDRATED'"
+            "notNull": true
           },
           {
             "fieldPath": "detailHydratedAt",
             "columnName": "detail_hydrated_at",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           },
           {
             "fieldPath": "remoteStaleAt",
             "columnName": "remote_stale_at",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -5176,7 +5170,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a2b2e934afe5748dd2f6ee8e481ffb33')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '263f5af1a5bc644164116fd9e1079dc9')"
     ]
   }
 }

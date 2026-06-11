@@ -11,11 +11,12 @@ import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import com.streamvault.app.cast.CastManager
 import com.streamvault.app.cast.CastRouteChooserActivity
 import com.streamvault.app.backup.BackupFileBridge
 import com.streamvault.app.device.isTelevisionDevice
-import com.streamvault.app.localization.resolveAppLocale
 import com.streamvault.app.navigation.AppNavigation
 import com.streamvault.app.navigation.ExternalDestination
 import com.streamvault.app.navigation.ExternalNavigationRequest
@@ -42,13 +43,9 @@ import android.view.View
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import java.util.Locale
-import android.content.Context
-import android.content.ContextWrapper
 import android.net.Uri
-import android.content.res.AssetManager
-import android.content.res.Resources
 import android.speech.RecognizerIntent
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,43 +110,22 @@ class MainActivity : ComponentActivity() {
         _pictureInPictureModeFlow.value = isInPictureInPictureMode
         handleExternalIntent(intent)
         if (isTelevisionDevice()) {
-            lifecycleScope.launch {
+            window.decorView.post {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    delay(400)
                 runCatching { watchNextManager.refreshWatchNext() }
                 runCatching { launcherRecommendationsManager.refreshRecommendations() }
                 runCatching { tvInputChannelSyncManager.refreshTvInputCatalog() }
+                }
             }
         }
         setContent {
-            val appLanguage by preferencesRepository.appLanguage.collectAsState(initial = "system")
             val appTimeFormat by preferencesRepository.appTimeFormat.collectAsState(initial = com.streamvault.domain.model.AppTimeFormat.SYSTEM)
             val currentContext = LocalContext.current
-            
-            val configuration = remember(appLanguage) {
-                val locale = resolveAppLocale(
-                    preferredLanguageTag = appLanguage,
-                    baseConfiguration = this@MainActivity.resources.configuration
-                )
-                val conf = Configuration(this@MainActivity.resources.configuration)
-                Locale.setDefault(locale)
-                conf.setLocale(locale)
-                conf.setLayoutDirection(locale)
-                conf
-            }
-            val localizedContext = remember(configuration, currentContext) {
-                val configurationContext = currentContext.createConfigurationContext(configuration)
-                object : ContextWrapper(currentContext) {
-                    override fun getResources(): Resources = configurationContext.resources
-                    override fun getAssets(): AssetManager = configurationContext.assets
-                    override fun getSystemService(name: String): Any? {
-                        return if (name == Context.LAYOUT_INFLATER_SERVICE) {
-                            configurationContext.getSystemService(name)
-                        } else {
-                            super.getSystemService(name)
-                        }
-                    }
-                }
-            }
 
+            val configuration = remember(currentContext) {
+                this@MainActivity.resources.configuration
+            }
             val layoutDirection = remember(configuration) {
                 if (TextUtils.getLayoutDirectionFromLocale(configuration.locales[0]) == View.LAYOUT_DIRECTION_RTL) {
                     LayoutDirection.Rtl
@@ -159,7 +135,7 @@ class MainActivity : ComponentActivity() {
             }
 
             CompositionLocalProvider(
-                LocalContext provides localizedContext,
+                LocalContext provides currentContext,
                 LocalLayoutDirection provides layoutDirection,
                 LocalAppTimeFormat provides appTimeFormat
             ) {

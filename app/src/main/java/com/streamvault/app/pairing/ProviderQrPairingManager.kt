@@ -14,6 +14,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.streamvault.domain.model.ProviderEpgSyncMode
 import com.streamvault.domain.model.ProviderXtreamLiveSyncMode
 import com.streamvault.domain.model.StalkerAuthMode
+import com.streamvault.domain.usecase.JellyfinProviderSetupCommand
 import com.streamvault.domain.usecase.M3uProviderSetupCommand
 import com.streamvault.domain.usecase.StalkerProviderSetupCommand
 import com.streamvault.domain.usecase.ValidateAndAddProvider
@@ -222,6 +223,7 @@ class ProviderQrPairingManager @Inject constructor(
             when (type) {
                 "m3u" -> "Phone M3U Playlist"
                 "stalker" -> "Phone Stalker Portal"
+                "jellyfin" -> "Phone Jellyfin"
                 else -> "Phone Xtream Provider"
             }
         }
@@ -243,6 +245,15 @@ class ProviderQrPairingManager @Inject constructor(
                     password = form["password"].orEmpty(),
                     name = name,
                     epgSyncMode = ProviderEpgSyncMode.BACKGROUND
+                ),
+                onProgress = ::updateProgress
+            )
+            "jellyfin" -> validateAndAddProvider.loginJellyfin(
+                JellyfinProviderSetupCommand(
+                    serverUrl = form["serverUrl"].orEmpty(),
+                    username = form["username"].orEmpty(),
+                    password = form["password"].orEmpty(),
+                    name = name
                 ),
                 onProgress = ::updateProgress
             )
@@ -408,6 +419,7 @@ class ProviderQrPairingManager @Inject constructor(
               <option value="xtream">Xtream Codes</option>
               <option value="m3u">M3U Playlist URL</option>
               <option value="stalker">Stalker / MAG Portal</option>
+              <option value="jellyfin">Jellyfin</option>
             </select>
             <label>Provider name</label>
             <input name="name" placeholder="Provider Name">

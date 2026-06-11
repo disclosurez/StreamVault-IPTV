@@ -89,7 +89,7 @@ import android.widget.Toast
 
 // ??? Source type ?????????????????????????????????????????????????????????????
 
-private enum class SourceType { XTREAM, STALKER, M3U_URL, M3U_FILE }
+private enum class SourceType { XTREAM, STALKER, JELLYFIN, M3U_URL, M3U_FILE }
 
 // ??? Screen ??????????????????????????????????????????????????????????????????
 
@@ -100,6 +100,7 @@ fun ProviderSetupScreen(
     onBack: () -> Unit,
     editProviderId: Long? = null,
     initialImportUri: String? = null,
+    onLoginJellyfinQuickConnect: () -> Unit = {},
     viewModel: ProviderSetupViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -107,6 +108,7 @@ fun ProviderSetupScreen(
     val pairingState by viewModel.pairingState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    var appFilesDir by remember { mutableStateOf<java.io.File?>(null) }
 
     // ?? Local form state ??????????????????????????????????????????????????????
     var selectedTab by rememberSaveable { mutableStateOf(0) }
@@ -189,14 +191,21 @@ fun ProviderSetupScreen(
 
     // ?? Effects ???????????????????????????????????????????????????????????????
     LaunchedEffect(knownLocalM3uUrls) {
-        cleanupOldImportedM3uFilesAsync(context.filesDir, knownLocalM3uUrls, 20)
+        val filesDir = appFilesDir ?: return@LaunchedEffect
+        cleanupOldImportedM3uFilesAsync(filesDir, knownLocalM3uUrls, 20)
+    }
+
+    LaunchedEffect(context) {
+        appFilesDir = withContext(Dispatchers.IO) {
+            context.filesDir
+        }
     }
 
     LaunchedEffect(initialImportUri) {
         val importUri = initialImportUri?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (handledInitialImportUri == importUri) return@LaunchedEffect
         handledInitialImportUri = importUri
-        selectedTab = 2
+        selectedTab = 3
         viewModel.updateM3uTab(1)
         runCatching { android.net.Uri.parse(importUri) }.getOrNull()?.let(::importM3uUri)
     }
@@ -212,15 +221,17 @@ fun ProviderSetupScreen(
             onProviderAdded()
         }
     }
-    ProviderSetupCompletionLayer(
-        uiState = uiState,
-        knownLocalM3uUrls = knownLocalM3uUrls,
-        selectedM3uUrl = m3uUrl,
-        filesDir = context.filesDir,
-        onProviderAdded = onProviderAdded,
-        onAttachCreatedProvider = viewModel::attachCreatedProviderToCombined,
-        onSkipCreatedProviderCombinedAttach = viewModel::skipCreatedProviderCombinedAttach
-    )
+    appFilesDir?.let { filesDir ->
+        ProviderSetupCompletionLayer(
+            uiState = uiState,
+            knownLocalM3uUrls = knownLocalM3uUrls,
+            selectedM3uUrl = m3uUrl,
+            filesDir = filesDir,
+            onProviderAdded = onProviderAdded,
+            onAttachCreatedProvider = viewModel::attachCreatedProviderToCombined,
+            onSkipCreatedProviderCombinedAttach = viewModel::skipCreatedProviderCombinedAttach
+        )
+    }
 
     LaunchedEffect(editProviderId) {
         if (editProviderId != null) viewModel.loadProvider(editProviderId)
@@ -252,6 +263,7 @@ fun ProviderSetupScreen(
     val sourceType = when {
         selectedTab == 0 -> SourceType.XTREAM
         selectedTab == 1 -> SourceType.STALKER
+        selectedTab == 2 -> SourceType.JELLYFIN
         uiState.m3uTab == 1 -> SourceType.M3U_FILE
         else -> SourceType.M3U_URL
     }
@@ -267,13 +279,17 @@ fun ProviderSetupScreen(
                 selectedTab = 1
                 viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.STALKER)
             }
-            SourceType.M3U_URL -> {
+            SourceType.JELLYFIN -> {
                 selectedTab = 2
+                viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.JELLYFIN)
+            }
+            SourceType.M3U_URL -> {
+                selectedTab = 3
                 viewModel.updateM3uTab(0)
                 viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.M3U)
             }
             SourceType.M3U_FILE-> {
-                selectedTab = 2
+                selectedTab = 3
                 viewModel.updateM3uTab(1)
                 viewModel.applySourceDefaults(ProviderSetupViewModel.SetupSourceType.M3U)
             }
@@ -359,6 +375,8 @@ fun ProviderSetupScreen(
                         onFilePick = { filePickerLauncher.launch(arrayOf("*/*")) },
                         onLoginXtream = { viewModel.loginXtream(serverUrl, username, password, name, httpUserAgent, httpHeaders) },
                         onLoginStalker = { viewModel.loginStalker(serverUrl, stalkerMacAddress, stalkerAuthMode, username, password, name, stalkerDeviceProfile, stalkerDeviceTimezone, stalkerDeviceLocale, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2, stalkerSignature) },
+                        onLoginJellyfin = { viewModel.loginJellyfin(serverUrl, username, password, name) },
+                        onLoginJellyfinQuickConnect = { viewModel.loginJellyfinQuickConnect(serverUrl, name) },
                         onAddM3u = { viewModel.addM3u(m3uUrl, name, httpUserAgent, httpHeaders) },
                         onStartPhonePairing = viewModel::startPhonePairing,
                         onStopPhonePairing = viewModel::stopPhonePairing,
@@ -403,6 +421,8 @@ fun ProviderSetupScreen(
                         onFilePick = { filePickerLauncher.launch(arrayOf("*/*")) },
                         onLoginXtream = { viewModel.loginXtream(serverUrl, username, password, name, httpUserAgent, httpHeaders) },
                         onLoginStalker = { viewModel.loginStalker(serverUrl, stalkerMacAddress, stalkerAuthMode, username, password, name, stalkerDeviceProfile, stalkerDeviceTimezone, stalkerDeviceLocale, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2, stalkerSignature) },
+                        onLoginJellyfin = { viewModel.loginJellyfin(serverUrl, username, password, name) },
+                        onLoginJellyfinQuickConnect = { viewModel.loginJellyfinQuickConnect(serverUrl, name) },
                         onAddM3u = { viewModel.addM3u(m3uUrl, name, httpUserAgent, httpHeaders) },
                         onStartPhonePairing = viewModel::startPhonePairing,
                         onStopPhonePairing = viewModel::stopPhonePairing,
@@ -427,7 +447,7 @@ fun ProviderSetupScreen(
         }
     }
 
-    if (uiState.syncProgress != null) {
+    if (uiState.syncProgress != null && uiState.jellyfinQuickConnectCode == null) {
         SyncProgressDialog(message = uiState.syncProgress!!)
     }
 
@@ -707,6 +727,8 @@ private fun ProviderFormContent(
     onFilePick: () -> Unit,
     onLoginXtream: () -> Unit,
     onLoginStalker: () -> Unit,
+    onLoginJellyfin: () -> Unit,
+    onLoginJellyfinQuickConnect: () -> Unit,
     onAddM3u: () -> Unit,
     onStartPhonePairing: () -> Unit,
     onStopPhonePairing: () -> Unit,
@@ -895,6 +917,91 @@ private fun ProviderFormContent(
                     )
                 }
 
+                SourceType.JELLYFIN -> {
+                    ProviderTextField(
+                        value = serverUrl, onValueChange = onServerUrlChange,
+                        placeholder = "Jellyfin URL",
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.None,
+                            autoCorrectEnabled = false,
+                            keyboardType = if (isTelevisionDevice) KeyboardType.Ascii else KeyboardType.Uri,
+                            imeAction = ImeAction.Next
+                        )
+                    )
+                    ProviderTextField(
+                        value = username, onValueChange = onUsernameChange,
+                        placeholder = "Username",
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.None,
+                            autoCorrectEnabled = false,
+                            keyboardType = if (isTelevisionDevice) KeyboardType.Ascii else KeyboardType.Text,
+                            imeAction = ImeAction.Next
+                        )
+                    )
+                    ProviderTextField(
+                        value = password, onValueChange = onPasswordChange,
+                        placeholder = "Password",
+                        isPassword = true,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.None,
+                            autoCorrectEnabled = false,
+                            keyboardType = if (isTelevisionDevice) KeyboardType.Ascii else KeyboardType.Password,
+                            imeAction = ImeAction.Done
+                        )
+                    )
+                    uiState.jellyfinQuickConnectCode?.let { code ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            border = Border(BorderStroke(1.dp, SurfaceHighlight.copy(alpha = 0.45f))),
+                            colors = SurfaceDefaults.colors(containerColor = Surface.copy(alpha = 0.75f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Quick Connect code",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = code,
+                                    style = MaterialTheme.typography.displaySmall,
+                                    color = TextPrimary,
+                                    modifier = Modifier.semantics { contentDescription = "Jellyfin quick connect code $code" }
+                                )
+                                Text(
+                                    text = "Enter this code in Jellyfin Quick Connect on another signed-in device.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                                uiState.syncProgress?.takeIf { it.isNotBlank() }?.let { progress ->
+                                    Text(
+                                        text = progress,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    FormErrors(uiState.validationError, uiState.error)
+                    ActionButton(
+                        text = when {
+                            uiState.isLoading -> androidx.compose.ui.res.stringResource(R.string.setup_connecting)
+                            uiState.isEditing -> androidx.compose.ui.res.stringResource(R.string.setup_save)
+                            else              -> androidx.compose.ui.res.stringResource(R.string.setup_login)
+                        },
+                        isLoading = uiState.isLoading,
+                        onClick = onLoginJellyfin
+                    )
+                    TextButton(
+                        onClick = onLoginJellyfinQuickConnect,
+                        enabled = !uiState.isLoading
+                    ) {
+                        Text("Use Quick Connect")
+                    }
+                }
+
                 SourceType.M3U_URL -> {
                     ProviderTextField(
                         value = m3uUrl, onValueChange = onM3uUrlChange,
@@ -1044,6 +1151,7 @@ private fun AdvancedProviderOptionsSection(
         SourceType.XTREAM,
         SourceType.M3U_URL,
         SourceType.M3U_FILE -> ProviderEpgSyncMode.UPFRONT
+        SourceType.JELLYFIN -> ProviderEpgSyncMode.SKIP
     }
 
     LaunchedEffect(uiState.isEditing, uiState.epgSyncMode, uiState.xtreamLiveSyncMode, sourceType) {
@@ -1629,6 +1737,15 @@ private fun SourceTypeSelectorPanel(
                     onClick = { onSelect(SourceType.STALKER) }
                 )
             }
+            if (!isEditing || sourceType == SourceType.JELLYFIN) {
+                SourceTypeCard(
+                    title = "Jellyfin",
+                    subtitle = "Connect to a Jellyfin server with a username and password.",
+                    selected = sourceType == SourceType.JELLYFIN,
+                    enabled = !isEditing,
+                    onClick = { onSelect(SourceType.JELLYFIN) }
+                )
+            }
             if (!isEditing || sourceType == SourceType.M3U_URL) {
                 SourceTypeCard(
                     title = androidx.compose.ui.res.stringResource(R.string.setup_tab_url),
@@ -1744,6 +1861,13 @@ private fun SourceTypeTabRow(
                 badge = androidx.compose.ui.res.stringResource(R.string.badge_beta),
                 isSelected = sourceType == SourceType.STALKER,
                 onClick = { if (!isEditing) onSelect(SourceType.STALKER) }
+            )
+        }
+        if (!isEditing || sourceType == SourceType.JELLYFIN) {
+            TabButton(
+                text = "Jellyfin",
+                isSelected = sourceType == SourceType.JELLYFIN,
+                onClick = { if (!isEditing) onSelect(SourceType.JELLYFIN) }
             )
         }
         if (!isEditing || sourceType == SourceType.M3U_URL) {

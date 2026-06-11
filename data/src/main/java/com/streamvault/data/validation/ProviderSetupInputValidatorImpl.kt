@@ -3,6 +3,8 @@ package com.streamvault.data.validation
 import com.streamvault.data.util.ProviderInputSanitizer
 import com.streamvault.data.util.UrlSecurityPolicy
 import com.streamvault.domain.manager.ProviderSetupInputValidator
+import com.streamvault.domain.manager.ValidatedJellyfinProviderInput
+import com.streamvault.domain.manager.ValidatedJellyfinQuickConnectProviderInput
 import com.streamvault.domain.manager.ValidatedM3uProviderInput
 import com.streamvault.domain.manager.ValidatedStalkerProviderInput
 import com.streamvault.domain.manager.ValidatedXtreamProviderInput
@@ -246,6 +248,70 @@ class ProviderSetupInputValidatorImpl @Inject constructor() : ProviderSetupInput
                 deviceId = normalizedDeviceId,
                 deviceId2 = normalizedDeviceId2,
                 signature = normalizedSignature
+            )
+        )
+    }
+
+    override fun validateJellyfin(
+        serverUrl: String,
+        username: String,
+        password: String,
+        name: String,
+        allowBlankPassword: Boolean
+    ): Result<ValidatedJellyfinProviderInput> {
+        val normalizedServerUrl = ProviderInputSanitizer.normalizeUrl(serverUrl)
+        val normalizedUsername = ProviderInputSanitizer.normalizeUsername(username)
+        val normalizedPassword = ProviderInputSanitizer.normalizePassword(password)
+        val normalizedName = ProviderInputSanitizer.normalizeProviderName(name)
+
+        if (normalizedServerUrl.isBlank()) {
+            return Result.error("Please enter Jellyfin server URL")
+        }
+        if (normalizedUsername.isBlank()) {
+            return Result.error("Please enter Jellyfin username")
+        }
+        ProviderInputSanitizer.validateUrl(normalizedServerUrl)?.let { message ->
+            return Result.error(message)
+        }
+        UrlSecurityPolicy.validateXtreamServerUrl(normalizedServerUrl)?.let { message ->
+            return Result.error(message)
+        }
+        if (!allowBlankPassword && normalizedPassword.isBlank()) {
+            return Result.error("Please enter Jellyfin password")
+        }
+        ProviderInputSanitizer.validatePassword(normalizedPassword, allowBlank = false)?.let { message ->
+            return Result.error(message)
+        }
+        return Result.success(
+            ValidatedJellyfinProviderInput(
+                serverUrl = normalizedServerUrl,
+                username = normalizedUsername,
+                password = normalizedPassword,
+                name = normalizedName
+            )
+        )
+    }
+
+    override fun validateJellyfinQuickConnect(
+        serverUrl: String,
+        name: String
+    ): Result<ValidatedJellyfinQuickConnectProviderInput> {
+        val normalizedServerUrl = ProviderInputSanitizer.normalizeUrl(serverUrl)
+        val normalizedName = ProviderInputSanitizer.normalizeProviderName(name)
+
+        if (normalizedServerUrl.isBlank()) {
+            return Result.error("Please enter Jellyfin server URL")
+        }
+        ProviderInputSanitizer.validateUrl(normalizedServerUrl)?.let { message ->
+            return Result.error(message)
+        }
+        UrlSecurityPolicy.validateXtreamServerUrl(normalizedServerUrl)?.let { message ->
+            return Result.error(message)
+        }
+        return Result.success(
+            ValidatedJellyfinQuickConnectProviderInput(
+                serverUrl = normalizedServerUrl,
+                name = normalizedName
             )
         )
     }

@@ -12,11 +12,14 @@ import android.util.Log
 import com.streamvault.app.MainActivity
 import com.streamvault.app.device.isTelevisionDevice
 import com.streamvault.app.navigation.PlayerNavigationRequest
+import com.streamvault.domain.model.ActiveLiveSource
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Program
 import com.streamvault.domain.repository.ChannelRepository
+import com.streamvault.domain.repository.CombinedM3uRepository
 import com.streamvault.domain.repository.EpgRepository
 import com.streamvault.domain.repository.ProviderRepository
+import com.streamvault.domain.model.supportsLiveTv
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -30,6 +33,7 @@ import javax.inject.Singleton
 class TvInputChannelSyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val providerRepository: ProviderRepository,
+    private val combinedM3uRepository: CombinedM3uRepository,
     private val channelRepository: ChannelRepository,
     private val epgRepository: EpgRepository
 ) {
@@ -46,7 +50,22 @@ class TvInputChannelSyncManager @Inject constructor(
                 if (!context.isTelevisionDevice()) {
                     return@runCatching
                 }
-                val provider = providerRepository.getActiveProvider().first()
+                val activeSource = combinedM3uRepository.getActiveLiveSource().first()
+                val provider = when (activeSource) {
+                    is ActiveLiveSource.CombinedM3uSource -> {
+                        val memberIds = combinedM3uRepository.getProfile(activeSource.profileId)
+                            ?.members.orEmpty()
+                            .filter { it.enabled }
+                            .map { it.providerId }
+                        val activeProvider = providerRepository.getActiveProvider().first()
+                        activeProvider?.takeIf { it.id in memberIds && it.type.supportsLiveTv() }
+                            ?: memberIds.firstOrNull()?.let { providerRepository.getProvider(it)?.takeIf { provider -> provider.type.supportsLiveTv() } }
+                    }
+                    is ActiveLiveSource.ProviderSource -> {
+                        providerRepository.getProvider(activeSource.providerId)?.takeIf { it.type.supportsLiveTv() }
+                    }
+                    null -> providerRepository.getActiveProvider().first()?.takeIf { it.type.supportsLiveTv() }
+                }
                 if (provider == null) {
                     deleteManagedChannels()
                     return@runCatching

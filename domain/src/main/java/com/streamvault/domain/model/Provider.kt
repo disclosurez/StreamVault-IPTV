@@ -61,8 +61,18 @@ data class Provider(
 enum class ProviderType {
     XTREAM_CODES,
     M3U,
-    STALKER_PORTAL
+    STALKER_PORTAL,
+    JELLYFIN
 }
+
+fun ProviderType.supportsLiveTv(): Boolean = when (this) {
+    ProviderType.XTREAM_CODES,
+    ProviderType.M3U,
+    ProviderType.STALKER_PORTAL -> true
+    ProviderType.JELLYFIN -> false
+}
+
+fun Provider.supportsLiveTv(): Boolean = type.supportsLiveTv()
 
 enum class ProviderEpgSyncMode {
     UPFRONT,

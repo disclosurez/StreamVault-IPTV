@@ -5,6 +5,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -16,9 +20,13 @@ class ParentalControlManager @Inject constructor(
     val unlockedCategoriesByProvider: StateFlow<Map<Long, Set<Long>>> =
         _unlockedCategoriesByProvider.asStateFlow()
 
+    private val initScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     init {
-        if (sessionStore.readSessionState().unlockedCategoryIdsByProvider.isNotEmpty()) {
-            sessionStore.writeSessionState(ParentalControlSessionState())
+        initScope.launch {
+            if (sessionStore.readSessionState().unlockedCategoryIdsByProvider.isNotEmpty()) {
+                sessionStore.writeSessionState(ParentalControlSessionState())
+            }
         }
     }
 

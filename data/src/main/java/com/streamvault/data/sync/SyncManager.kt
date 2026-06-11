@@ -27,6 +27,7 @@ import com.streamvault.data.local.entity.XtreamLiveOnboardingStateEntity
 import com.streamvault.data.mapper.toDomain
 import com.streamvault.data.mapper.toEntity
 import com.streamvault.data.parser.M3uParser
+import com.streamvault.data.remote.jellyfin.JellyfinProvider
 import com.streamvault.data.remote.http.buildAppRequestProfile
 import com.streamvault.data.remote.http.toGenericRequestProfile
 import com.streamvault.data.remote.stalker.StalkerApiService
@@ -182,6 +183,7 @@ class SyncManager @Inject constructor(
     private val stalkerApiService: StalkerApiService,
     private val xtreamJson: Json,
     private val m3uParser: M3uParser,
+    private val jellyfinProvider: JellyfinProvider,
     private val epgRepository: EpgRepository,
     private val epgSourceRepository: EpgSourceRepository,
     private val okHttpClient: OkHttpClient,
@@ -689,6 +691,7 @@ class SyncManager @Inject constructor(
                             }
                         )
                         ProviderType.M3U -> syncM3u(provider, force, onProgress)
+                        ProviderType.JELLYFIN -> syncJellyfin(provider, force, onProgress)
                         ProviderType.STALKER_PORTAL -> syncStalker(provider, force, onProgress)
                     }
                 }
@@ -3815,6 +3818,93 @@ class SyncManager @Inject constructor(
         return if (warnings.isEmpty()) SyncOutcome() else SyncOutcome(partial = true, warnings = warnings.distinct())
     }
 
+    private suspend fun syncJellyfin(
+        provider: Provider,
+        force: Boolean,
+        onProgress: ((String) -> Unit)?
+    ): SyncOutcome = coroutineScope {
+        val warnings = mutableListOf<String>()
+        val now = System.currentTimeMillis()
+        val movieResult = async(Dispatchers.IO) { jellyfinProvider.fetchMovies(provider) }
+        val seriesResult = async(Dispatchers.IO) { jellyfinProvider.fetchSeries(provider) }
+
+        val resolvedMovies = movieResult.await()
+        val resolvedSeries = seriesResult.await()
+
+        val movieEntities = (resolvedMovies as? Result.Success)?.data.orEmpty()
+        val seriesEntities = (resolvedSeries as? Result.Success)?.data.orEmpty()
+
+        if (resolvedMovies is Result.Error) {
+            warnings += resolvedMovies.message
+        }
+        if (resolvedSeries is Result.Error) {
+            warnings += resolvedSeries.message
+        }
+
+        if (movieEntities.isEmpty() && seriesEntities.isEmpty()) {
+            warnings += when {
+                resolvedMovies is Result.Error && resolvedSeries is Result.Error ->
+                    "Failed to load Jellyfin catalog: ${resolvedMovies.message}; ${resolvedSeries.message}"
+                else -> "Jellyfin library is empty or contains no supported movies or series."
+            }
+            return@coroutineScope if (warnings.isEmpty()) {
+                SyncOutcome()
+            } else {
+                SyncOutcome(partial = true, warnings = warnings.distinct())
+            }
+        }
+
+        if (movieEntities.isNotEmpty()) {
+            progress(provider.id, onProgress, "Importing Jellyfin movies...")
+            val movieCategories = listOf(
+                CategoryEntity(
+                    providerId = provider.id,
+                    categoryId = 1L,
+                    name = "Movies",
+                    type = ContentType.MOVIE
+                )
+            )
+            val importedMovies = withContext(Dispatchers.IO) {
+                syncCatalogStore.replaceMovieCatalog(provider.id, movieCategories, movieEntities.asSequence())
+            }
+            syncMetadataRepository.updateMetadata(
+                (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)).copy(
+                    lastMovieSync = now,
+                    lastMovieAttempt = now,
+                    lastMovieSuccess = now,
+                    movieCount = importedMovies,
+                    movieSyncMode = VodSyncMode.FULL,
+                    movieCatalogStale = false
+                )
+            )
+        }
+
+        if (seriesEntities.isNotEmpty()) {
+            progress(provider.id, onProgress, "Importing Jellyfin series...")
+            val seriesCategories = listOf(
+                CategoryEntity(
+                    providerId = provider.id,
+                    categoryId = 2L,
+                    name = "Series",
+                    type = ContentType.SERIES
+                )
+            )
+            val importedSeries = withContext(Dispatchers.IO) {
+                syncCatalogStore.replaceSeriesCatalog(provider.id, seriesCategories, seriesEntities.asSequence())
+            }
+            syncMetadataRepository.updateMetadata(
+                (syncMetadataRepository.getMetadata(provider.id) ?: SyncMetadata(provider.id)).copy(
+                    lastSeriesSync = now,
+                    lastSeriesSuccess = now,
+                    seriesCount = importedSeries
+                )
+            )
+        }
+
+        val combinedWarnings = warnings.distinct()
+        if (combinedWarnings.isEmpty()) SyncOutcome() else SyncOutcome(partial = true, warnings = combinedWarnings)
+    }
+
     private suspend fun queueStalkerIndexSection(
         providerId: Long,
         contentType: ContentType,
@@ -4134,6 +4224,7 @@ class SyncManager @Inject constructor(
                     updatedMetadata = syncMetadataRepository.getMetadata(provider.id) ?: updatedMetadata
                 }
             }
+            ProviderType.JELLYFIN -> Unit
         }
 
         try {
@@ -4188,6 +4279,7 @@ class SyncManager @Inject constructor(
                 }
             }
             ProviderType.M3U -> providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
+            ProviderType.JELLYFIN -> providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
             ProviderType.STALKER_PORTAL -> providerDao.getById(provider.id)?.epgUrl ?: provider.epgUrl
         }
         if (epgUrl.isBlank()) {
@@ -4208,6 +4300,7 @@ class SyncManager @Inject constructor(
         val validationError = when (provider.type) {
             ProviderType.XTREAM_CODES -> UrlSecurityPolicy.validateXtreamEpgUrl(epgUrl)
             ProviderType.M3U -> UrlSecurityPolicy.validateOptionalEpgUrl(epgUrl)
+            ProviderType.JELLYFIN -> UrlSecurityPolicy.validateOptionalEpgUrl(epgUrl)
             ProviderType.STALKER_PORTAL -> UrlSecurityPolicy.validateOptionalEpgUrl(epgUrl)
         }
         validationError?.let { message ->
@@ -4632,6 +4725,10 @@ class SyncManager @Inject constructor(
                 )
                 syncMetadataRepository.updateMetadata(metadata)
             }
+            ProviderType.JELLYFIN -> {
+                // Jellyfin providers do not expose live TV here, so treat the retry as a no-op.
+                SyncOutcome()
+            }
             ProviderType.STALKER_PORTAL -> {
                 emitCatalogSyncProgress(section = Section.LIVE)
                 progress(provider.id, onProgress, "Retrying Live TV...")
@@ -4742,6 +4839,9 @@ class SyncManager @Inject constructor(
                         movieCatalogStale = false
                 )
                 syncMetadataRepository.updateMetadata(metadata)
+            }
+            ProviderType.JELLYFIN -> {
+                return syncJellyfin(provider, force = false, onProgress = onProgress)
             }
             ProviderType.STALKER_PORTAL -> {
                 progress(provider.id, onProgress, "Queueing Movies index...")
@@ -4870,6 +4970,9 @@ class SyncManager @Inject constructor(
             }
             ProviderType.M3U -> {
                 throw IllegalStateException("Series retry is unavailable for this provider")
+            }
+            ProviderType.JELLYFIN -> {
+                return syncJellyfin(provider, force = false, onProgress = onProgress)
             }
         }
         return if (sectionWarnings.isEmpty()) SyncOutcome() else SyncOutcome(partial = true, warnings = sectionWarnings)

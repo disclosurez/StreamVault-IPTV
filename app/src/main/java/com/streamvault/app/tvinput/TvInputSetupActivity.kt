@@ -46,6 +46,7 @@ import com.streamvault.app.ui.theme.Primary
 import com.streamvault.app.ui.theme.StreamVaultTheme
 import com.streamvault.app.ui.theme.SurfaceElevated
 import com.streamvault.domain.model.Provider
+import com.streamvault.domain.model.supportsLiveTv
 import com.streamvault.domain.repository.ProviderRepository
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -281,7 +282,14 @@ class TvInputSetupViewModel @Inject constructor(
 
             var activeProvider = providerRepository.getActiveProvider().first()
             if (activeProvider == null) {
-                val fallbackProvider = providers.first()
+                val fallbackProvider = providers.firstOrNull { it.supportsLiveTv() }
+                if (fallbackProvider == null) {
+                    _uiState.value = TvInputSetupUiState(
+                        inputId = inputId,
+                        status = TvInputSetupStatus.NO_PROVIDER
+                    )
+                    return@launch
+                }
                 providerRepository.setActiveProvider(fallbackProvider.id)
                 activeProvider = fallbackProvider
             }

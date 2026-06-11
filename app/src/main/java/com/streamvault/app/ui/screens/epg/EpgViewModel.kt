@@ -30,6 +30,7 @@ import com.streamvault.domain.model.RecordingItem
 import com.streamvault.domain.model.RecordingRequest
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.manager.RecordingManager
+import com.streamvault.domain.model.supportsLiveTv
 import com.streamvault.domain.usecase.GetCustomCategories
 import com.streamvault.domain.usecase.ScheduleRecording
 import com.streamvault.domain.usecase.ScheduleRecordingCommand
@@ -759,7 +760,7 @@ class EpgViewModel @Inject constructor(
                 combinedM3uRepository.getActiveLiveSource(),
                 providerRepository.getActiveProvider()
             ) { activeSource, activeProvider ->
-                Pair(activeSource ?: activeProvider?.id?.let { ActiveLiveSource.ProviderSource(it) }, activeProvider)
+                Pair(activeSource ?: activeProvider?.takeIf { it.supportsLiveTv() }?.id?.let { ActiveLiveSource.ProviderSource(it) }, activeProvider)
             }.distinctUntilChanged().collectLatest { (activeSource, activeProvider) ->
                 if (activeSource == null && activeProvider == null) {
                     guideFallbackJob?.cancel()
@@ -1271,6 +1272,7 @@ class EpgViewModel @Inject constructor(
             com.streamvault.domain.model.ProviderType.XTREAM_CODES -> "Xtream Codes"
             com.streamvault.domain.model.ProviderType.M3U -> "M3U Playlist"
             com.streamvault.domain.model.ProviderType.STALKER_PORTAL -> "Stalker/MAG Portal"
+            com.streamvault.domain.model.ProviderType.JELLYFIN -> "Jellyfin"
         }
     }
 
@@ -1290,6 +1292,8 @@ class EpgViewModel @Inject constructor(
                 } else {
                     "Guide combines optional XMLTV with on-demand Stalker portal data."
                 }
+            com.streamvault.domain.model.ProviderType.JELLYFIN ->
+                "Jellyfin playback uses the library catalog and a signed-in user session."
         }
     }
 

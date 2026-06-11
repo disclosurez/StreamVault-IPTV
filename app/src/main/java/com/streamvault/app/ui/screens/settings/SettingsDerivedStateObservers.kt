@@ -169,6 +169,9 @@ private fun buildCapabilitySummary(application: Application, provider: Provider)
                 "Portal catalog with MAC auth and on-demand guide/playback resolution."
             }
         }
+        ProviderType.JELLYFIN -> {
+            "Jellyfin library sync with username/password playback access."
+        }
     }
 }
 
@@ -176,6 +179,7 @@ private fun Provider.sourceLabel(): String = when (type) {
     ProviderType.XTREAM_CODES -> "Xtream Codes"
     ProviderType.M3U -> "M3U Playlist"
     ProviderType.STALKER_PORTAL -> "Stalker/MAG Portal"
+    ProviderType.JELLYFIN -> "Jellyfin"
 }
 
 private fun Provider.expirySummary(): String {
@@ -207,4 +211,5 @@ private fun Provider.archiveSummary(): String = when (type) {
             "Stalker replay depends on portal support with optional XMLTV coverage."
         }
     }
+    ProviderType.JELLYFIN -> "Jellyfin playback uses the server catalog and a signed-in user session."
 }

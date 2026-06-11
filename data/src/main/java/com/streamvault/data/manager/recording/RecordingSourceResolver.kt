@@ -52,6 +52,7 @@ class RecordingSourceResolver @Inject constructor(
                 provider.type == com.streamvault.domain.model.ProviderType.XTREAM_CODES -> "${provider.name} • Xtream"
                 provider.type == com.streamvault.domain.model.ProviderType.M3U -> "${provider.name} • M3U"
                 provider.type == com.streamvault.domain.model.ProviderType.STALKER_PORTAL -> "${provider.name} • Stalker"
+                provider.type == com.streamvault.domain.model.ProviderType.JELLYFIN -> "${provider.name} • Jellyfin"
                 else -> provider.name
             }
         }
