@@ -66,7 +66,7 @@ fun ContinueWatchingRow(
             )
             if (onClear != null) {
                 androidx.compose.material3.TextButton(onClick = onClear) {
-                    Text(text = stringResource(R.string.action_clear))
+                    Text(text = stringResource(R.string.action_clear), color = Color.White)
                 }
             }
         }
