@@ -14,8 +14,8 @@ import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private const val GITHUB_RELEASES_LATEST_URL = "https://api.github.com/repos/Davidona/StreamVault-IPTV/releases/latest"
-private const val GITHUB_RELEASES_LIST_URL = "https://api.github.com/repos/Davidona/StreamVault-IPTV/releases?per_page=20"
+private const val GITHUB_RELEASES_LATEST_URL = "https://api.github.com/repos/disclosurez/StreamVault-IPTV/releases/latest"
+private const val GITHUB_RELEASES_LIST_URL = "https://api.github.com/repos/disclosurez/StreamVault-IPTV/releases?per_page=20"
 
 data class GitHubReleaseInfo(
     val versionName: String,
