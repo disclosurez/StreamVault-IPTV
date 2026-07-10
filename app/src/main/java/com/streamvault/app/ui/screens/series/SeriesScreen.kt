@@ -628,7 +628,7 @@ private fun SeriesVodContent(
                 CategoryRow(
                         title = stringResource(R.string.library_lens_fresh_series),
                         items = freshSeries,
-                        onSeeAll = null,
+                        onSeeAll = onOpenFresh,
                         keySelector = { it.id }
                     ) { series ->
                         val isLocked = isSeriesLocked(series)
