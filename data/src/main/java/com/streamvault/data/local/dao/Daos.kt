@@ -2475,14 +2475,22 @@ interface SeriesDao {
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
     @Query("""
-        SELECT * FROM series
-        WHERE provider_id = :providerId
+        SELECT s.* FROM series s
+        LEFT JOIN (
+            SELECT series_id, MAX(release_date) AS latest_episode_date
+            FROM episodes
+            WHERE provider_id = :providerId AND release_date IS NOT NULL AND release_date != ''
+            GROUP BY series_id
+        ) e ON s.id = e.series_id
+        WHERE s.provider_id = :providerId
         ORDER BY
-            CASE WHEN COALESCE(release_date, '') != '' THEN 0 ELSE 1 END,
-            release_date DESC,
-            last_modified DESC,
-            name ASC,
-            id ASC
+            CASE WHEN COALESCE(e.latest_episode_date, s.release_date, '') != '' THEN 0 ELSE 1 END,
+            e.latest_episode_date DESC,
+            CASE WHEN COALESCE(s.release_date, '') != '' THEN 0 ELSE 1 END,
+            s.release_date DESC,
+            s.last_modified DESC,
+            s.name ASC,
+            s.id ASC
         LIMIT :limit
     """)
     fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
