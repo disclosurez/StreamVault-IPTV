@@ -1297,9 +1297,9 @@ interface MovieDao {
         WHERE provider_id = :providerId
         ORDER BY
             CASE WHEN COALESCE(release_date, '') != '' THEN 0 ELSE 1 END,
-            release_date ASC,
+            release_date DESC,
             CASE WHEN COALESCE(year, '') != '' THEN 0 ELSE 1 END,
-            year ASC,
+            year DESC,
             name ASC,
             id ASC
         LIMIT :limit
