@@ -103,6 +103,9 @@ abstract class RepositoryModule {
     @Binds @Singleton
     abstract fun bindCredentialCrypto(impl: AndroidKeystoreCredentialCrypto): CredentialCrypto
 
+    @Binds @Singleton
+    abstract fun bindTrendingRepository(impl: TrendingRepositoryImpl): TrendingRepository
+
     companion object {
         @Provides
         @Singleton

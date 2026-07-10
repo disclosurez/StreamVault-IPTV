@@ -20,6 +20,7 @@ import com.streamvault.domain.model.Series
 import com.streamvault.domain.repository.FavoriteRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
 import com.streamvault.domain.repository.ProviderRepository
+import com.streamvault.domain.repository.TrendingRepository
 import com.streamvault.domain.repository.SeriesRepository
 import com.streamvault.domain.usecase.ContinueWatchingResult
 import com.streamvault.domain.usecase.ContinueWatchingScope
@@ -79,13 +80,16 @@ class SeriesViewModel @Inject constructor(
     private val favoriteRepository: FavoriteRepository,
     private val getContinueWatching: GetContinueWatching,
     private val getCustomCategories: GetCustomCategories,
-    private val parentalControlManager: ParentalControlManager
+    private val parentalControlManager: ParentalControlManager,
+    private val trendingRepository: TrendingRepository
 ) : ViewModel() {
     private companion object {
         const val UNCATEGORIZED = "Uncategorized"
         const val MIN_SEARCH_QUERY_LENGTH = 2
         const val FAVORITE_ID_FETCH_BUFFER = 80
         const val INITIAL_PREVIEW_BATCH_SIZE = 6
+        const val TRENDING_CATEGORY = "Trending"
+        const val TRENDING_LIMIT = 20
     }
 
     private val _uiState = MutableStateFlow(SeriesUiState())
@@ -1062,6 +1066,22 @@ class SeriesViewModel @Inject constructor(
                     if (fetchIds.size == ids.size) filteredItems.size else ids.size,
                     false
                 )
+            }
+            TRENDING_CATEGORY -> {
+                val trendingResult = trendingRepository.getTrendingSeriesTitles()
+                val trendingTitles = if (trendingResult is com.streamvault.domain.model.Result.Success) {
+                    trendingResult.data.map { it.trim().lowercase() }.toSet()
+                } else emptySet()
+                val items = if (trendingTitles.isEmpty()) {
+                    emptyList()
+                } else {
+                    val allSeries = seriesRepository.getSeries(request.providerId).first()
+                    allSeries.filter { series ->
+                        val n = series.name.trim().lowercase()
+                        n in trendingTitles || trendingTitles.any { n.contains(it) || it.contains(n) }
+                    }.filterNot { item -> item.categoryId in request.hiddenCategoryIds }
+                }
+                Triple(items, items.size, false)
             }
             else -> {
                 val customCategory = request.customCategories.firstOrNull { it.name == request.selectedCategory }
