@@ -317,6 +317,21 @@ class MovieRepositoryImpl @Inject constructor(
                 buildPresentedMovies(movies, settings).take(limit)
             }
 
+    override fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<Movie>> =
+        combine(
+            movieDao.getByReleaseDate(providerId, limit),
+            preferencesRepository.parentalControlLevel
+        ) { entities, level: Int ->
+            if (level >= 3) {
+                entities.filter { !it.isUserProtected }
+            } else {
+                entities
+            }
+        }.map { list -> list.map { it.toDomain() } }
+            .combine(moviePresentationSettingsFlow) { movies, settings ->
+                buildPresentedMovies(movies, settings).take(limit)
+            }
+
     override fun getRecommendations(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
             getTopRatedPreview(providerId, limit = maxOf(limit * 6, 48)),

@@ -1292,6 +1292,20 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND added_at > 0 ORDER BY added_at DESC, name ASC, id ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
 
+    @Query("""
+        SELECT * FROM movies
+        WHERE provider_id = :providerId
+        ORDER BY
+            CASE WHEN COALESCE(release_date, '') != '' THEN 0 ELSE 1 END,
+            release_date ASC,
+            CASE WHEN COALESCE(year, '') != '' THEN 0 ELSE 1 END,
+            year ASC,
+            name ASC,
+            id ASC
+        LIMIT :limit
+    """)
+    fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
+
         @Query(
             """
             SELECT * FROM movies
