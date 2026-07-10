@@ -2474,6 +2474,19 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND last_modified > 0 ORDER BY last_modified DESC, name ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
+    @Query("""
+        SELECT * FROM series
+        WHERE provider_id = :providerId
+        ORDER BY
+            CASE WHEN COALESCE(release_date, '') != '' THEN 0 ELSE 1 END,
+            release_date DESC,
+            last_modified DESC,
+            name ASC,
+            id ASC
+        LIMIT :limit
+    """)
+    fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
+
     @Query(
         """
         SELECT * FROM series
