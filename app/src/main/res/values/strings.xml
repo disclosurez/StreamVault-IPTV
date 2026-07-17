@@ -166,6 +166,8 @@
     <string name="category_options_pin">Pin Category</string>
     <string name="category_options_unpin">Unpin Category</string>
     <string name="category_pinned">Pinned %1$s.</string>
+    <string name="category_pin">Pin</string>
+    <string name="category_unpin">Unpin</string>
     <string name="category_unpinned">Unpinned %1$s.</string>
 
     <string name="add_group_manage_title">Manage: %1$s</string>

@@ -255,6 +255,7 @@ fun MoviesScreen(
                 onLoadMore = viewModel::loadMoreSelectedCategory,
                 onLoadMorePreviewRows = viewModel::loadMorePreviewRows,
                 onDismissReorder = viewModel::exitCategoryReorderMode,
+                onToggleCategoryPinned = viewModel::toggleCategoryPinned,
                 initialFocusRequester = initialContentFocusRequester
             )
         }
@@ -352,6 +353,7 @@ private fun MoviesVodContent(
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
     onDismissReorder: () -> Unit,
+    onToggleCategoryPinned: (Category) -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
@@ -678,6 +680,8 @@ private fun MoviesVodContent(
                     onSeeAll = {
                         if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
                     },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
                     keySelector = { it.id }
                 ) { movie ->
                     val isLocked = isMovieLocked(movie)
@@ -702,6 +706,8 @@ private fun MoviesVodContent(
                     onSeeAll = {
                         if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
                     },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
                     keySelector = { it.id }
                 ) { movie ->
                     val isLocked = isMovieLocked(movie)

@@ -255,6 +255,7 @@ fun SeriesScreen(
                 onLoadMore = viewModel::loadMoreSelectedCategory,
                 onLoadMorePreviewRows = viewModel::loadMorePreviewRows,
                 onDismissReorder = viewModel::exitCategoryReorderMode,
+                onToggleCategoryPinned = viewModel::toggleCategoryPinned,
                 initialFocusRequester = initialContentFocusRequester
             )
         }
@@ -350,6 +351,7 @@ private fun SeriesVodContent(
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
     onDismissReorder: () -> Unit,
+    onToggleCategoryPinned: (Category) -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
@@ -686,6 +688,8 @@ private fun SeriesVodContent(
                     onSeeAll = {
                         if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
                     },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
                     keySelector = { it.id }
                 ) { series ->
                     val isLocked = isSeriesLocked(series)
@@ -709,6 +713,8 @@ private fun SeriesVodContent(
                     onSeeAll = {
                         if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
                     },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
                     keySelector = { it.id }
                 ) { series ->
                     val isLocked = isSeriesLocked(series)
