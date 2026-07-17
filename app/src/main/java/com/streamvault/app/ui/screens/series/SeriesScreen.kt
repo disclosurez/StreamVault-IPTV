@@ -641,6 +641,33 @@ private fun SeriesVodContent(
                 }
             }
             }
+            if (pinnedCatEntries.isNotEmpty()) {
+            items(pinnedCatEntries, key = { it.key }) { entry ->
+                val categoryName = entry.key
+                val seriesList = entry.value
+                val matchedCategory = categoryByName[categoryName]
+                val lockedCategory = matchedCategory?.let(isCategoryLocked) == true
+                CategoryRow(
+                    title = categoryName,
+                    items = seriesList,
+                    onSeeAll = {
+                        if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
+                    },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
+                    keySelector = { it.id }
+                ) { series ->
+                    val isLocked = isSeriesLocked(series)
+                    SeriesCard(
+                        series = series,
+                        isLocked = isLocked,
+                        onClick = { if (isLocked) onProtectedSeriesClick(series) else onSeriesClick(series) },
+                        onLongClick = { onShowDialog(series) },
+                        modifier = if (series.id == fallbackSeriesId) Modifier.focusRequester(initialFocusRequester) else Modifier
+                    )
+                }
+            }
+            }
             if (freshSeries.isNotEmpty()) {
             item(key = "fresh_row") {
                 CategoryRow(
@@ -676,31 +703,6 @@ private fun SeriesVodContent(
                         )
                 }
             }
-            }
-            items(pinnedCatEntries, key = { it.key }) { entry ->
-                val categoryName = entry.key
-                val seriesList = entry.value
-                val matchedCategory = categoryByName[categoryName]
-                val lockedCategory = matchedCategory?.let(isCategoryLocked) == true
-                CategoryRow(
-                    title = categoryName,
-                    items = seriesList,
-                    onSeeAll = {
-                        if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
-                    },
-                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
-                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
-                    keySelector = { it.id }
-                ) { series ->
-                    val isLocked = isSeriesLocked(series)
-                    SeriesCard(
-                        series = series,
-                        isLocked = isLocked,
-                        onClick = { if (isLocked) onProtectedSeriesClick(series) else onSeriesClick(series) },
-                        onLongClick = { onShowDialog(series) },
-                        modifier = if (series.id == fallbackSeriesId) Modifier.focusRequester(initialFocusRequester) else Modifier
-                    )
-                }
             }
             items(unpinnedCatEntries, key = { it.key }) { entry ->
                 val categoryName = entry.key

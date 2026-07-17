@@ -633,6 +633,34 @@ private fun MoviesVodContent(
                 }
             }
             }
+            if (pinnedCatEntries.isNotEmpty()) {
+            items(pinnedCatEntries, key = { it.key }) { entry ->
+                val categoryName = entry.key
+                val movies = entry.value
+                val matchedCategory = categoryByName[categoryName]
+                val lockedCategory = matchedCategory?.let(isCategoryLocked) == true
+                CategoryRow(
+                    title = categoryName,
+                    items = movies,
+                    onSeeAll = {
+                        if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
+                    },
+                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
+                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
+                    keySelector = { it.id }
+                ) { movie ->
+                    val isLocked = isMovieLocked(movie)
+                    MovieCard(
+                        movie = movie,
+                        isLocked = isLocked,
+                        onClick = { if (isLocked) onProtectedMovieClick(movie) else onMovieClick(movie) },
+                        onLongClick = { onShowDialog(movie) }
+                        ,
+                        modifier = if (movie.id == fallbackMovieId) Modifier.focusRequester(initialFocusRequester) else Modifier
+                    )
+                }
+            }
+            }
             if (freshMovies.isNotEmpty()) {
             item(key = "fresh_row") {
                 CategoryRow(
@@ -668,32 +696,6 @@ private fun MoviesVodContent(
                         )
                 }
             }
-            }
-            items(pinnedCatEntries, key = { it.key }) { entry ->
-                val categoryName = entry.key
-                val movies = entry.value
-                val matchedCategory = categoryByName[categoryName]
-                val lockedCategory = matchedCategory?.let(isCategoryLocked) == true
-                CategoryRow(
-                    title = categoryName,
-                    items = movies,
-                    onSeeAll = {
-                        if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
-                    },
-                    onPinToggle = matchedCategory?.let { { onToggleCategoryPinned(it) } },
-                    isPinned = matchedCategory?.id in uiState.pinnedCategoryIds,
-                    keySelector = { it.id }
-                ) { movie ->
-                    val isLocked = isMovieLocked(movie)
-                    MovieCard(
-                        movie = movie,
-                        isLocked = isLocked,
-                        onClick = { if (isLocked) onProtectedMovieClick(movie) else onMovieClick(movie) },
-                        onLongClick = { onShowDialog(movie) }
-                        ,
-                        modifier = if (movie.id == fallbackMovieId) Modifier.focusRequester(initialFocusRequester) else Modifier
-                    )
-                }
             }
             items(unpinnedCatEntries, key = { it.key }) { entry ->
                 val categoryName = entry.key
