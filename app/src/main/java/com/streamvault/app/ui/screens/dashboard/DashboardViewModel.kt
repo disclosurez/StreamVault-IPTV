@@ -171,26 +171,44 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
-    private fun observePinnedMovieCategories(providerId: Long): Flow<List<Category>> =
+    private fun observePinnedMovieCategories(providerId: Long): Flow<Map<String, List<Movie>>> =
         preferencesRepository.getPinnedCategoryIds(providerId, ContentType.MOVIE)
             .flatMapLatest { pinnedIds ->
                 if (pinnedIds.isEmpty()) {
-                    flowOf(emptyList())
+                    flowOf(emptyMap())
                 } else {
-                    movieRepository.getCategories(providerId).map { categories ->
-                        categories.filter { it.id in pinnedIds }
+                    movieRepository.getCategories(providerId).flatMapLatest { categories ->
+                        val pinned = categories.filter { it.id in pinnedIds }
+                        if (pinned.isEmpty()) {
+                            flowOf(emptyMap())
+                        } else {
+                            val flows = pinned.map { category ->
+                                movieRepository.getMoviesByCategoryPreview(providerId, category.id, MOVIE_SHELF_LIMIT)
+                                    .map { movies -> category.name to movies }
+                            }
+                            combine(flows) { results -> results.toMap() }
+                        }
                     }
                 }
             }
 
-    private fun observePinnedSeriesCategories(providerId: Long): Flow<List<Category>> =
+    private fun observePinnedSeriesCategories(providerId: Long): Flow<Map<String, List<Series>>> =
         preferencesRepository.getPinnedCategoryIds(providerId, ContentType.SERIES)
             .flatMapLatest { pinnedIds ->
                 if (pinnedIds.isEmpty()) {
-                    flowOf(emptyList())
+                    flowOf(emptyMap())
                 } else {
-                    seriesRepository.getCategories(providerId).map { categories ->
-                        categories.filter { it.id in pinnedIds }
+                    seriesRepository.getCategories(providerId).flatMapLatest { categories ->
+                        val pinned = categories.filter { it.id in pinnedIds }
+                        if (pinned.isEmpty()) {
+                            flowOf(emptyMap())
+                        } else {
+                            val flows = pinned.map { category ->
+                                seriesRepository.getSeriesByCategoryPreview(providerId, category.id, SERIES_SHELF_LIMIT)
+                                    .map { series -> category.name to series }
+                            }
+                            combine(flows) { results -> results.toMap() }
+                        }
                     }
                 }
             }
@@ -272,8 +290,8 @@ class DashboardViewModel @Inject constructor(
                 recommendedMovies = recommendedMovies
             )
         }
-        val pinnedMovieCategoriesShelf = observePinnedMovieCategories(provider.id).onStart { emit(emptyList()) }
-        val pinnedSeriesCategoriesShelf = observePinnedSeriesCategories(provider.id).onStart { emit(emptyList()) }
+        val pinnedMovieCategoriesShelf = observePinnedMovieCategories(provider.id).onStart { emit(emptyMap()) }
+        val pinnedSeriesCategoriesShelf = observePinnedSeriesCategories(provider.id).onStart { emit(emptyMap()) }
         val contentShelvesWithPinned = combine(
             contentShelves,
             pinnedMovieCategoriesShelf,
@@ -869,8 +887,8 @@ private data class DashboardContentShelves(
     val recentSeries: List<Series>,
     val topRatedMovies: List<Movie> = emptyList(),
     val recommendedMovies: List<Movie> = emptyList(),
-    val pinnedMovieCategories: List<Category> = emptyList(),
-    val pinnedSeriesCategories: List<Category> = emptyList()
+    val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),
+    val pinnedSeriesCategories: Map<String, List<Series>> = emptyMap()
 )
 
 private data class DashboardSnapshot(
@@ -881,8 +899,8 @@ private data class DashboardSnapshot(
     val seriesCount: Int,
     val homeDashboardShelves: List<AppHomeDashboardShelf>,
     val updateNotice: DashboardUpdateNotice?,
-    val pinnedMovieCategories: List<Category> = emptyList(),
-    val pinnedSeriesCategories: List<Category> = emptyList()
+    val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),
+    val pinnedSeriesCategories: Map<String, List<Series>> = emptyMap()
 )
 
 private data class DashboardCachedUpdateRelease(
@@ -909,8 +927,8 @@ data class DashboardUiState(
     val recentSeries: List<Series> = emptyList(),
     val topRatedMovies: List<Movie> = emptyList(),
     val recommendedMovies: List<Movie> = emptyList(),
-    val pinnedMovieCategories: List<Category> = emptyList(),
-    val pinnedSeriesCategories: List<Category> = emptyList(),
+    val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),
+    val pinnedSeriesCategories: Map<String, List<Series>> = emptyMap(),
     val lastLiveCategory: Category? = null,
     val liveShortcuts: List<DashboardLiveShortcut> = emptyList(),
     val feature: DashboardFeature = DashboardFeature(),

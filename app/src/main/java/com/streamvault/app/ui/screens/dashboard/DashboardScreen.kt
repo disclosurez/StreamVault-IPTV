@@ -227,10 +227,11 @@ fun DashboardScreen(
                         onItemClick = onContinueWatchingItemClick
                     )
 
-                    AppHomeDashboardShelf.PINNED_CATEGORIES -> PinnedCategoriesRow(
+                    AppHomeDashboardShelf.PINNED_CATEGORIES -> PinnedCategoriesSection(
                         pinnedMovieCategories = uiState.pinnedMovieCategories,
                         pinnedSeriesCategories = uiState.pinnedSeriesCategories,
-                        onNavigate = onNavigate
+                        onMovieClick = onMovieClick,
+                        onSeriesClick = onSeriesClick
                     )
 
                     AppHomeDashboardShelf.RECENT_MOVIES -> CategoryRow(
@@ -877,32 +878,44 @@ private fun EmptyDashboard(
 }
 
 @Composable
-private fun PinnedCategoriesRow(
-    pinnedMovieCategories: List<Category>,
-    pinnedSeriesCategories: List<Category>,
-    onNavigate: (String) -> Unit
+private fun PinnedCategoriesSection(
+    pinnedMovieCategories: Map<String, List<Movie>>,
+    pinnedSeriesCategories: Map<String, List<Series>>,
+    onMovieClick: (Movie) -> Unit,
+    onSeriesClick: (Series) -> Unit
 ) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Text(
-            text = stringResource(R.string.category_options_pin),
-            style = MaterialTheme.typography.titleSmall,
-            color = TextPrimary
-        )
-        if (pinnedMovieCategories.isNotEmpty()) {
-            Text(
-                text = pinnedMovieCategories.joinToString(" • ") { it.name },
-                style = MaterialTheme.typography.bodySmall,
-                color = TextTertiary,
-                modifier = Modifier.padding(top = 6.dp)
-            )
+    Column {
+        pinnedMovieCategories.forEach { (categoryName, movies) ->
+            if (movies.isNotEmpty()) {
+                CategoryRow(
+                    title = categoryName,
+                    items = movies,
+                    keySelector = { it.id }
+                ) { movie ->
+                    MovieCard(
+                        movie = movie,
+                        isLocked = false,
+                        onClick = { onMovieClick(movie) },
+                        onLongClick = {}
+                    )
+                }
+            }
         }
-        if (pinnedSeriesCategories.isNotEmpty()) {
-            Text(
-                text = pinnedSeriesCategories.joinToString(" • ") { it.name },
-                style = MaterialTheme.typography.bodySmall,
-                color = TextTertiary,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+        pinnedSeriesCategories.forEach { (categoryName, seriesList) ->
+            if (seriesList.isNotEmpty()) {
+                CategoryRow(
+                    title = categoryName,
+                    items = seriesList,
+                    keySelector = { it.id }
+                ) { series ->
+                    SeriesCard(
+                        series = series,
+                        isLocked = false,
+                        onClick = { onSeriesClick(series) },
+                        onLongClick = {}
+                    )
+                }
+            }
         }
     }
 }
