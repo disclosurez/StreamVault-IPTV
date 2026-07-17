@@ -110,6 +110,7 @@
     <string name="dashboard_favorite_movies">Favorite Movies</string>
     <string name="dashboard_favorite_series">Favorite Series</string>
     <string name="dashboard_recent_movies">Recently Added Movies</string>
+    <string name="dashboard_pinned_categories">Pinned Categories</string>
     <string name="dashboard_recent_series">Recently Updated Series</string>
     <string name="dashboard_top_rated_movies">Top Rated Movies</string>
     <string name="dashboard_recommended_movies">Recommended Movies</string>

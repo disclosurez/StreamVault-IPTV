@@ -290,6 +290,10 @@ fun MoviesScreen(
         com.streamvault.app.ui.components.dialogs.CategoryOptionsDialog(
             category = category,
             onDismissRequest = { viewModel.dismissCategoryOptions() },
+            isPinned = category.id in uiState.pinnedCategoryIds,
+            onTogglePinned = if (!category.isVirtual) {
+                { viewModel.toggleCategoryPinned(category) }
+            } else null,
             onHide = if (!category.isVirtual) {
                 { viewModel.hideCategory(category) }
             } else null,
@@ -432,6 +436,18 @@ private fun MoviesVodContent(
                 name != uiState.favoriteCategoryName && name in visibleCategoryNameSet && items.isNotEmpty()
             }
             .toList()
+    }
+    val pinnedCatEntries = remember(catEntries, uiState.pinnedCategoryIds, categoryByName) {
+        catEntries.filter { (name, _) ->
+            val category = categoryByName[name]
+            category != null && category.id in uiState.pinnedCategoryIds
+        }
+    }
+    val unpinnedCatEntries = remember(catEntries, uiState.pinnedCategoryIds, categoryByName) {
+        catEntries.filter { (name, _) ->
+            val category = categoryByName[name]
+            category == null || category.id !in uiState.pinnedCategoryIds
+        }
     }
     val fallbackMovieId = if (heroMovie == null) {
         favoriteMovies.firstOrNull()?.id
@@ -651,7 +667,31 @@ private fun MoviesVodContent(
                 }
             }
             }
-            items(catEntries, key = { it.key }) { entry ->
+            items(pinnedCatEntries, key = { it.key }) { entry ->
+                val categoryName = entry.key
+                val movies = entry.value
+                val matchedCategory = categoryByName[categoryName]
+                val lockedCategory = matchedCategory?.let(isCategoryLocked) == true
+                CategoryRow(
+                    title = categoryName,
+                    items = movies,
+                    onSeeAll = {
+                        if (lockedCategory && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(categoryName)
+                    },
+                    keySelector = { it.id }
+                ) { movie ->
+                    val isLocked = isMovieLocked(movie)
+                    MovieCard(
+                        movie = movie,
+                        isLocked = isLocked,
+                        onClick = { if (isLocked) onProtectedMovieClick(movie) else onMovieClick(movie) },
+                        onLongClick = { onShowDialog(movie) }
+                        ,
+                        modifier = if (movie.id == fallbackMovieId) Modifier.focusRequester(initialFocusRequester) else Modifier
+                    )
+                }
+            }
+            items(unpinnedCatEntries, key = { it.key }) { entry ->
                 val categoryName = entry.key
                 val movies = entry.value
                 val matchedCategory = categoryByName[categoryName]
@@ -1023,79 +1063,93 @@ private fun MoviesVodClassicContent(
         uiState.continueWatching.map { it.contentId }.distinct().size
     }
     val recentCount = uiState.libraryLensRows[MovieLibraryLens.FRESH]?.size ?: 0
-    val railOptions = remember(
-        visibleCategoryNames,
-        uiState.categoryCounts,
-        uiState.favoriteCategoryName,
-        uiState.selectedCategory,
-        selectedFilterType,
-        categoryQuery,
-        continueCount,
-        recentCount,
-        uiState.libraryCount,
-        uiState.unlockedCategoryIds,
-        uiState.parentalControlLevel
-    ) {
-        buildList {
-            add(
-                VodClassicCategoryOption(
-                    key = "all",
-                    label = allLabel,
-                    count = uiState.libraryCount,
-                    isSelected = selectedKey == "all",
-                    onClick = onSelectFullLibraryBrowse
-                )
-            )
-            add(
-                VodClassicCategoryOption(
-                    key = "favorites",
-                    label = uiState.favoriteCategoryName,
-                    count = uiState.categoryCounts[uiState.favoriteCategoryName] ?: 0,
-                    isSelected = selectedKey == "favorites",
-                    onClick = { onSelectCategory(uiState.favoriteCategoryName) }
-                )
-            )
-            add(
-                VodClassicCategoryOption(
-                    key = "continue",
-                    label = continueLabel,
-                    count = continueCount,
-                    isSelected = selectedKey == "continue",
-                    onClick = onOpenContinueWatching
-                )
-            )
-            add(
-                VodClassicCategoryOption(
-                    key = "recent",
-                    label = recentLabel,
-                    count = recentCount,
-                    isSelected = selectedKey == "recent",
-                    onClick = onOpenFresh
-                )
-            )
-            visibleCategoryNames
-                .filterNot { it == uiState.favoriteCategoryName }
-                .forEach { name ->
-                    val matchedCategory = categoryByName[name]
-                    val locked = matchedCategory?.let(isCategoryLocked) == true
-                    add(
-                        VodClassicCategoryOption(
-                            key = "category:$name",
-                            label = name,
-                            count = uiState.categoryCounts[name] ?: 0,
-                            isSelected = selectedKey == "category:$name",
-                            onClick = {
-                                if (locked && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(name)
-                            },
-                            onLongClick = matchedCategory?.takeIf { !locked }?.let { { onShowCategoryOptions(name) } },
-                            isLocked = locked
-                        )
-                    )
-                }
-        }.filter { option ->
-            categoryQuery.isBlank() || option.label.contains(categoryQuery.trim(), ignoreCase = true)
+        val pinnedCategoryNames = remember(visibleCategoryNames, uiState.pinnedCategoryIds, categoryByName) {
+            visibleCategoryNames.filter { name ->
+                val category = categoryByName[name]
+                category != null && category.id in uiState.pinnedCategoryIds
+            }
         }
-    }
+        val unpinnedCategoryNames = remember(visibleCategoryNames, uiState.pinnedCategoryIds, categoryByName) {
+            visibleCategoryNames.filter { name ->
+                val category = categoryByName[name]
+                category == null || category.id !in uiState.pinnedCategoryIds
+            }
+        }
+        val railOptions = remember(
+            visibleCategoryNames,
+            pinnedCategoryNames,
+            unpinnedCategoryNames,
+            uiState.categoryCounts,
+            uiState.favoriteCategoryName,
+            uiState.selectedCategory,
+            selectedFilterType,
+            categoryQuery,
+            continueCount,
+            recentCount,
+            uiState.libraryCount,
+            uiState.unlockedCategoryIds,
+            uiState.parentalControlLevel
+        ) {
+            buildList {
+                add(
+                    VodClassicCategoryOption(
+                        key = "all",
+                        label = allLabel,
+                        count = uiState.libraryCount,
+                        isSelected = selectedKey == "all",
+                        onClick = onSelectFullLibraryBrowse
+                    )
+                )
+                add(
+                    VodClassicCategoryOption(
+                        key = "favorites",
+                        label = uiState.favoriteCategoryName,
+                        count = uiState.categoryCounts[uiState.favoriteCategoryName] ?: 0,
+                        isSelected = selectedKey == "favorites",
+                        onClick = { onSelectCategory(uiState.favoriteCategoryName) }
+                    )
+                )
+                add(
+                    VodClassicCategoryOption(
+                        key = "continue",
+                        label = continueLabel,
+                        count = continueCount,
+                        isSelected = selectedKey == "continue",
+                        onClick = onOpenContinueWatching
+                    )
+                )
+                add(
+                    VodClassicCategoryOption(
+                        key = "recent",
+                        label = recentLabel,
+                        count = recentCount,
+                        isSelected = selectedKey == "recent",
+                        onClick = onOpenFresh
+                    )
+                )
+                (pinnedCategoryNames + unpinnedCategoryNames)
+                    .filterNot { it == uiState.favoriteCategoryName }
+                    .forEach { name ->
+                        val matchedCategory = categoryByName[name]
+                        val locked = matchedCategory?.let(isCategoryLocked) == true
+                        add(
+                            VodClassicCategoryOption(
+                                key = "category:$name",
+                                label = name,
+                                count = uiState.categoryCounts[name] ?: 0,
+                                isSelected = selectedKey == "category:$name",
+                                onClick = {
+                                    if (locked && matchedCategory != null) openProtectedCategory(matchedCategory) else onSelectCategory(name)
+                                },
+                                onLongClick = matchedCategory?.takeIf { !locked }?.let { { onShowCategoryOptions(name) } },
+                                isLocked = locked
+                            )
+                        )
+                    }
+            }.filter { option ->
+                categoryQuery.isBlank() || option.label.contains(categoryQuery.trim(), ignoreCase = true)
+            }
+        }
 
     VodClassicSplitLayout(
         railTitle = stringResource(R.string.nav_movies),

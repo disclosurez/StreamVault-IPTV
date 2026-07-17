@@ -76,6 +76,7 @@ import com.streamvault.app.ui.design.AppColors.TextPrimary as TextPrimary
 import com.streamvault.app.ui.design.AppColors.TextTertiary as OnSurfaceDim
 import com.streamvault.app.ui.design.AppColors.TextTertiary as TextTertiary
 import com.streamvault.domain.model.AppHomeDashboardShelf
+import com.streamvault.domain.model.Category
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.PlaybackHistory
@@ -224,6 +225,12 @@ fun DashboardScreen(
                     AppHomeDashboardShelf.CONTINUE_WATCHING -> ContinueWatchingRow(
                         items = uiState.continueWatching,
                         onItemClick = onContinueWatchingItemClick
+                    )
+
+                    AppHomeDashboardShelf.PINNED_CATEGORIES -> PinnedCategoriesRow(
+                        pinnedMovieCategories = uiState.pinnedMovieCategories,
+                        pinnedSeriesCategories = uiState.pinnedSeriesCategories,
+                        onNavigate = onNavigate
                     )
 
                     AppHomeDashboardShelf.RECENT_MOVIES -> CategoryRow(
@@ -870,6 +877,37 @@ private fun EmptyDashboard(
 }
 
 @Composable
+private fun PinnedCategoriesRow(
+    pinnedMovieCategories: List<Category>,
+    pinnedSeriesCategories: List<Category>,
+    onNavigate: (String) -> Unit
+) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+        Text(
+            text = stringResource(R.string.category_options_pin),
+            style = MaterialTheme.typography.titleSmall,
+            color = TextPrimary
+        )
+        if (pinnedMovieCategories.isNotEmpty()) {
+            Text(
+                text = pinnedMovieCategories.joinToString(" • ") { it.name },
+                style = MaterialTheme.typography.bodySmall,
+                color = TextTertiary,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        if (pinnedSeriesCategories.isNotEmpty()) {
+            Text(
+                text = pinnedSeriesCategories.joinToString(" • ") { it.name },
+                style = MaterialTheme.typography.bodySmall,
+                color = TextTertiary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun rememberDashboardSections(
     uiState: DashboardUiState
 ): List<AppHomeDashboardShelf> {
@@ -886,7 +924,9 @@ private fun rememberDashboardSections(
         uiState.recentMovies,
         uiState.recentSeries,
         uiState.topRatedMovies,
-        uiState.recommendedMovies
+        uiState.recommendedMovies,
+        uiState.pinnedMovieCategories,
+        uiState.pinnedSeriesCategories
     ) {
         resolveVisibleDashboardShelves(uiState)
     }
