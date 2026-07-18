@@ -151,7 +151,7 @@ class SeriesRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(seriesPresentationSettingsFlow) { list, settings ->
                 buildPresentedSeries(list, settings)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getSeriesByCategory(providerId: Long, categoryId: Long): Flow<List<Series>> =
         flow {
@@ -169,7 +169,7 @@ class SeriesRepositoryImpl @Inject constructor(
                 }.map { list -> list.map { it.toDomain() } }
                     .combine(seriesPresentationSettingsFlow) { list, settings ->
                         buildPresentedSeries(list, settings)
-                    }
+                    }.flowOn(kotlinx.coroutines.Dispatchers.Default)
             )
         }
 
@@ -193,7 +193,7 @@ class SeriesRepositoryImpl @Inject constructor(
             }.map { list -> list.map { it.toDomain() } }
                 .combine(seriesPresentationSettingsFlow) { list, settings ->
                     buildPresentedSeries(list, settings)
-                }
+                }.flowOn(kotlinx.coroutines.Dispatchers.Default)
         )
     }
 
@@ -213,7 +213,7 @@ class SeriesRepositoryImpl @Inject constructor(
                 }.map { list -> list.map { it.toDomain() } }
                     .combine(seriesPresentationSettingsFlow) { list, settings ->
                         buildPresentedSeries(list, settings).take(limit)
-                    }
+                    }.flowOn(kotlinx.coroutines.Dispatchers.Default)
             )
         }
 
@@ -290,7 +290,7 @@ class SeriesRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(seriesPresentationSettingsFlow) { list, settings ->
                 buildPresentedSeries(list, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getFreshPreview(providerId: Long, limit: Int): Flow<List<Series>> =
         combine(
@@ -305,7 +305,7 @@ class SeriesRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(seriesPresentationSettingsFlow) { list, settings ->
                 buildPresentedSeries(list, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<Series>> =
         combine(
@@ -320,7 +320,7 @@ class SeriesRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(seriesPresentationSettingsFlow) { list, settings ->
                 buildPresentedSeries(list, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getSeriesByIds(ids: List<Long>): Flow<List<Series>> =
         seriesDao.getByIds(ids).map { entities -> entities.map { it.toDomain() } }
@@ -383,7 +383,7 @@ class SeriesRepositoryImpl @Inject constructor(
                 series.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
             }.combine(seriesPresentationSettingsFlow) { series, settings ->
                 buildPresentedSeries(series, settings)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
         }
 
     override suspend fun getSeriesById(seriesId: Long): Series? =

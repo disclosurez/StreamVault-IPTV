@@ -54,18 +54,17 @@ import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.PlaybackHistoryRepository
 import com.streamvault.domain.repository.SyncMetadataRepository
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -170,7 +169,7 @@ class MovieRepositoryImpl @Inject constructor(
             else movieDao.getByProvider(providerId)
         }.combine(moviePresentationSettingsFlow) { list, settings ->
             buildPresentedMovies(list.map { it.toDomain() }, settings)
-        }
+        }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getMoviesByCategory(providerId: Long, categoryId: Long): Flow<List<Movie>> =
         flow {
@@ -181,7 +180,7 @@ class MovieRepositoryImpl @Inject constructor(
                     else movieDao.getByCategory(providerId, categoryId)
                 }.combine(moviePresentationSettingsFlow) { list, settings ->
                     buildPresentedMovies(list.map { it.toDomain() }, settings)
-                }
+                }.flowOn(kotlinx.coroutines.Dispatchers.Default)
             )
         }
 
@@ -205,7 +204,7 @@ class MovieRepositoryImpl @Inject constructor(
             }.map { list -> list.map { it.toDomain() } }
                 .combine(moviePresentationSettingsFlow) { movies, settings ->
                     buildPresentedMovies(movies, settings)
-                }
+                }.flowOn(kotlinx.coroutines.Dispatchers.Default)
         )
     }
 
@@ -225,7 +224,7 @@ class MovieRepositoryImpl @Inject constructor(
                 }.map { list -> list.map { it.toDomain() } }
                     .combine(moviePresentationSettingsFlow) { movies, settings ->
                         buildPresentedMovies(movies, settings).take(limit)
-                    }
+                    }.flowOn(kotlinx.coroutines.Dispatchers.Default)
             )
         }
 
@@ -300,7 +299,7 @@ class MovieRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(moviePresentationSettingsFlow) { movies, settings ->
                 buildPresentedMovies(movies, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getFreshPreview(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
@@ -315,7 +314,7 @@ class MovieRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(moviePresentationSettingsFlow) { movies, settings ->
                 buildPresentedMovies(movies, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
@@ -330,7 +329,7 @@ class MovieRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
             .combine(moviePresentationSettingsFlow) { movies, settings ->
                 buildPresentedMovies(movies, settings).take(limit)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     override fun getRecommendations(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
@@ -441,7 +440,7 @@ class MovieRepositoryImpl @Inject constructor(
                 movies.map { if (it.id in favoriteIds) it.copy(isFavorite = true) else it }
             }.combine(moviePresentationSettingsFlow) { movies, settings ->
                 buildPresentedMovies(movies, settings)
-            }
+            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
         }
 
     override suspend fun getMovie(movieId: Long): Movie? =
