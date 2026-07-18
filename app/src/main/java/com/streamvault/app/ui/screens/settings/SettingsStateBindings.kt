@@ -104,7 +104,7 @@ internal fun observeSettingsPreferenceSnapshot(
             liveVariantPreferenceMode = LiveVariantPreferenceMode.BALANCED,
             vodViewMode = VodViewMode.MODERN,
             vodInfiniteScroll = true,
-            vodDuplicateHandlingMode = VodDuplicateHandlingMode.GROUPED,
+            vodDuplicateHandlingMode = VodDuplicateHandlingMode.SHOW_ALL,
             vodVariantPreferenceMode = VodVariantPreferenceMode.BALANCED,
             guideDefaultCategoryId = VirtualCategoryIds.FAVORITES,
             guideDefaultCategoryOptions = emptyList(),
