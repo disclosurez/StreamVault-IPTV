@@ -301,15 +301,22 @@ private fun movieVariantLabel(movie: Movie): String {
     return parts.distinct().joinToString(" ").ifBlank { "Version ${movie.id}" }
 }
 
+private val NON_ASCII_REGEX = Regex("[^\\u0000-\\u007F]")
+
 private fun normalizedMovieTitle(value: String): String {
     normalizedTitleCache[value]?.let { return it }
     val withoutProviderPrefix = value.substringAfter(" - ", value)
     val withoutYearSuffix = YEAR_SUFFIX_REGEX.replace(withoutProviderPrefix, "")
     val withoutQuality = QUALITY_CLEANUP_REGEX.replace(withoutYearSuffix, " ")
-    val normalized = Normalizer.normalize(withoutQuality, Normalizer.Form.NFD)
-        .replace(Regex("\\p{Mn}+"), "")
-        .lowercase(Locale.ROOT)
-    val result = NON_ALPHANUMERIC_REGEX.replace(normalized, "").trim()
+    // Fast path: skip Normalizer.normalize() for pure ASCII strings — on API 25
+    // the JNI call to ICU4C is very slow and most IPTV movie titles are ASCII.
+    val normalized = if (NON_ASCII_REGEX.containsMatchIn(withoutQuality)) {
+        Normalizer.normalize(withoutQuality, Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+    } else {
+        withoutQuality
+    }
+    val result = NON_ALPHANUMERIC_REGEX.replace(normalized.lowercase(Locale.ROOT), "").trim()
     normalizedTitleCache[value] = result
     return result
 }
