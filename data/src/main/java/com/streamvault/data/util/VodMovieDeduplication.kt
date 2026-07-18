@@ -320,7 +320,8 @@ private fun movieDisplayYear(movie: Movie): Int? {
     val result = movie.year?.trim()?.toIntOrNull()
         ?: movie.releaseDate?.filter(Char::isDigit)?.take(4)?.toIntOrNull()
         ?: YEAR_REGEX.find(movie.name)?.value?.toIntOrNull()
-    displayYearCache[cacheKey] = result
+    // ConcurrentHashMap.put throws NPE on null values on API 25, so only cache non-null
+    if (result != null) displayYearCache[cacheKey] = result
     return result
 }
 
