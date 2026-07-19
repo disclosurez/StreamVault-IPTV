@@ -1359,6 +1359,7 @@ class SeriesRepositoryImpl @Inject constructor(
         return when {
             query.filterBy.type == LibraryFilterType.ALL &&
                 query.sortBy in setOf(
+                    LibrarySortBy.LIBRARY,
                     LibrarySortBy.TITLE,
                     LibrarySortBy.UPDATED,
                     LibrarySortBy.RATING

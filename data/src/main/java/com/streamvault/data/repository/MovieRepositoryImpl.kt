@@ -101,7 +101,6 @@ class MovieRepositoryImpl @Inject constructor(
         const val SEARCH_OVERSAMPLE_LIMIT = 500
         const val MIN_SEARCH_QUERY_LENGTH = 2
         const val BROWSE_WINDOW_BUFFER = 80
-        const val BROWSE_RESULT_LIMIT = 5000
         const val XTREAM_CATEGORY_HYDRATION_CONCURRENCY = 1
         const val XTREAM_EMPTY_CATEGORY_RETRY_COOLDOWN_MILLIS = 30_000L
         const val CURSOR_BATCH_SIZE = 40
@@ -859,13 +858,12 @@ class MovieRepositoryImpl @Inject constructor(
                         }.map { entities -> entities.map { it.toDomain() } }
                     }
                     else -> {
-                        val browseLimit = maxOf(fetchLimit, BROWSE_RESULT_LIMIT)
                         query.categoryId?.let { categoryId ->
                             flow {
-                                ensureXtreamCategoryLoaded(query.providerId, categoryId, fetchIfMissing = true, refreshStaleInBackground = true, requiredCount = browseLimit)
+                                ensureXtreamCategoryLoaded(query.providerId, categoryId, fetchIfMissing = true, refreshStaleInBackground = true, requiredCount = fetchLimit)
                                 emitAll(
                                     combine(
-                                        movieDao.getByCategoryPage(query.providerId, categoryId, browseLimit, 0),
+                                        movieDao.getByCategoryPage(query.providerId, categoryId, fetchLimit, 0),
                                         preferencesRepository.parentalControlLevel
                                     ) { entities, level ->
                                         if (level >= 3) entities.filter { !it.isUserProtected } else entities
@@ -873,7 +871,7 @@ class MovieRepositoryImpl @Inject constructor(
                                 )
                             }
                         } ?: combine(
-                            movieDao.getByProviderPage(query.providerId, browseLimit, 0),
+                            movieDao.getByProviderPage(query.providerId, fetchLimit, 0),
                             preferencesRepository.parentalControlLevel
                         ) { entities, level ->
                             if (level >= 3) entities.filter { !it.isUserProtected } else entities
@@ -1378,6 +1376,7 @@ class MovieRepositoryImpl @Inject constructor(
         return when {
             query.filterBy.type == LibraryFilterType.ALL &&
                 query.sortBy in setOf(
+                    LibrarySortBy.LIBRARY,
                     LibrarySortBy.TITLE,
                     LibrarySortBy.UPDATED,
                     LibrarySortBy.RATING
