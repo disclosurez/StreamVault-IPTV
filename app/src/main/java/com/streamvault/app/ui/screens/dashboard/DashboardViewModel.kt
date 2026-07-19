@@ -250,29 +250,13 @@ class DashboardViewModel @Inject constructor(
                 .filter { !shouldHideVodFromHome(it, level) }
                 .take(SERIES_SHELF_LIMIT)
         }
-        val trendingMovieShelf = combine(
-            movieRepository.getTrendingPreview(provider.id, MOVIE_SHELF_LIMIT),
-            preferencesRepository.parentalControlLevel
-        ) { movies, level ->
-            movies
-                .filter { !shouldHideVodFromHome(it, level) }
-                .take(MOVIE_SHELF_LIMIT)
-        }
-        val trendingSeriesShelf = combine(
-            seriesRepository.getTrendingPreview(provider.id, SERIES_SHELF_LIMIT),
-            preferencesRepository.parentalControlLevel
-        ) { series, level ->
-            series
-                .filter { !shouldHideVodFromHome(it, level) }
-                .take(SERIES_SHELF_LIMIT)
-        }
         val baseContentShelves = combine(
             observeFavoriteChannels(liveProviderIds).onStart { emit(emptyList()) },
             observeRecentChannels(liveProviderIds).onStart { emit(emptyList()) },
             observeContinueWatching(liveProviderIds.toSet()).onStart { emit(ContinueWatchingShelf()) },
             movieShelf.onStart { emit(emptyList()) },
             seriesShelf.onStart { emit(emptyList()) }
-        ) { favoriteChannels: List<Channel>, recentChannels: List<Channel>, continueWatchingShelf: ContinueWatchingShelf, recentMovies: List<Movie>, recentSeries: List<Series> ->
+        ) { favoriteChannels, recentChannels, continueWatchingShelf, recentMovies, recentSeries ->
             DashboardContentShelves(
                 favoriteChannels = favoriteChannels,
                 recentChannels = recentChannels,
@@ -283,18 +267,8 @@ class DashboardViewModel @Inject constructor(
                 recentSeries = recentSeries
             )
         }
-        val baseContentShelvesWithTrending = combine(
-            baseContentShelves,
-            trendingMovieShelf.onStart { emit(emptyList()) },
-            trendingSeriesShelf.onStart { emit(emptyList()) }
-        ) { shelves: DashboardContentShelves, trendingMovies: List<Movie>, trendingSeries: List<Series> ->
-            shelves.copy(
-                trendingMovies = trendingMovies,
-                trendingSeries = trendingSeries
-            )
-        }
         val contentShelvesWithFavorites = combine(
-            baseContentShelvesWithTrending,
+            baseContentShelves,
             observeFavoriteMovies(liveProviderIds).onStart { emit(emptyList()) },
             observeFavoriteSeries(liveProviderIds).onStart { emit(emptyList()) },
             observeContinueWatchingByScope(liveProviderIds.toSet(), ContinueWatchingScope.MOVIES).onStart { emit(emptyList()) },
@@ -349,8 +323,6 @@ class DashboardViewModel @Inject constructor(
                 seriesCount = seriesCount,
                 homeDashboardShelves = AppHomeDashboardShelf.defaultOrder,
                 updateNotice = null,
-                trendingMovies = shelves.trendingMovies,
-                trendingSeries = shelves.trendingSeries,
                 pinnedMovieCategories = shelves.pinnedMovieCategories,
                 pinnedSeriesCategories = shelves.pinnedSeriesCategories
             )
@@ -377,8 +349,6 @@ class DashboardViewModel @Inject constructor(
                 favoriteSeries = snapshot.shelves.favoriteSeries,
                 recentMovies = snapshot.shelves.recentMovies,
                 recentSeries = snapshot.shelves.recentSeries,
-                trendingMovies = snapshot.trendingMovies,
-                trendingSeries = snapshot.trendingSeries,
                 topRatedMovies = snapshot.shelves.topRatedMovies,
                 recommendedMovies = snapshot.shelves.recommendedMovies,
                 pinnedMovieCategories = snapshot.pinnedMovieCategories,
@@ -915,8 +885,6 @@ private data class DashboardContentShelves(
     val favoriteSeries: List<Series> = emptyList(),
     val recentMovies: List<Movie>,
     val recentSeries: List<Series>,
-    val trendingMovies: List<Movie> = emptyList(),
-    val trendingSeries: List<Series> = emptyList(),
     val topRatedMovies: List<Movie> = emptyList(),
     val recommendedMovies: List<Movie> = emptyList(),
     val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),
@@ -931,8 +899,6 @@ private data class DashboardSnapshot(
     val seriesCount: Int,
     val homeDashboardShelves: List<AppHomeDashboardShelf>,
     val updateNotice: DashboardUpdateNotice?,
-    val trendingMovies: List<Movie> = emptyList(),
-    val trendingSeries: List<Series> = emptyList(),
     val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),
     val pinnedSeriesCategories: Map<String, List<Series>> = emptyMap()
 )
@@ -959,8 +925,6 @@ data class DashboardUiState(
     val favoriteSeries: List<Series> = emptyList(),
     val recentMovies: List<Movie> = emptyList(),
     val recentSeries: List<Series> = emptyList(),
-    val trendingMovies: List<Movie> = emptyList(),
-    val trendingSeries: List<Series> = emptyList(),
     val topRatedMovies: List<Movie> = emptyList(),
     val recommendedMovies: List<Movie> = emptyList(),
     val pinnedMovieCategories: Map<String, List<Movie>> = emptyMap(),

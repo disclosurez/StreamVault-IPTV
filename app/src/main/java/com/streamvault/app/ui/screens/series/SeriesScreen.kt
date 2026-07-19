@@ -247,11 +247,6 @@ fun SeriesScreen(
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
                     viewModel.selectFullLibraryBrowse()
                 },
-                onOpenTrending = {
-                    viewModel.setSelectedLibraryFilterType(LibraryFilterType.TOP_RATED)
-                    viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
-                    viewModel.selectFullLibraryBrowse()
-                },
                 onOpenFresh = {
                     viewModel.setSelectedLibraryFilterType(LibraryFilterType.RECENTLY_UPDATED)
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.UPDATED)
@@ -352,7 +347,6 @@ private fun SeriesVodContent(
     onSelectFullLibraryBrowse: () -> Unit,
     onOpenContinueWatching: () -> Unit,
     onOpenTopRated: () -> Unit,
-    onOpenTrending: () -> Unit,
     onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
@@ -378,7 +372,6 @@ private fun SeriesVodContent(
     val continueSeries = uiState.libraryLensRows[SeriesLibraryLens.CONTINUE].orEmpty()
     val freshSeries = uiState.libraryLensRows[SeriesLibraryLens.FRESH].orEmpty()
     val topRatedSeries = uiState.libraryLensRows[SeriesLibraryLens.TOP_RATED].orEmpty()
-    val trendingSeries = uiState.libraryLensRows[SeriesLibraryLens.TRENDING].orEmpty()
     val continueWatching = uiState.continueWatching
     val heroSeries = freshSeries.firstOrNull() ?: topRatedSeries.firstOrNull() ?: favoriteSeries.firstOrNull()
     val categoryByName = remember(uiState.providerCategories, uiState.categories, uiState.favoriteCategoryName) {
@@ -672,24 +665,6 @@ private fun SeriesVodContent(
                         onLongClick = { onShowDialog(series) },
                         modifier = if (series.id == fallbackSeriesId) Modifier.focusRequester(initialFocusRequester) else Modifier
                     )
-                }
-            }
-            }
-            if (trendingSeries.isNotEmpty()) {
-            item(key = "trending_row") {
-                CategoryRow(
-                        title = stringResource(R.string.library_lens_trending),
-                        items = trendingSeries,
-                        onSeeAll = onOpenTrending,
-                        keySelector = { it.id }
-                    ) { series ->
-                        val isLocked = isSeriesLocked(series)
-                        SeriesCard(
-                            series = series,
-                            isLocked = isLocked,
-                            onClick = { if (isLocked) onProtectedSeriesClick(series) else onSeriesClick(series) },
-                            onLongClick = { onShowDialog(series) }
-                        )
                 }
             }
             }
@@ -1331,7 +1306,6 @@ private fun seriesLibraryLensLabel(lens: SeriesLibraryLens): String =
         SeriesLibraryLens.FAVORITES -> stringResource(R.string.library_lens_favorites)
         SeriesLibraryLens.CONTINUE -> stringResource(R.string.library_lens_continue)
         SeriesLibraryLens.TOP_RATED -> stringResource(R.string.library_lens_top_rated)
-        SeriesLibraryLens.TRENDING -> stringResource(R.string.library_lens_trending)
         SeriesLibraryLens.FRESH -> stringResource(R.string.library_lens_fresh_series)
     }
 

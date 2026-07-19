@@ -316,21 +316,6 @@ class MovieRepositoryImpl @Inject constructor(
                 buildPresentedMovies(movies, settings).take(limit)
             }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
-    override fun getTrendingPreview(providerId: Long, limit: Int): Flow<List<Movie>> =
-        combine(
-            movieDao.getTrendingPreview(providerId, limit),
-            preferencesRepository.parentalControlLevel
-        ) { entities, level: Int ->
-            if (level >= 3) {
-                entities.filter { !it.isUserProtected }
-            } else {
-                entities
-            }
-        }.map { list -> list.map { it.toDomain() } }
-            .combine(moviePresentationSettingsFlow) { movies, settings ->
-                buildPresentedMovies(movies, settings).take(limit)
-            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
-
     override fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<Movie>> =
         combine(
             movieDao.getReleasedPreview(providerId, limit),

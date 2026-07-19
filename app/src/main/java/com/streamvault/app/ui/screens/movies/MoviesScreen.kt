@@ -247,11 +247,6 @@ fun MoviesScreen(
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
                     viewModel.selectFullLibraryBrowse()
                 },
-                onOpenTrending = {
-                    viewModel.setSelectedLibraryFilterType(LibraryFilterType.TOP_RATED)
-                    viewModel.setSelectedLibrarySortBy(LibrarySortBy.RATING)
-                    viewModel.selectFullLibraryBrowse()
-                },
                 onOpenFresh = {
                     viewModel.setSelectedLibraryFilterType(LibraryFilterType.RECENTLY_UPDATED)
                     viewModel.setSelectedLibrarySortBy(LibrarySortBy.RELEASE)
@@ -354,7 +349,6 @@ private fun MoviesVodContent(
     onSelectFullLibraryBrowse: () -> Unit,
     onOpenContinueWatching: () -> Unit,
     onOpenTopRated: () -> Unit,
-    onOpenTrending: () -> Unit,
     onOpenFresh: () -> Unit,
     onLoadMore: () -> Unit,
     onLoadMorePreviewRows: () -> Unit,
@@ -379,7 +373,6 @@ private fun MoviesVodContent(
     val favoriteMovies = uiState.moviesByCategory[uiState.favoriteCategoryName].orEmpty()
     val freshMovies = uiState.libraryLensRows[MovieLibraryLens.FRESH].orEmpty()
     val topRatedMovies = uiState.libraryLensRows[MovieLibraryLens.TOP_RATED].orEmpty()
-    val trendingMovies = uiState.libraryLensRows[MovieLibraryLens.TRENDING].orEmpty()
     val continueWatching = uiState.continueWatching
     val heroMovie = freshMovies.firstOrNull() ?: topRatedMovies.firstOrNull() ?: favoriteMovies.firstOrNull()
     val categoryByName = remember(uiState.providerCategories, uiState.categories, uiState.favoriteCategoryName) {
@@ -665,24 +658,6 @@ private fun MoviesVodContent(
                         ,
                         modifier = if (movie.id == fallbackMovieId) Modifier.focusRequester(initialFocusRequester) else Modifier
                     )
-                }
-            }
-            }
-            if (trendingMovies.isNotEmpty()) {
-            item(key = "trending_row") {
-                CategoryRow(
-                    title = stringResource(R.string.library_lens_trending),
-                    items = trendingMovies,
-                    onSeeAll = onOpenTrending,
-                    keySelector = { it.id }
-                ) { movie ->
-                        val isLocked = isMovieLocked(movie)
-                        MovieCard(
-                            movie = movie,
-                            isLocked = isLocked,
-                            onClick = { if (isLocked) onProtectedMovieClick(movie) else onMovieClick(movie) },
-                            onLongClick = { onShowDialog(movie) }
-                        )
                 }
             }
             }
@@ -1324,7 +1299,6 @@ private fun movieLibraryLensLabel(lens: MovieLibraryLens): String =
         MovieLibraryLens.FAVORITES -> stringResource(R.string.library_lens_favorites)
         MovieLibraryLens.CONTINUE -> stringResource(R.string.library_lens_continue)
         MovieLibraryLens.TOP_RATED -> stringResource(R.string.library_lens_top_rated)
-        MovieLibraryLens.TRENDING -> stringResource(R.string.library_lens_trending)
         MovieLibraryLens.FRESH -> stringResource(R.string.library_lens_fresh_movies)
     }
 

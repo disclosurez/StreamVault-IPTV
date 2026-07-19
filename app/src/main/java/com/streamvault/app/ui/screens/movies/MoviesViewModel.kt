@@ -66,7 +66,6 @@ enum class MovieLibraryLens {
     FAVORITES,
     CONTINUE,
     TOP_RATED,
-    TRENDING,
     FRESH
 }
 
@@ -418,15 +417,13 @@ class MoviesViewModel @Inject constructor(
                         favoriteRepository.getAllFavorites(provider.id, ContentType.MOVIE),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         movieRepository.getTopRatedPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
-                        movieRepository.getTrendingPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
                         movieRepository.getByReleaseDate(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT)
-                    ) { allFavorites, history, topRated, trending, fresh ->
+                    ) { allFavorites, history, topRated, fresh ->
                         MovieLibraryLensDependencies(
                             providerId = provider.id,
                             allFavorites = allFavorites,
                             history = history,
                             topRated = topRated,
-                            trending = trending,
                             fresh = fresh
                         )
                     }
@@ -470,7 +467,6 @@ class MoviesViewModel @Inject constructor(
                                 MovieLibraryLens.FAVORITES to favoritePreview,
                                 MovieLibraryLens.CONTINUE to continuePreview,
                                 MovieLibraryLens.TOP_RATED to dependencies.topRated.markMovieFavorites(globalFavoriteIds),
-                                MovieLibraryLens.TRENDING to dependencies.trending.markMovieFavorites(globalFavoriteIds),
                                 MovieLibraryLens.FRESH to dependencies.fresh.markMovieFavorites(globalFavoriteIds)
                             ).filterValues { rows -> rows.isNotEmpty() }
                         )
@@ -1282,7 +1278,6 @@ private data class MovieLibraryLensDependencies(
     val allFavorites: List<com.streamvault.domain.model.Favorite>,
     val history: List<PlaybackHistory>,
     val topRated: List<Movie>,
-    val trending: List<Movie> = emptyList(),
     val fresh: List<Movie>
 )
 

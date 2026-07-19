@@ -307,21 +307,6 @@ class SeriesRepositoryImpl @Inject constructor(
                 buildPresentedSeries(list, settings).take(limit)
             }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
-    override fun getTrendingPreview(providerId: Long, limit: Int): Flow<List<Series>> =
-        combine(
-            seriesDao.getTrendingPreview(providerId, limit),
-            preferencesRepository.parentalControlLevel
-        ) { entities, level: Int ->
-            if (level >= 3) {
-                entities.filter { !it.isUserProtected }
-            } else {
-                entities
-            }
-        }.map { list -> list.map { it.toDomain() } }
-            .combine(seriesPresentationSettingsFlow) { list, settings ->
-                buildPresentedSeries(list, settings).take(limit)
-            }.flowOn(kotlinx.coroutines.Dispatchers.Default)
-
     override fun getByReleaseDate(providerId: Long, limit: Int): Flow<List<Series>> =
         combine(
             seriesDao.getByReleaseDate(providerId, limit),
