@@ -66,6 +66,7 @@ enum class SeriesLibraryLens {
     FAVORITES,
     CONTINUE,
     TOP_RATED,
+    TRENDING,
     FRESH
 }
 
@@ -421,13 +422,15 @@ class SeriesViewModel @Inject constructor(
                         favoriteRepository.getAllFavorites(provider.id, ContentType.SERIES),
                         playbackHistoryRepository.getRecentlyWatchedByProvider(provider.id, limit = 24),
                         seriesRepository.getTopRatedPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
+                        seriesRepository.getTrendingPreview(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT),
                         seriesRepository.getByReleaseDate(provider.id, VodBrowseDefaults.PREVIEW_ROW_LIMIT)
-                    ) { allFavorites, history, topRated, fresh ->
+                    ) { allFavorites, history, topRated, trending, fresh ->
                         SeriesLibraryLensDependencies(
                             providerId = provider.id,
                             allFavorites = allFavorites,
                             history = history,
                             topRated = topRated,
+                            trending = trending,
                             fresh = fresh
                         )
                     }
@@ -473,6 +476,7 @@ class SeriesViewModel @Inject constructor(
                                 SeriesLibraryLens.FAVORITES to favoritePreview,
                                 SeriesLibraryLens.CONTINUE to continuePreview,
                                 SeriesLibraryLens.TOP_RATED to dependencies.topRated.markSeriesFavorites(globalFavoriteIds),
+                                SeriesLibraryLens.TRENDING to dependencies.trending.markSeriesFavorites(globalFavoriteIds),
                                 SeriesLibraryLens.FRESH to dependencies.fresh.markSeriesFavorites(globalFavoriteIds)
                             ).filterValues { rows -> rows.isNotEmpty() }
                         )
@@ -1293,6 +1297,7 @@ private data class SeriesLibraryLensDependencies(
     val allFavorites: List<com.streamvault.domain.model.Favorite>,
     val history: List<PlaybackHistory>,
     val topRated: List<Series>,
+    val trending: List<Series> = emptyList(),
     val fresh: List<Series>
 )
 

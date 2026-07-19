@@ -109,6 +109,8 @@
     <string name="dashboard_recent_channels">Recent Channels</string>
     <string name="dashboard_favorite_movies">Favorite Movies</string>
     <string name="dashboard_favorite_series">Favorite Series</string>
+    <string name="dashboard_trending_movies">Trending Movies</string>
+    <string name="dashboard_trending_series">Trending Series</string>
     <string name="dashboard_recent_movies">Recently Added Movies</string>
     <string name="dashboard_pinned_categories">Pinned Categories</string>
     <string name="dashboard_recent_series">Recently Updated Series</string>
@@ -312,6 +314,7 @@
     <string name="library_lens_favorites">Saved Favorites</string>
     <string name="library_lens_continue">Continue Watching</string>
     <string name="library_lens_top_rated">Top Rated</string>
+    <string name="library_lens_trending">Trending</string>
     <string name="library_lens_fresh_movies">Newest Movies</string>
     <string name="library_lens_fresh_series">Recently Updated</string>
     <string name="library_filter_title">Filter Library</string>

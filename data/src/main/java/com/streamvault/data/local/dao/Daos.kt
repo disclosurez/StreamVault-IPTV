@@ -1387,6 +1387,9 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND added_at > 0 ORDER BY added_at DESC, name ASC, id ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
 
+    @Query("SELECT * FROM movies WHERE provider_id = :providerId AND rating > 0 ORDER BY rating DESC, release_date DESC, year DESC, added_at DESC, name ASC, id ASC LIMIT :limit")
+    fun getTrendingPreview(providerId: Long, limit: Int): Flow<List<MovieBrowseEntity>>
+
         @Query(
             """
             SELECT * FROM movies
@@ -2557,6 +2560,9 @@ interface SeriesDao {
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND last_modified > 0 ORDER BY last_modified DESC, name ASC LIMIT :limit")
     fun getFreshPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
+
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND rating > 0 ORDER BY rating DESC, release_date DESC, last_modified DESC, name ASC, id ASC LIMIT :limit")
+    fun getTrendingPreview(providerId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
     @Query("""
         SELECT s.* FROM series s

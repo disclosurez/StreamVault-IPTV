@@ -234,6 +234,31 @@ fun DashboardScreen(
                         onSeriesClick = onSeriesClick
                     )
 
+                    AppHomeDashboardShelf.TRENDING_MOVIES -> CategoryRow(
+                        title = stringResource(R.string.dashboard_trending_movies),
+                        items = uiState.trendingMovies,
+                        keySelector = { it.id },
+                        onSeeAll = { onNavigate(Routes.MOVIES) }
+                    ) { movie ->
+                        MovieCard(
+                            movie = movie,
+                            onClick = { onMovieClick(movie) }
+                        )
+                    }
+
+                    AppHomeDashboardShelf.TRENDING_SERIES -> CategoryRow(
+                        title = stringResource(R.string.dashboard_trending_series),
+                        items = uiState.trendingSeries,
+                        keySelector = { it.id },
+                        onSeeAll = { onNavigate(Routes.SERIES) }
+                    ) { series ->
+                        SeriesCard(
+                            series = series,
+                            subtitle = series.releaseDate ?: stringResource(R.string.dashboard_updated_series_badge),
+                            onClick = { onSeriesClick(series) }
+                        )
+                    }
+
                     AppHomeDashboardShelf.RECENT_MOVIES -> CategoryRow(
                         title = stringResource(R.string.dashboard_recent_movies),
                         items = uiState.recentMovies,
@@ -936,6 +961,8 @@ private fun rememberDashboardSections(
         uiState.favoriteSeries,
         uiState.recentMovies,
         uiState.recentSeries,
+        uiState.trendingMovies,
+        uiState.trendingSeries,
         uiState.topRatedMovies,
         uiState.recommendedMovies,
         uiState.pinnedMovieCategories,
