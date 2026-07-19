@@ -1229,10 +1229,12 @@ class MovieRepositoryImpl @Inject constructor(
         when {
             query.filterBy.type == LibraryFilterType.ALL &&
                 query.sortBy == LibrarySortBy.LIBRARY -> {
-                collectMoviePages<FreshCursor>(query, parentalLevel, collected, favoriteIds,
-                    extractCursor = { FreshCursor(it.addedAt, it.name, it.id) }
+                collectMoviePages<ReleasedCursor>(query, parentalLevel, collected, favoriteIds,
+                    extractCursor = {
+                        ReleasedCursor(year = it.year, addedAt = it.addedAt, name = it.name, id = it.id)
+                    }
                 ) { limit, cursor ->
-                    loadMovieFreshPage(query, limit, cursor)
+                    loadMovieReleasedPage(query, limit, cursor)
                 }
             }
             query.filterBy.type == LibraryFilterType.ALL &&
