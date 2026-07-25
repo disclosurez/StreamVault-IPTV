@@ -1118,7 +1118,10 @@ private fun PlayerVodInfo(
         add(PlayerActionSpec(stringResource(R.string.player_picture_in_picture), onEnterPictureInPicture))
         add(PlayerActionSpec(stringResource(R.string.player_aspect_ratio_label, aspectRatioLabel), onToggleAspectRatio))
     }
-    var sliderValue by remember(duration, currentPosition) {
+    // Use rememberUpdatedState so the polling loop below always sees the latest
+    // position without triggering recompositions when currentPosition changes.
+    val currentPositionState by rememberUpdatedState(currentPosition)
+    var sliderValue by remember(duration) {
         mutableStateOf(if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f)
     }
     var isScrubbing by remember { mutableStateOf(false) }
@@ -1126,9 +1129,16 @@ private fun PlayerVodInfo(
     val latestScrubbingCallback by rememberUpdatedState(onSetScrubbingMode)
     val latestSeekPreviewPositionChanged by rememberUpdatedState(onSeekPreviewPositionChanged)
 
-    LaunchedEffect(duration, currentPosition, isScrubbing) {
-        if (!isScrubbing) {
-            sliderValue = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
+    // Poll position at 1 s intervals instead of reacting to every StateFlow emit.
+    // This prevents a recomposition storm on low-end devices (e.g. Fire TV Stick)
+    // where a 250 ms position tick causes remember/LaunchedEffect re-runs, heavy
+    // allocations, and GC pauses that block the UI thread.
+    LaunchedEffect(isScrubbing, duration) {
+        while (true) {
+            if (!isScrubbing && duration > 0) {
+                sliderValue = currentPositionState.toFloat() / duration.toFloat()
+            }
+            delay(1_000L)
         }
     }
 

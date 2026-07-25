@@ -121,6 +121,12 @@ class ProviderSyncWorker(
                 return Result.success()
             }
 
+            val syncManager = entryPoint.syncManager()
+            if (syncManager.vodPlaybackActive.value) {
+                Log.i(TAG, "Deferring provider sync: VOD playback is active")
+                return Result.retry()
+            }
+
             var sawRetryableFailure = false
             providers.forEach { provider ->
                 val trackInitialLiveOnboarding = shouldTrackInitialLiveOnboarding(

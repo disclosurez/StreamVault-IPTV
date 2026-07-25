@@ -139,6 +139,7 @@ class PreferencesRepository @Inject constructor(
         val VOD_VARIANT_PREFERENCE_MODE = stringPreferencesKey("vod_variant_preference_mode")
         val VOD_VARIANT_SELECTIONS = stringPreferencesKey("vod_variant_selections")
         val VOD_VARIANT_OBSERVATIONS = stringPreferencesKey("vod_variant_observations")
+        val VOD_HIDE_NON_ENGLISH = booleanPreferencesKey("vod_hide_non_english")
         val GUIDE_DENSITY = stringPreferencesKey("guide_density")
         val GUIDE_CHANNEL_MODE = stringPreferencesKey("guide_channel_mode")
         val GUIDE_DEFAULT_CATEGORY_ID = longPreferencesKey("guide_default_category_id")
@@ -1654,9 +1655,19 @@ class PreferencesRepository @Inject constructor(
         preferences[PreferencesKeys.VOD_INFINITE_SCROLL] ?: true
     }
 
+    val vodHideNonEnglish: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[PreferencesKeys.VOD_HIDE_NON_ENGLISH] ?: true // default ON
+    }
+
     suspend fun setVodInfiniteScroll(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.VOD_INFINITE_SCROLL] = enabled
+        }
+    }
+
+    suspend fun setVodHideNonEnglish(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.VOD_HIDE_NON_ENGLISH] = enabled
         }
     }
 

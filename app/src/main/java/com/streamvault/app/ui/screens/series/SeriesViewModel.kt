@@ -41,6 +41,7 @@ import com.streamvault.app.ui.screens.vod.setVodLibrarySortBy
 import com.streamvault.app.ui.screens.vod.setVodSearchQuery
 import com.streamvault.app.ui.screens.vod.setVodFavorite
 import com.streamvault.app.ui.screens.vod.updateVodGroupMembership
+import com.streamvault.app.util.filterNonEnglish
 import com.streamvault.app.ui.screens.vod.VodBrowseDefaults
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -102,6 +103,7 @@ class SeriesViewModel @Inject constructor(
     private val _selectedLibraryFilterType = MutableStateFlow(LibraryFilterType.ALL)
     private val _selectedLibrarySortBy = MutableStateFlow(LibrarySortBy.LIBRARY)
     private val _previewBatchSize = MutableStateFlow(INITIAL_PREVIEW_BATCH_SIZE)
+    private val _vodHideNonEnglish = MutableStateFlow(true)
     private var activeProviderId: Long? = null
 
     private data class PreviewLoadResult(
@@ -272,11 +274,15 @@ class SeriesViewModel @Inject constructor(
                             selected in customCategoryNames
                     }
                     val currentPinnedIds = _uiState.value.pinnedCategoryIds
+                    val filteredGrouped = snapshot.grouped.mapValues { (_, series) ->
+                        if (_vodHideNonEnglish.value) series.filterNonEnglish() else series
+                    }
+                    val filteredCounts = filteredGrouped.mapValues { (_, items) -> items.size }
                     _uiState.update {
                         it.copy(
-                            seriesByCategory = snapshot.grouped,
+                            seriesByCategory = filteredGrouped,
                             categoryNames = snapshot.categoryNames,
-                            categoryCounts = snapshot.categoryCounts,
+                            categoryCounts = filteredCounts,
                             libraryCount = snapshot.libraryCount,
                             providerCategories = snapshot.providerCategories,
                             pinnedCategoryIds = currentPinnedIds.ifEmpty { snapshot.pinnedCategoryIds },
@@ -308,6 +314,10 @@ class SeriesViewModel @Inject constructor(
             preferencesRepository.vodInfiniteScroll.collectLatest { enabled ->
                 _uiState.update { it.copy(vodInfiniteScroll = enabled) }
             }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.vodHideNonEnglish.collect { _vodHideNonEnglish.value = it }
         }
 
         viewModelScope.launch {
@@ -379,7 +389,7 @@ class SeriesViewModel @Inject constructor(
                 .collect { snapshot ->
                     _uiState.update {
                         it.copy(
-                            selectedCategoryItems = snapshot.items,
+                            selectedCategoryItems = if (_vodHideNonEnglish.value) snapshot.items.filterNonEnglish() else snapshot.items,
                             selectedCategoryLoadedCount = snapshot.loadedCount,
                             selectedCategoryTotalCount = snapshot.totalCount,
                             canLoadMoreSelectedCategory = snapshot.canLoadMore,
@@ -467,13 +477,20 @@ class SeriesViewModel @Inject constructor(
                         seriesRepository.getSeriesByIds(continueIds).first().orderByIds(continueIds)
                     }.markSeriesFavorites(globalFavoriteIds)
 
+                    val hideNonEnglish = _vodHideNonEnglish.value
+                    val finalFavorites = if (hideNonEnglish) favoritePreview.filterNonEnglish() else favoritePreview
+                    val finalContinue = if (hideNonEnglish) continuePreview.filterNonEnglish() else continuePreview
                     _uiState.update {
                         it.copy(
                             libraryLensRows = mapOf(
-                                SeriesLibraryLens.FAVORITES to favoritePreview,
-                                SeriesLibraryLens.CONTINUE to continuePreview,
-                                SeriesLibraryLens.TOP_RATED to dependencies.topRated.markSeriesFavorites(globalFavoriteIds),
-                                SeriesLibraryLens.FRESH to dependencies.fresh.markSeriesFavorites(globalFavoriteIds)
+                                SeriesLibraryLens.FAVORITES to finalFavorites,
+                                SeriesLibraryLens.CONTINUE to finalContinue,
+                                SeriesLibraryLens.TOP_RATED to dependencies.topRated
+                                    .let { if (hideNonEnglish) it.filterNonEnglish() else it }
+                                    .markSeriesFavorites(globalFavoriteIds),
+                                SeriesLibraryLens.FRESH to dependencies.fresh
+                                    .let { if (hideNonEnglish) it.filterNonEnglish() else it }
+                                    .markSeriesFavorites(globalFavoriteIds)
                             ).filterValues { rows -> rows.isNotEmpty() }
                         )
                     }
@@ -966,7 +983,7 @@ class SeriesViewModel @Inject constructor(
     }
 
     private suspend fun loadReorderSeries(category: Category): List<Series> {
-        return loadVodReorderItems(
+        val items = loadVodReorderItems(
             providerId = activeProviderId ?: return emptyList(),
             category = category,
             contentType = ContentType.SERIES,
@@ -974,6 +991,7 @@ class SeriesViewModel @Inject constructor(
             loadByIds = { ids -> seriesRepository.getSeriesByIds(ids).first() },
             itemId = Series::id
         )
+        return if (_vodHideNonEnglish.value) items.filterNonEnglish() else items
     }
 
     private suspend fun buildPreviewCatalog(

@@ -74,6 +74,8 @@ class SeriesDetailViewModel @Inject constructor(
     private val knownPresentationHint: SeriesDetailPresentationHint? =
         savedStateHandle[SERIES_DETAIL_PRESENTATION_HINT_KEY]
 
+    private val initialSeasonNumber: Int = savedStateHandle.get<Int>("series_detail_season_number") ?: -1
+
     private val _uiState = MutableStateFlow(SeriesDetailUiState())
     val uiState: StateFlow<SeriesDetailUiState> = _uiState.asStateFlow()
 
@@ -119,7 +121,8 @@ class SeriesDetailViewModel @Inject constructor(
                     }
                     loadExternalRatings(result.data)
                     startUnwatchedCountCollection(providerId, result.data.id)
-                    val selectedSeasonNumber = _uiState.value.selectedSeason?.seasonNumber
+                    val selectedSeasonNumber = _uiState.value.selectedSeason?.seasonNumber?.takeIf { it >= 0 }
+                        ?: initialSeasonNumber.takeIf { it >= 0 }
                     _uiState.update {
                         it.copy(
                             isLoading = false,

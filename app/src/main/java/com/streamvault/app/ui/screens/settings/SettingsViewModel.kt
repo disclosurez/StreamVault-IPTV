@@ -638,6 +638,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setVodHideNonEnglish(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setVodHideNonEnglish(enabled)
+        }
+    }
+
     fun setGuideDefaultCategory(categoryId: Long) {
         viewModelScope.launch {
             preferencesRepository.setGuideDefaultCategoryId(categoryId)

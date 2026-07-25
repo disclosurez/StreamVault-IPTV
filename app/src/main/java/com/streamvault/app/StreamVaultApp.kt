@@ -70,31 +70,37 @@ class StreamVaultApp : Application(), SingletonImageLoader.Factory {
         applicationScope.launch {
             refreshCachedAppUpdateIfNeeded()
         }
-        
-        // Schedule daily data maintenance: EPG pruning, stale-favorite cleanup, and DB compaction checks.
-        // BLD-H02: Require network + device idle so the worker doesn't drain battery.
-        val gcConstraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresBatteryNotLow(true)
-            .setRequiresDeviceIdle(true)
-            .build()
 
-        val gcWorkRequest = PeriodicWorkRequestBuilder<com.streamvault.data.sync.SyncWorker>(24, java.util.concurrent.TimeUnit.HOURS)
-            .setConstraints(gcConstraints)
-            .build()
-            
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "DataMaintenanceWorker",
-            ExistingPeriodicWorkPolicy.KEEP,
-            gcWorkRequest
-        )
+        // Defer all background-work scheduling off the main thread. On low-end TV devices
+        // (e.g. Fire TV Stick) WorkManager.getInstance() and enqueue* can trigger heavy
+        // initialization (database creation, migration checks) that blocks the UI thread and
+        // causes Choreographer frame skips during cold start.
+        applicationScope.launch {
+            // Schedule daily data maintenance: EPG pruning, stale-favorite cleanup, and DB compaction checks.
+            // BLD-H02: Require network + device idle so the worker doesn't drain battery.
+            val gcConstraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(true)
+                .setRequiresDeviceIdle(true)
+                .build()
 
-        ProviderSyncWorker.enqueuePeriodic(this)
-        ProviderSyncWorker.enqueueLaunchStaleCheck(this)
-        XtreamIndexWorker.enqueuePeriodic(this)
-        XtreamIndexWorker.enqueueLaunchStaleCheck(this)
-        RecordingReconcileWorker.enqueuePeriodic(this)
-        RecordingReconcileWorker.enqueueOneShot(this)
+            val gcWorkRequest = PeriodicWorkRequestBuilder<com.streamvault.data.sync.SyncWorker>(24, java.util.concurrent.TimeUnit.HOURS)
+                .setConstraints(gcConstraints)
+                .build()
+
+            WorkManager.getInstance(this@StreamVaultApp).enqueueUniquePeriodicWork(
+                "DataMaintenanceWorker",
+                ExistingPeriodicWorkPolicy.KEEP,
+                gcWorkRequest
+            )
+
+            ProviderSyncWorker.enqueuePeriodic(this@StreamVaultApp)
+            ProviderSyncWorker.enqueueLaunchStaleCheck(this@StreamVaultApp)
+            XtreamIndexWorker.enqueuePeriodic(this@StreamVaultApp)
+            XtreamIndexWorker.enqueueLaunchStaleCheck(this@StreamVaultApp)
+            RecordingReconcileWorker.enqueuePeriodic(this@StreamVaultApp)
+            RecordingReconcileWorker.enqueueOneShot(this@StreamVaultApp)
+        }
     }
 
     override fun onTerminate() {

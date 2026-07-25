@@ -100,7 +100,7 @@ object Routes {
     const val SEARCH = "search"
     const val SEARCH_DESTINATION = "search?query={query}"
     const val MOVIE_DETAIL = "movie_detail/{movieId}?returnRoute={returnRoute}"
-    const val SERIES_DETAIL = "series_detail/{seriesId}?returnRoute={returnRoute}"
+    const val SERIES_DETAIL = "series_detail/{seriesId}?returnRoute={returnRoute}&seasonNumber={seasonNumber}"
     const val WELCOME = "welcome"
     const val PARENTAL_CONTROL_GROUPS = "parental_control_groups/{providerId}"
     const val MULTI_VIEW = "multi_view"
@@ -222,8 +222,8 @@ object Routes {
 
     fun movieDetail(movieId: Long, returnRoute: String? = null) =
         "movie_detail/$movieId?returnRoute=${Uri.encode(returnRoute ?: "")}"
-    fun seriesDetail(seriesId: Long, returnRoute: String? = null) =
-        "series_detail/$seriesId?returnRoute=${Uri.encode(returnRoute ?: "")}"
+    fun seriesDetail(seriesId: Long, returnRoute: String? = null, seasonNumber: Int? = null): String =
+        "series_detail/$seriesId?returnRoute=${Uri.encode(returnRoute ?: "")}&seasonNumber=${seasonNumber ?: -1}"
     fun parentalControlGroups(providerId: Long) = "parental_control_groups/$providerId"
 }
 
@@ -553,7 +553,14 @@ fun AppNavigation(mainActivity: MainActivity) {
                             )
                         }
                         com.streamvault.domain.model.ContentType.SERIES -> {
-                            Routes.seriesDetail(history.contentId, Routes.HOME)
+                            // Carry forward the presentation hint from the previous entry when available
+                            val previousHint = navController.previousBackStackEntry?.savedStateHandle
+                                ?.get<SeriesDetailPresentationHint>(SERIES_DETAIL_PRESENTATION_HINT_KEY)
+                            if (previousHint != null) {
+                                navController.currentBackStackEntry?.savedStateHandle
+                                    ?.set(SERIES_DETAIL_PRESENTATION_HINT_KEY, previousHint)
+                            }
+                            Routes.seriesDetail(history.contentId, Routes.HOME, history.seasonNumber)
                         }
                         com.streamvault.domain.model.ContentType.SERIES_EPISODE -> {
                             Routes.player(
@@ -886,7 +893,8 @@ fun AppNavigation(mainActivity: MainActivity) {
             route = Routes.SERIES_DETAIL,
             arguments = listOf(
                 navArgument("seriesId") { type = NavType.LongType },
-                navArgument("returnRoute") { type = NavType.StringType; defaultValue = "" }
+                navArgument("returnRoute") { type = NavType.StringType; defaultValue = "" },
+                navArgument("seasonNumber") { type = NavType.IntType; defaultValue = -1 }
             )
         ) { backStackEntry ->
             val seriesPresentationHint = backStackEntry.savedStateHandle.get<SeriesDetailPresentationHint>(SERIES_DETAIL_PRESENTATION_HINT_KEY)
@@ -895,6 +903,10 @@ fun AppNavigation(mainActivity: MainActivity) {
                 }
             val returnRoute = backStackEntry.arguments?.getString("returnRoute").orEmpty().takeIf { it.isNotBlank() }
             val seriesId = backStackEntry.arguments?.getLong("seriesId") ?: -1L
+            val seasonNumber = backStackEntry.arguments?.getInt("seasonNumber") ?: -1
+            if (seasonNumber > 0) {
+                backStackEntry.savedStateHandle["series_detail_season_number"] = seasonNumber
+            }
             com.streamvault.app.ui.screens.series.SeriesDetailScreen(
                 onEpisodeClick = { episode ->
                      navController.navigateToPlayer(

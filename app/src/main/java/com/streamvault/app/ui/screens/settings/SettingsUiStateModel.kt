@@ -149,6 +149,7 @@ data class SettingsUiState(
     val vodInfiniteScroll: Boolean = true,
     val vodDuplicateHandlingMode: VodDuplicateHandlingMode = VodDuplicateHandlingMode.GROUPED,
     val vodVariantPreferenceMode: VodVariantPreferenceMode = VodVariantPreferenceMode.BALANCED,
+    val vodHideNonEnglish: Boolean = true,
     val guideDefaultCategoryId: Long = com.streamvault.domain.model.VirtualCategoryIds.FAVORITES,
     val guideDefaultCategoryOptions: List<Category> = emptyList(),
     val preventStandbyDuringPlayback: Boolean = true,

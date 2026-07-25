@@ -516,6 +516,15 @@ class PlayerViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            activePlayerEngineFlow.flatMapLatest { it.isPlaying }.collect { playing ->
+                if (playing && currentContentType != ContentType.LIVE) {
+                    syncManager.setVodPlaybackActive(true)
+                } else if (currentContentType != ContentType.LIVE) {
+                    syncManager.setVodPlaybackActive(false)
+                }
+            }
+        }
+        viewModelScope.launch {
             activePlayerEngineFlow.flatMapLatest { it.retryStatus }.collect { status ->
                 status ?: return@collect
                 showRetryNotice(status)

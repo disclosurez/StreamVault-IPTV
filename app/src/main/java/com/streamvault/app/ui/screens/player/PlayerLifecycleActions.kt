@@ -96,6 +96,7 @@ fun PlayerViewModel.onPlayerScreenDisposed() {
             persistPlaybackProgress()
             playbackHistoryRepository.flushPendingProgress()
         }
+        syncManager.setVodPlaybackActive(false)
     }
     playerEngine.stopLiveTimeshift()
     stopLiveTranslationSession()

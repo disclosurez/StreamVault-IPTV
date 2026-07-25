@@ -52,6 +52,12 @@ class BackgroundEpgSyncWorker(
                 applicationContext,
                 BackgroundEpgSyncWorkerEntryPoint::class.java
             )
+
+            if (entryPoint.syncManager().vodPlaybackActive.value) {
+                Log.w(TAG, "Deferring background EPG sync for provider $providerId: VOD playback is active")
+                return Result.retry()
+            }
+
             when (val result = entryPoint.syncManager().syncEpg(providerId, force = force)) {
                 is com.streamvault.domain.model.Result.Success -> {
                     // A successful EPG sync may still have transient partial failures

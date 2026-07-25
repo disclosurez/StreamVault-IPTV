@@ -106,6 +106,7 @@ internal fun observeSettingsPreferenceSnapshot(
             vodInfiniteScroll = true,
             vodDuplicateHandlingMode = VodDuplicateHandlingMode.GROUPED,
             vodVariantPreferenceMode = VodVariantPreferenceMode.BALANCED,
+            vodHideNonEnglish = true,
             guideDefaultCategoryId = VirtualCategoryIds.FAVORITES,
             guideDefaultCategoryOptions = emptyList(),
             preventStandbyDuringPlayback = true,
@@ -248,6 +249,8 @@ internal fun observeSettingsPreferenceSnapshot(
         snapshot.copy(vodDuplicateHandlingMode = vodDuplicateHandlingMode)
     }.combine(preferencesRepository.vodVariantPreferenceMode) { snapshot, vodVariantPreferenceMode ->
         snapshot.copy(vodVariantPreferenceMode = vodVariantPreferenceMode)
+    }.combine(preferencesRepository.vodHideNonEnglish) { snapshot, enabled ->
+        snapshot.copy(vodHideNonEnglish = enabled)
     }.combine(preferencesRepository.guideDefaultCategoryId) { snapshot, guideDefaultCategoryId ->
         snapshot.copy(guideDefaultCategoryId = guideDefaultCategoryId ?: VirtualCategoryIds.FAVORITES)
     }.combine(preferencesRepository.preventStandbyDuringPlayback) { snapshot, preventStandby ->

@@ -41,6 +41,7 @@ import com.streamvault.app.ui.screens.vod.setVodSearchQuery
 import com.streamvault.app.ui.screens.vod.setVodFavorite
 import com.streamvault.app.ui.screens.vod.updateVodGroupMembership
 import com.streamvault.app.ui.screens.vod.VodBrowseDefaults
+import com.streamvault.app.util.filterNonEnglish
 import com.streamvault.app.util.isPlaybackComplete
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -102,6 +103,7 @@ class MoviesViewModel @Inject constructor(
     private val _selectedLibraryFilterType = MutableStateFlow(LibraryFilterType.ALL)
     private val _selectedLibrarySortBy = MutableStateFlow(LibrarySortBy.LIBRARY)
     private val _previewBatchSize = MutableStateFlow(INITIAL_PREVIEW_BATCH_SIZE)
+    private val _vodHideNonEnglish = MutableStateFlow(true)
     private var activeProviderId: Long? = null
 
     private data class PreviewLoadResult(
@@ -272,11 +274,15 @@ class MoviesViewModel @Inject constructor(
                             selected in customCategoryNames
                     }
                     val currentPinnedIds = _uiState.value.pinnedCategoryIds
+                    val filteredGrouped = snapshot.grouped.mapValues { (_, movies) ->
+                        if (_vodHideNonEnglish.value) movies.filterNonEnglish() else movies
+                    }
+                    val filteredCounts = filteredGrouped.mapValues { (_, items) -> items.size }
                     _uiState.update {
                         it.copy(
-                            moviesByCategory = snapshot.grouped,
+                            moviesByCategory = filteredGrouped,
                             categoryNames = snapshot.categoryNames,
-                            categoryCounts = snapshot.categoryCounts,
+                            categoryCounts = filteredCounts,
                             libraryCount = snapshot.libraryCount,
                             providerCategories = snapshot.providerCategories,
                             pinnedCategoryIds = currentPinnedIds.ifEmpty { snapshot.pinnedCategoryIds },
@@ -308,6 +314,10 @@ class MoviesViewModel @Inject constructor(
             preferencesRepository.vodInfiniteScroll.collectLatest { enabled ->
                 _uiState.update { it.copy(vodInfiniteScroll = enabled) }
             }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.vodHideNonEnglish.collect { _vodHideNonEnglish.value = it }
         }
 
         viewModelScope.launch {
@@ -375,7 +385,7 @@ class MoviesViewModel @Inject constructor(
                 .collect { snapshot ->
                     _uiState.update {
                         it.copy(
-                            selectedCategoryItems = snapshot.items,
+                            selectedCategoryItems = if (_vodHideNonEnglish.value) snapshot.items.filterNonEnglish() else snapshot.items,
                             selectedCategoryLoadedCount = snapshot.loadedCount,
                             selectedCategoryTotalCount = snapshot.totalCount,
                             canLoadMoreSelectedCategory = snapshot.canLoadMore,
@@ -461,13 +471,20 @@ class MoviesViewModel @Inject constructor(
                         movieRepository.getMoviesByIds(continueIds).first().orderByIds(continueIds)
                     }.markMovieFavorites(globalFavoriteIds)
 
+                    val hideNonEnglish = _vodHideNonEnglish.value
+                    val finalFavorites = if (hideNonEnglish) favoritePreview.filterNonEnglish() else favoritePreview
+                    val finalContinue = if (hideNonEnglish) continuePreview.filterNonEnglish() else continuePreview
                     _uiState.update {
                         it.copy(
                             libraryLensRows = mapOf(
-                                MovieLibraryLens.FAVORITES to favoritePreview,
-                                MovieLibraryLens.CONTINUE to continuePreview,
-                                MovieLibraryLens.TOP_RATED to dependencies.topRated.markMovieFavorites(globalFavoriteIds),
-                                MovieLibraryLens.FRESH to dependencies.fresh.markMovieFavorites(globalFavoriteIds)
+                                MovieLibraryLens.FAVORITES to finalFavorites,
+                                MovieLibraryLens.CONTINUE to finalContinue,
+                                MovieLibraryLens.TOP_RATED to dependencies.topRated
+                                    .let { if (hideNonEnglish) it.filterNonEnglish() else it }
+                                    .markMovieFavorites(globalFavoriteIds),
+                                MovieLibraryLens.FRESH to dependencies.fresh
+                                    .let { if (hideNonEnglish) it.filterNonEnglish() else it }
+                                    .markMovieFavorites(globalFavoriteIds)
                             ).filterValues { rows -> rows.isNotEmpty() }
                         )
                     }
@@ -960,7 +977,7 @@ class MoviesViewModel @Inject constructor(
     }
 
     private suspend fun loadReorderMovies(category: Category): List<Movie> {
-        return loadVodReorderItems(
+        val items = loadVodReorderItems(
             providerId = activeProviderId ?: return emptyList(),
             category = category,
             contentType = ContentType.MOVIE,
@@ -968,6 +985,7 @@ class MoviesViewModel @Inject constructor(
             loadByIds = { ids -> movieRepository.getMoviesByIds(ids).first() },
             itemId = Movie::id
         )
+        return if (_vodHideNonEnglish.value) items.filterNonEnglish() else items
     }
 
     private suspend fun buildPreviewCatalog(

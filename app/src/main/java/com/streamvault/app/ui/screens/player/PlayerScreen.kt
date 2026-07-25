@@ -921,18 +921,16 @@ fun PlayerScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = playerNotice != null && !(playbackState == PlaybackState.BUFFERING && playerNotice?.isRetryNotice == false),
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 116.dp)
-        ) {
+        // Conditional composition (not AnimatedVisibility) to reduce GPU draw-pass
+        // overhead on low-end devices such as Fire TV Stick.
+        if (playerNotice != null && !(playbackState == PlaybackState.BUFFERING && playerNotice?.isRetryNotice == false)) {
             PlayerNoticeBanner(
                 notice = playerNotice,
                 onDismiss = viewModel::dismissPlayerNotice,
-                onAction = handlePlayerNoticeAction
+                onAction = handlePlayerNoticeAction,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 116.dp)
             )
         }
 
@@ -1220,90 +1218,88 @@ fun PlayerScreen(
         }
 
         if (contentType == "LIVE") {
-            AnimatedVisibility(
-                visible = showChannelListOverlay,
-                enter = slideInHorizontally(initialOffsetX = { if (isRtl) it else -it }),
-                exit = slideOutHorizontally(targetOffsetX = { if (isRtl) it else -it }),
-                modifier = Modifier
-                    .align(if (isRtl) Alignment.TopEnd else Alignment.TopStart)
-                    .fillMaxHeight()
-                    .width(sideOverlayWidth)
-                    .focusGroup()
-            ) {
-                ChannelListOverlay(
-                    channels = currentChannelList,
-                    recentChannels = recentChannels,
-                    currentChannelId = currentChannel?.id ?: internalChannelId,
-                    overlayFocusRequester = channelListFocusRequester,
-                    lastVisitedCategoryName = lastVisitedCategory?.name,
-                    onOpenLastGroup = { viewModel.openLastVisitedCategory() },
-                    onSelectChannel = { channelId -> viewModel.zapToChannel(channelId) },
-                    onOpenCategories = { viewModel.openCategoryListOverlay() },
-                    onDismiss = { viewModel.closeOverlays() },
-                    onOverlayInteracted = viewModel::onLiveOverlayInteraction
-                )
+            // Replaced AnimatedVisibility with conditional composition plus Box.
+            // Keeps invisible overlays out of the GPU draw-pass entirely, reducing
+            // frame-time overhead on low-end devices (Fire TV Stick, etc.).
+            if (showChannelListOverlay) {
+                Box(
+                    modifier = Modifier
+                        .align(if (isRtl) Alignment.TopEnd else Alignment.TopStart)
+                        .fillMaxHeight()
+                        .width(sideOverlayWidth)
+                        .focusGroup()
+                ) {
+                    ChannelListOverlay(
+                        channels = currentChannelList,
+                        recentChannels = recentChannels,
+                        currentChannelId = currentChannel?.id ?: internalChannelId,
+                        overlayFocusRequester = channelListFocusRequester,
+                        lastVisitedCategoryName = lastVisitedCategory?.name,
+                        onOpenLastGroup = { viewModel.openLastVisitedCategory() },
+                        onSelectChannel = { channelId -> viewModel.zapToChannel(channelId) },
+                        onOpenCategories = { viewModel.openCategoryListOverlay() },
+                        onDismiss = { viewModel.closeOverlays() },
+                        onOverlayInteracted = viewModel::onLiveOverlayInteraction
+                    )
+                }
             }
 
-            AnimatedVisibility(
-                visible = showCategoryListOverlay,
-                enter = slideInHorizontally(initialOffsetX = { if (isRtl) it else -it }),
-                exit = slideOutHorizontally(targetOffsetX = { if (isRtl) it else -it }),
-                modifier = Modifier
-                    .align(if (isRtl) Alignment.TopEnd else Alignment.TopStart)
-                    .fillMaxHeight()
-                    .width(sideOverlayWidth)
-                    .focusGroup()
-            ) {
-                CategoryListOverlay(
-                    categories = availableCategories,
-                    currentCategoryId = activeCategoryId,
-                    overlayFocusRequester = categoryListFocusRequester,
-                    isCategoryLocked = { category ->
-                        parentalControlLevel in 1..2 && (category.isAdult || category.isUserProtected)
-                    },
-                    onSelectCategory = { category ->
-                        viewModel.selectCategoryFromOverlay(category)
-                    },
-                    onDismiss = { viewModel.closeOverlays() },
-                    onOverlayInteracted = viewModel::onLiveOverlayInteraction
-                )
+            if (showCategoryListOverlay) {
+                Box(
+                    modifier = Modifier
+                        .align(if (isRtl) Alignment.TopEnd else Alignment.TopStart)
+                        .fillMaxHeight()
+                        .width(sideOverlayWidth)
+                        .focusGroup()
+                ) {
+                    CategoryListOverlay(
+                        categories = availableCategories,
+                        currentCategoryId = activeCategoryId,
+                        overlayFocusRequester = categoryListFocusRequester,
+                        isCategoryLocked = { category ->
+                            parentalControlLevel in 1..2 && (category.isAdult || category.isUserProtected)
+                        },
+                        onSelectCategory = { category ->
+                            viewModel.selectCategoryFromOverlay(category)
+                        },
+                        onDismiss = { viewModel.closeOverlays() },
+                        onOverlayInteracted = viewModel::onLiveOverlayInteraction
+                    )
+                }
             }
 
-            AnimatedVisibility(
-                visible = showEpgOverlay,
-                enter = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }),
-                exit = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }),
-                modifier = Modifier
-                    .align(if (isRtl) Alignment.TopStart else Alignment.TopEnd)
-                    .fillMaxHeight()
-                    .width(epgOverlayWidth)
-                    .focusGroup()
-            ) {
-                EpgOverlay(
-                    currentChannel = currentChannel,
-                    displayChannelNumber = displayChannelNumber,
-                    currentProgram = currentProgram,
-                    nextProgram = nextProgram,
-                    upcomingPrograms = upcomingPrograms,
-                    onDismiss = { viewModel.closeOverlays() },
-                    onOpenArchiveBrowser = {
-                        showProgramHistory = true
-                        viewModel.closeOverlays()
-                    },
-                    onOverlayInteracted = viewModel::onLiveOverlayInteraction
-                )
+            if (showEpgOverlay) {
+                Box(
+                    modifier = Modifier
+                        .align(if (isRtl) Alignment.TopStart else Alignment.TopEnd)
+                        .fillMaxHeight()
+                        .width(epgOverlayWidth)
+                        .focusGroup()
+                ) {
+                    EpgOverlay(
+                        currentChannel = currentChannel,
+                        displayChannelNumber = displayChannelNumber,
+                        currentProgram = currentProgram,
+                        nextProgram = nextProgram,
+                        upcomingPrograms = upcomingPrograms,
+                        onDismiss = { viewModel.closeOverlays() },
+                        onOpenArchiveBrowser = {
+                            showProgramHistory = true
+                            viewModel.closeOverlays()
+                        },
+                        onOverlayInteracted = viewModel::onLiveOverlayInteraction
+                    )
+                }
             }
 
-            AnimatedVisibility(
-                visible = showChannelInfoOverlay,
-                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .focusGroup()
-            ) {
-                ChannelInfoOverlay(
+            if (showChannelInfoOverlay) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .focusGroup()
+                ) {
+                    ChannelInfoOverlay(
                     currentChannel = currentChannel,
                     displayChannelNumber = displayChannelNumber,
                     currentProgram = currentProgram,
@@ -1375,6 +1371,7 @@ fun PlayerScreen(
                     onTransientPanelVisibilityChanged = { channelInfoSubPanelOpen = it },
                     resolutionLabel = videoFormat.resolutionLabel.takeIf { it.isNotBlank() && !videoFormat.isEmpty }
                 )
+                }
             }
         }
     }

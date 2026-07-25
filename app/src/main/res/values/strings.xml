@@ -583,6 +583,8 @@
     <string name="settings_vod_variant_preference_most_reliable_desc">Prefer versions with successful playback history and fewer failures.</string>
     <string name="settings_vod_variant_preference_manual_last_choice">Manual Last Choice</string>
     <string name="settings_vod_variant_preference_manual_last_choice_desc">Use the version you manually selected last, then fall back to balanced ranking.</string>
+    <string name="settings_vod_hide_non_english">Hide non‑English VOD</string>
+    <string name="settings_vod_hide_non_english_subtitle">Hide movies and series with foreign language tags [AR], [FR], [DE], etc.</string>
     <string name="vod_classic_categories_title">Categories</string>
     <string name="vod_classic_category_search">Search in categories</string>
     <string name="vod_classic_all">All</string>

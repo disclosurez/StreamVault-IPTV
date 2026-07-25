@@ -277,6 +277,12 @@ internal fun LazyListScope.settingsBrowsingSection(
             enabled = uiState.vodDuplicateHandlingMode != VodDuplicateHandlingMode.SHOW_ALL,
             indent = 24.dp
         )
+        SwitchSettingsRow(
+            label = stringResource(R.string.settings_vod_hide_non_english),
+            value = stringResource(R.string.settings_vod_hide_non_english_subtitle),
+            checked = uiState.vodHideNonEnglish,
+            onCheckedChange = { viewModel.setVodHideNonEnglish(it) }
+        )
         HorizontalDivider(color = Color.White.copy(alpha = 0.07f), modifier = Modifier.padding(vertical = 4.dp))
         ClickableSettingsRow(
             label = stringResource(R.string.settings_category_sort_live),

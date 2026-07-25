@@ -73,6 +73,7 @@ internal fun SettingsUiState.applyPreferenceSnapshot(snapshot: SettingsPreferenc
         vodInfiniteScroll = snapshot.vodInfiniteScroll,
         vodDuplicateHandlingMode = snapshot.vodDuplicateHandlingMode,
         vodVariantPreferenceMode = snapshot.vodVariantPreferenceMode,
+        vodHideNonEnglish = snapshot.vodHideNonEnglish,
         guideDefaultCategoryId = snapshot.guideDefaultCategoryId,
         guideDefaultCategoryOptions = guideDefaultCategoryOptions,
         preventStandbyDuringPlayback = snapshot.preventStandbyDuringPlayback,

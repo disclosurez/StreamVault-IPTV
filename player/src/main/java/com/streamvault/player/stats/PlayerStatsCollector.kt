@@ -103,7 +103,7 @@ class PlayerStatsCollector(
      *
      * | Data | Interval |
      * |---|---|
-     * | `currentPosition` / `duration` | Every 250 ms |
+     * | `currentPosition` / `duration` | Every 250 ms (position only emitted if changed by >= 1 s) |
      * | `bufferedDurationMs` | Every 500 ms (every 2 ticks) |
      * | Codec / bitrate / dropped frames | Every 1 000 ms (every 4 ticks) |
      */
@@ -124,7 +124,15 @@ class PlayerStatsCollector(
                     // C.TIME_UNSET (-1), making every emit a no-op equality check.
                     // Skipping avoids wasted CPU on the main thread.
                     if (playbackState.value == PlaybackState.READY) {
-                        currentPosition.value = player.currentPosition
+                        val newPosition = player.currentPosition
+                        // Only emit position updates when the value has changed by at
+                        // least 1 second. This prevents a flood of StateFlow emissions
+                        // (and downstream Compose recompositions) every 250 ms on
+                        // low-end devices such as Fire TV Stick where GC pressure from
+                        // boxed Long allocations causes frame drops.
+                        if (kotlin.math.abs(newPosition - currentPosition.value) >= POSITION_UPDATE_MIN_DELTA_MS) {
+                            currentPosition.value = newPosition
+                        }
                         duration.value = player.duration.coerceAtLeast(0L)
                     }
 
@@ -186,13 +194,20 @@ class PlayerStatsCollector(
     }
 
     private companion object {
-        /** Base polling interval. All other intervals are multiples of this. */
-        private const val POSITION_UPDATE_INTERVAL_MS = 250L
+        /** Base polling interval. All other intervals are multiples of this.
+         *  Increased from 250 ms to 1 000 ms for TV devices (Fire TV Stick, etc.)
+         *  where frequent polling causes GC thrashing and frame drops. */
+        private const val POSITION_UPDATE_INTERVAL_MS = 1_000L
 
-        /** Buffered duration sampled every 2 ticks = 500 ms. */
+        /** Minimum position change (ms) before a [currentPosition] StateFlow emit.
+         *  Prevents boxed Long allocations and downstream Compose recompositions
+         *  on low-end devices where GC pressure causes frame drops. */
+        private const val POSITION_UPDATE_MIN_DELTA_MS = 1_000L
+
+        /** Buffered duration sampled every 2 ticks = 2 000 ms. */
         private const val BUFFERED_UPDATE_TICKS = 2
 
-        /** Heavy stats (codec / bitrate / dropped frames) every 4 ticks = 1 000 ms. */
+        /** Heavy stats (codec / bitrate / dropped frames) every 4 ticks = 4 000 ms. */
         private const val STATS_UPDATE_TICKS = 4
     }
 }

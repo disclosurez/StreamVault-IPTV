@@ -75,7 +75,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -227,6 +229,13 @@ class SyncManager @Inject constructor(
     )
     val syncState: StateFlow<SyncState> = syncStateTracker.aggregateState
     val syncStatesByProvider: StateFlow<Map<Long, SyncState>> = syncStateTracker.statesByProvider
+    private val _vodPlaybackActive = MutableStateFlow(false)
+    val vodPlaybackActive: StateFlow<Boolean> = _vodPlaybackActive.asStateFlow()
+
+    fun setVodPlaybackActive(active: Boolean) {
+        _vodPlaybackActive.value = active
+    }
+
     private val providerSyncMutexes = ConcurrentHashMap<Long, Mutex>()
     private val providerStalkerSummaryMutexes = ConcurrentHashMap<Long, Mutex>()
     private val providerStalkerIndexSectionMutexes = ConcurrentHashMap<String, Mutex>()

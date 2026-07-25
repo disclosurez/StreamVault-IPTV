@@ -52,6 +52,12 @@ class XtreamIndexWorker(
                 applicationContext,
                 XtreamIndexWorkerEntryPoint::class.java
             )
+
+            if (entryPoint.syncManager().vodPlaybackActive.value) {
+                Log.i(TAG, "Deferring Xtream index sync: VOD playback is active")
+                return Result.retry()
+            }
+
             val providers = if (requestedProviderId > 0L) {
                 entryPoint.providerDao().getById(requestedProviderId)?.let(::listOf).orEmpty()
             } else {

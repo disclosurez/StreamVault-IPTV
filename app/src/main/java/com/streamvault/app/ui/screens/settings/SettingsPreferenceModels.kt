@@ -108,6 +108,7 @@ internal data class SettingsPreferenceSnapshot(
     val vodInfiniteScroll: Boolean,
     val vodDuplicateHandlingMode: VodDuplicateHandlingMode,
     val vodVariantPreferenceMode: VodVariantPreferenceMode,
+    val vodHideNonEnglish: Boolean = true,
     val guideDefaultCategoryId: Long,
     val guideDefaultCategoryOptions: List<Category>,
     val preventStandbyDuringPlayback: Boolean,
